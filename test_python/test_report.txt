@@ -1,23 +1,23 @@
 ================================================================================
 AX.25 v2.2 COMPREHENSIVE TEST REPORT
 ================================================================================
-Start Time: 2026-02-07 11:57:52.822260
-End Time: 2026-02-07 11:57:52.843413
-Duration: 0.02 seconds
+Start Time: 2026-02-07 17:46:52.740409
+End Time: 2026-02-07 17:46:52.771940
+Duration: 0.03 seconds
 PyHam AX.25 Version: 1.0.3
 
 SUMMARY
 --------------------------------------------------------------------------------
-✗ FAIL Basic AX.25 Tests                        Tests:  37 Failures:  0 Errors: 37 Skipped:  0
-✗ FAIL Advanced AX.25 Tests                     Tests:  22 Failures:  0 Errors: 20 Skipped:  0
+✓ PASS Basic AX.25 Tests                        Tests:  37 Failures:  0 Errors:  0 Skipped:  0
+✓ PASS Advanced AX.25 Tests                     Tests:  22 Failures:  0 Errors:  0 Skipped:  0
 
 TOTALS
 --------------------------------------------------------------------------------
 Total Tests Run:  59
 Total Failures:   0
-Total Errors:     57
+Total Errors:     0
 Total Skipped:    0
-Success Rate:     3.4%
+Success Rate:     100.0%
 
-OVERALL RESULT: ✗ SOME TESTS FAILED
+OVERALL RESULT: ✓ ALL TESTS PASSED
 ================================================================================

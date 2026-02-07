@@ -9,7 +9,7 @@ It can optionally test the C library directly if available.
 Usage:
     python run_all_tests.py [--c-lib /path/to/libax25v22.so] [--generate-c-tests]
 
-Author: Test Suite Generator
+Author: Emiliano Augusto Gonzalez (egonzalez . hiperion @ gmail . com)
 Date: 2026-02-07
 """
 
@@ -22,14 +22,34 @@ from datetime import datetime
 from typing import Dict, List
 
 # Import test modules
-import test_libax25v22
-import test_advanced_ax25
+try:
+    import test_libax25v22
+    import test_advanced_ax25
+except ImportError as e:
+    print(f"ERROR: Could not import test modules: {e}")
+    sys.exit(1)
 
 try:
-    from ax25 import __version__ as ax25_version
-except:
-    ax25_version = "unknown"
-
+    import ax25
+    ax25_version = getattr(ax25, '__version__', 'unknown')
+    print(f"✓ PyHam AX.25 library version: {ax25_version}")
+except ImportError as e:
+    print("✗ ERROR: PyHam AX.25 library not installed or not importable")
+    print("  The validation tests require the 'ax25' module from the pyham-ax25 package")
+    print()
+    print("  Running Python executable:", sys.executable)
+    print("  Python version:", sys.version.split('\n')[0])
+    print()
+    print("  Import error details:", e)
+    print()
+    print("  Recommended install command (uses the exact Python running the tests):")
+    print(f"  {sys.executable} -m pip install pyham-ax25")
+    print()
+    print("  If site-packages is not writeable, it will default to user installation")
+    print("  After installation, verify with:")
+    print(f"  {sys.executable} -c \\\"import ax25; print('Import successful')\\\"")
+    print()
+    sys.exit(1)
 
 class TestReport:
     """Generate comprehensive test report"""
@@ -117,7 +137,6 @@ class TestReport:
             json.dump(data, f, indent=2)
         
         print(f"JSON report saved to: {filename}")
-
 
 def generate_c_test_wrapper():
     """Generate C test wrapper code"""
@@ -288,13 +307,11 @@ int test_bit_stuffing(void) {
     // TODO: Implement bit stuffing test
     return 0;
 }
-"""
-    
-    with open("/home/claude/test_wrapper.c", "w") as f:
+""" 
+    with open("test_wrapper.c", "w") as f:
         f.write(c_code)
     
     print("C test wrapper generated: test_wrapper.c")
-
 
 def main():
     """Main test runner"""
@@ -348,7 +365,7 @@ def main():
     
     # Check PyHam installation
     try:
-        from ax25 import Frame
+        import ax25
         print(f"✓ PyHam AX.25 library version: {ax25_version}")
     except ImportError:
         print("✗ ERROR: PyHam AX.25 library not installed")
@@ -388,6 +405,6 @@ def main():
     overall_success = all(r['success'] for r in report.results)
     sys.exit(0 if overall_success else 1)
 
-
 if __name__ == "__main__":
     main()
+    

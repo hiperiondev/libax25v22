@@ -65,3 +65,5 @@ sdkconfig.old
 .clangd
 gdbstub_*
 hs_err_pid*
+__pycache__/
+test_report.txt

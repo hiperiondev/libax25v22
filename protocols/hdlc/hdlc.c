@@ -107,25 +107,28 @@ hdlc_error_t hdlc_frame_decode(unsigned char *encodedFrame, int encodedLen, unsi
         for (int k = 0; k < 8; k++) {
             unsigned char bit = (currentByte >> k) & 0x01;
 
-            // Handle bit destuffing
-            if (cnt == 5) {
-                if (bit != 0) {
-                    // Invalid: 6 consecutive 1s
-                    if (cnt >= 6) {
-                        return HDLC_ERR_ABORT;
-                    }
-                    return HDLC_ERR_STUFFING;
-                }
-                // Skip this stuffed 0 bit
+            // Improved bit destuffing with proper handling of stuffing errors (exactly 6 ones)
+            // and abort sequences (>=7 ones) per AX.25 v2.2 section 3.6 and HDLC rules
+            if (cnt == 5 && bit == 0) {
+                // Stuffed 0 inserted by transmitter - remove it
                 cnt = 0;
                 continue;
             }
 
-            // Track consecutive 1s
             if (bit == 1) {
                 cnt++;
             } else {
                 cnt = 0;
+            }
+
+            if (cnt >= 7) {
+                // Abort sequence detected (>=7 contiguous ones)
+                return HDLC_ERR_ABORT;
+            }
+
+            if (cnt == 6) {
+                // Exactly 6 contiguous ones inside frame data - invalid (bit stuffing violation)
+                return HDLC_ERR_STUFFING;
             }
 
             // Assemble byte LSB-first
