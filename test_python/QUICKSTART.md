@@ -292,6 +292,3 @@ python3 -m pdb test_libax25v22.py
 - **PyHam Docs:** https://pyham.org/en/latest/
 - **libax25v22:** https://github.com/hiperiondev/libax25v22
 
----
-
-**Happy Testing!** 🎉

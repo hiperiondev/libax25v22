@@ -17,6 +17,13 @@ import struct
 from typing import List, Tuple
 import random
 
+
+print(f"DEBUG: test_advanced_ax25.py")
+import ax25
+print(f"DEBUG: ax25 file location: {ax25.__file__}")
+print(f"DEBUG: sys.path[0]: {sys.path[0]}")
+
+
 try:
     from ax25 import Address, AX25Call, Frame
     from ax25.frame import (

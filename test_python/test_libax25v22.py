@@ -24,6 +24,11 @@ from typing import List, Tuple, Optional
 import subprocess
 import os
 
+print(f"DEBUG: test_libax25v22.py")
+import ax25
+print(f"DEBUG: ax25 file location: {ax25.__file__}")
+print(f"DEBUG: sys.path[0]: {sys.path[0]}")
+
 try:
     from ax25 import Address, AX25Call, Frame
     from ax25.frame import (
