@@ -59,7 +59,7 @@ Contributions are what make the open source community such an amazing place to l
 If you have a suggestion that would make this better, please fork the repo and create a pull request. You can also simply open an issue with the tag "enhancement".
 Don't forget to give the project a star! Thanks again!
 
-1. Fork it (<https://github.com/hiperiondev/HamRadioLibm/fork>)
+1. Fork it (<https://github.com/hiperiondev/libax25v22/fork>)
 2. Create your feature branch (`git checkout -b feature/fooBar`)
 3. Commit your changes (`git commit -am 'Add some fooBar'`)
 4. Push to the branch (`git push origin feature/fooBar`)
@@ -87,7 +87,7 @@ Distributed under the GNU General Public License v3.0. See `LICENSE.txt` for mor
 
 *Emiliano Augusto Gonzalez - egonzalez.hiperion@gmail.com*
 
-Project Link: [https://github.com/hiperiondev/HamRadioLib](https://github.com/hiperiondev/HamRadioLib)
+Project Link: [https://https://github.com/hiperiondev/libax25v22](https://github.com/hiperiondev/libax25v22)
 
 <div align="right">
   <a href="#readme-top">
