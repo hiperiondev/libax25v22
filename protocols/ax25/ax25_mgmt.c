@@ -16,12 +16,5 @@
  * along with this software; see the file COPYING.  If not, write to
  * the Free Software Foundation, Inc., 51 Franklin Street,
  * Boston, MA 02110-1301, USA.
- *
  */
 
-#ifndef TEST_AX25_H_
-#define TEST_AX25_H_
-
-int test_ax25_main();
-
-#endif /* TEST_AX25_H_ */

@@ -66,4 +66,4 @@ sdkconfig.old
 gdbstub_*
 hs_err_pid*
 __pycache__/
-#test_report.txt
+test_report.txt

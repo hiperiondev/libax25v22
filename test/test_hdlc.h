@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 Emiliano Augusto Gonzalez (egonzalez . hiperion @ gmail . com))
+ * Copyright 2026 Emiliano Augusto Gonzalez (egonzalez . hiperion @ gmail . com)
  * * Project Site: https://github.com/hiperiondev/libax25v22 *
  *
  * This is free software; you can redistribute it and/or modify
