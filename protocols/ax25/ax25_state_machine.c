@@ -108,18 +108,20 @@ static void handle_test_frame(ax25_connection_t *conn, ax25_test_frame_t *test) 
 static void send_sabm(ax25_connection_t *conn, bool extended) {
     ax25_unnumbered_frame_t sabm;
     sabm.base.header = conn->peer_addr;
-    sabm.base.header.destination.ch = true;   // Command
-    sabm.base.header.source.ch = false;
+    // Only set the frame-level CR bit, let header encoder handle ch bits
+    sabm.base.header.cr = true;  // This is a command frame
     sabm.base.type = extended ? AX25_FRAME_UNNUMBERED_SABME : AX25_FRAME_UNNUMBERED_SABM;
     sabm.pf = true;
     sabm.modifier = extended ? 0x6F : 0x2F;
 
     size_t len;
     uint8_t err;
-    uint8_t *encoded = ax25_unnumbered_frame_encode(&sabm, &len, &err);
+    uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &sabm, &len, &err);
+
     if (encoded && conn->callbacks.transmit) {
         conn->callbacks.transmit(conn->user_data, encoded, len);
     }
+
     free(encoded);
 }
 
@@ -728,10 +730,77 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
         return;
 
     switch (frame->type) {
+        case AX25_FRAME_UNNUMBERED_UA: {
+            if (conn->state == AX25_STATE_AWAITING_CONNECTION) {
+                // Connection established - transition to CONNECTED state
+                conn->vars.vs = conn->vars.vr = conn->vars.va = 0;
+                conn->state = AX25_STATE_CONNECTED;
+
+                // Clear SREJ/REJ state on new connection
+                clear_srej_state(conn);
+                conn->rej_exception = false;
+
+                // Clear peer busy on connection establishment
+                conn->peer_busy = false;
+                conn->local_busy = false;
+                conn->rnr_start_tick = 0;
+
+                // Clear FRMR state
+                conn->frmr_pending = false;
+                conn->frmr_retry_count = 0;
+
+                // Cancel T1 timer
+                conn->t1_start_tick = 0;
+                conn->retry_count = 0;
+
+                // Notify upper layer of connection establishment
+                if (conn->callbacks.on_connect) {
+                    conn->callbacks.on_connect(conn->user_data);
+                }
+            } else if (conn->state == AX25_STATE_AWAITING_RELEASE) {
+                // Disconnect acknowledged - transition to DISCONNECTED
+                conn->state = AX25_STATE_DISCONNECTED;
+
+                // Clear all state
+                clear_srej_state(conn);
+                conn->rej_exception = false;
+                conn->peer_busy = false;
+                conn->local_busy = false;
+                conn->rnr_start_tick = 0;
+                conn->frmr_pending = false;
+                conn->frmr_retry_count = 0;
+
+                // Notify upper layer
+                if (conn->callbacks.on_disconnect) {
+                    conn->callbacks.on_disconnect(conn->user_data, 0);
+                }
+            } else if (conn->state == AX25_STATE_FRAME_REJECT) {
+                // UA received in FRMR state - return to DISCONNECTED per Section 4.4.5
+                conn->state = AX25_STATE_DISCONNECTED;
+
+                // Clear all state
+                clear_srej_state(conn);
+                conn->rej_exception = false;
+                conn->peer_busy = false;
+                conn->local_busy = false;
+                conn->rnr_start_tick = 0;
+                conn->frmr_pending = false;
+                conn->frmr_retry_count = 0;
+
+                // Notify upper layer
+                if (conn->callbacks.on_disconnect) {
+                    conn->callbacks.on_disconnect(conn->user_data, 0);
+                }
+            }
+            // UA frames in other states are ignored per AX.25 v2.2
+            break;
+        }
+
         case AX25_FRAME_UNNUMBERED_SABM:
         case AX25_FRAME_UNNUMBERED_SABME: {
             // Connection request
             conn->peer_addr = frame->header;
+            conn->peer_addr.cr = false;  // Response will have opposite CR bit
             conn->vars.vs = conn->vars.vr = conn->vars.va = 0;
             conn->vars.mod = (frame->type == AX25_FRAME_UNNUMBERED_SABME) ? 128 : 8;
             conn->state = AX25_STATE_CONNECTED;
@@ -756,13 +825,17 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
             // Send UA response
             ax25_unnumbered_frame_t ua;
             ua.base.header = conn->peer_addr;
+            // set CR bits for response
+            ua.base.header.destination.ch = false;   // Response: dest CH = 0
+            ua.base.header.source.ch = true;         // Response: src CH = 1
+            ua.base.header.cr = false;               // This is a response
             ua.base.type = AX25_FRAME_UNNUMBERED_UA;
             ua.pf = ((ax25_unnumbered_frame_t*) frame)->pf;
             ua.modifier = 0x63;
 
             size_t len;
             uint8_t err;
-            uint8_t *encoded = ax25_unnumbered_frame_encode(&ua, &len, &err);
+            uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &ua, &len, &err);
             if (encoded && conn->callbacks.transmit) {
                 conn->callbacks.transmit(conn->user_data, encoded, len);
             }
@@ -1046,13 +1119,22 @@ uint8_t ax25_connect(ax25_connection_t *conn, ax25_address_t *dest, ax25_address
         return 2;
 
     conn->peer_addr.destination = *dest;
-    conn->peer_addr.source = *src;
-    conn->peer_addr.cr = true;
+    conn->peer_addr.destination.res0 = true;
+    conn->peer_addr.destination.res1 = true;  // Fixed: must be true for modulo-8
+    conn->peer_addr.destination.extension = false;
 
-    send_sabm(conn, false);  // Start with modulo 8, can upgrade via XID
+    conn->peer_addr.source = *src;
+    conn->peer_addr.source.res0 = true;
+    conn->peer_addr.source.res1 = true;
+    conn->peer_addr.source.extension = true;
+
+    conn->peer_addr.cr = true;
+    conn->peer_addr.repeaters.num_repeaters = 0;
+
+    send_sabm(conn, false);
     conn->state = AX25_STATE_AWAITING_CONNECTION;
     conn->retry_count = 0;
-    conn->t1_start_tick = 0;  // Will be set by tick handler
+    conn->t1_start_tick = 0;
 
     return 0;
 }
@@ -1085,7 +1167,7 @@ uint8_t ax25_send_data(ax25_connection_t *conn, uint8_t *data, size_t len, uint8
 
     size_t frame_len;
     uint8_t err;
-    uint8_t *encoded = ax25_information_frame_encode(&iframe, &frame_len, &err);
+    uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &iframe, &frame_len, &err);
     if (!encoded)
         return 4;
 

@@ -129,9 +129,9 @@ ax25_address_t* ax25_address_decode(const uint8_t *data, uint8_t *err) {
     addr->callsign[6] = '\0';
     addr->ssid = (data[6] & 0x1E) >> 1;
     addr->ch = (data[6] & 0x80) != 0;
-    addr->mod128 = ((data[6] & 0x40) == 0);  // bit 6 cleared indicates modulo-128
     addr->res0 = (data[6] & 0x20) != 0;
-    addr->res1 = (data[6] & 0x40) != 0;      // kept for compatibility
+    addr->res1 = (data[6] & 0x40) != 0;
+    addr->mod128 = addr->res1;
     addr->extension = (data[6] & 0x01) != 0;
     return addr;
 }
@@ -277,16 +277,21 @@ uint8_t* ax25_address_encode(const ax25_address_t *addr, size_t *len, uint8_t *e
         *err = 1;
         return NULL;
     }
+
+    // Always encode 6 bytes, padding with spaces if callsign is shorter
+    size_t callsign_len = strlen(addr->callsign);
     for (int i = 0; i < 6; i++) {
-        data[i] = (addr->callsign[i] & 0x7F) << 1;
+        char c = (i < callsign_len) ? addr->callsign[i] : ' ';
+        data[i] = (c & 0x7F) << 1;
     }
+
     uint8_t ssid_byte = (addr->ssid << 1) & 0x1E;
     if (addr->ch)
         ssid_byte |= 0x80;
-    if (!addr->mod128)
-        ssid_byte &= ~0x40;  // clear bit 6 for modulo-128
     if (addr->res0)
         ssid_byte |= 0x20;
+    if (addr->res1)
+        ssid_byte |= 0x40;
     if (addr->extension)
         ssid_byte |= 0x01;
     data[6] = ssid_byte;
@@ -447,7 +452,7 @@ uint8_t* ax25_frame_header_encode(const ax25_frame_header_t *header, size_t *len
     size_t offset = 0;
     ax25_address_t dest = header->destination;
     dest.extension = false;
-    dest.ch = header->cr;  // Command: ch=1, Response: ch=0
+    // Preserve the ch bit from the original address structure
     size_t dest_len;
     uint8_t *dest_bytes = ax25_address_encode(&dest, &dest_len, err);
     memcpy(bytes + offset, dest_bytes, dest_len);
@@ -456,7 +461,7 @@ uint8_t* ax25_frame_header_encode(const ax25_frame_header_t *header, size_t *len
 
     ax25_address_t src = header->source;
     src.extension = (header->repeaters.num_repeaters == 0);
-    src.ch = !header->cr;  // Command: ch=0, Response: ch=1
+    // Preserve the ch bit from the original address structure
     size_t src_len;
     uint8_t *src_bytes = ax25_address_encode(&src, &src_len, err);
     memcpy(bytes + offset, src_bytes, src_len);

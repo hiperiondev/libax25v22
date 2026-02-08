@@ -52,12 +52,11 @@ static int establish_connection(ax25_connection_t *conn, ax25_address_t *dest, a
     // Expected SABM frame (modulo 8, no digi, SSID-0, P=1)
     uint8_t expected_sabm[15];
     memcpy(expected_sabm + 0, test2_call, 6);     // destination callsign
-    expected_sabm[6] = 0x60;                      // destination SSID (not last)
+    expected_sabm[6] = 0x60;                      // destination SSID (not last, ch=0, res0=1, res1=1, ext=0, ssid=0)
     memcpy(expected_sabm + 7, test1_call, 6);     // source callsign
-    expected_sabm[13] = 0x61;                     // source SSID (last)
-    // start modified part
-    expected_sabm[14] = 0x3F;                     // SABM with P=1 (corrected from 0x2F)
-    // end modified part
+    // source for modulo-8 (res1=1)
+    expected_sabm[13] = 0x61;                     // source SSID (last, ch=0, res0=1, res1=1, ext=1, ssid=0)
+    expected_sabm[14] = 0x3F;                     // SABM with P=1
 
     reset_capture();
     uint8_t err = ax25_connect(conn, dest, src);
@@ -68,12 +67,12 @@ static int establish_connection(ax25_connection_t *conn, ax25_address_t *dest, a
     // Hardcoded UA response frame (addresses swapped, F=1)
     uint8_t ua_raw[15];
     memcpy(ua_raw + 0, test1_call, 6);            // destination = original source
-    ua_raw[6] = 0x60;                             // destination SSID (not last)
+    // destination for modulo-8
+    ua_raw[6] = 0x60;                             // destination SSID (not last, ch=0, res0=1, res1=1, ext=0, ssid=0)
     memcpy(ua_raw + 7, test2_call, 6);            // source = original destination
-    ua_raw[13] = 0x61;                            // source SSID (last)
-    // start modified part
-    ua_raw[14] = 0x73;                            // UA with F=1 (corrected from 0x63)
-    // end modified part
+    // source for modulo-8 with extension bit
+    ua_raw[13] = 0x61;                            // source SSID (last, ch=1, res0=1, res1=1, ext=1, ssid=0)
+    ua_raw[14] = 0x73;                            // UA with F=1
 
     uint8_t decode_err = 0;
     ax25_frame_t *ua_frame = ax25_frame_decode(ua_raw, sizeof(ua_raw), MODULO128_FALSE, &decode_err);
@@ -134,9 +133,10 @@ static int test_data_transfer(void) {
     // Expected I-frame (N(S)=0, N(R)=0, P/F=0, modulo 8)
     uint8_t expected_i[20];
     memcpy(expected_i + 0, test2_call, 6);        // destination callsign
-    expected_i[6] = 0x60;                         // destination SSID
+    // modulo-8 SSID bytes
+    expected_i[6] = 0x60;                         // destination SSID (ch=0, res0=1, res1=1, ext=0, ssid=0)
     memcpy(expected_i + 7, test1_call, 6);        // source callsign
-    expected_i[13] = 0x61;                        // source SSID
+    expected_i[13] = 0x61;                        // source SSID (ch=0, res0=1, res1=1, ext=1, ssid=0)
     expected_i[14] = 0x00;                        // I-frame control (NS=0, NR=0, PF=0)
     expected_i[15] = pid;                         // PID
     memcpy(expected_i + 16, payload, payload_len);  // payload
