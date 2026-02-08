@@ -26,6 +26,12 @@
 
 #include "ax25.h"
 
+// FRMR reason codes per AX.25 v2.2 Section 4.3.3.6
+#define FRMR_W  0x01  // Invalid control field or not implemented
+#define FRMR_X  0x02  // Frame with info field not permitted (U/S frame with wrong length)
+#define FRMR_Y  0x04  // Info field exceeded max length (N1)
+#define FRMR_Z  0x08  // Invalid N(R) received
+
 // AX.25 v2.2 Section 2.5 - Data Link State Machine States
 typedef enum {
     AX25_STATE_DISCONNECTED = 0,     //
@@ -76,7 +82,15 @@ typedef struct {
     void (*transmit)(void *user_data, uint8_t *frame, size_t len);  // Send to HDLC
 } ax25_callbacks_t;
 
-// Main connection context
+// SREJ mode configuration - AX.25 v2.2 Section 6.4.4
+typedef enum {
+    AX25_REJ_MODE_NONE = 0,    // No reject mode negotiated yet
+    AX25_REJ_MODE_REJ,         // Implicit reject only
+    AX25_REJ_MODE_SREJ,        // Selective reject only
+    AX25_REJ_MODE_SREJ_REJ     // Selective reject-reject (SREJ/REJ) - default per spec
+} ax25_rej_mode_t;
+
+// Main connection context - modified fields only
 typedef struct {
     ax25_link_state_t state;        //
     ax25_state_vars_t vars;         //
@@ -93,13 +107,33 @@ typedef struct {
     uint8_t retry_count;     //
     bool peer_busy;          //
     bool local_busy;         //
+    uint32_t rnr_start_tick;  // When peer busy state entered (for T3 polling)
 
-    // Selective reject tracking - AX.25 v2.2 Section 6.4.4.2
-    uint16_t srej_pending;                          // Bitmap of pending SREJ conditions
+    // SREJ state tracking - AX.25 v2.2 Section 4.4.4 and 6.4.4
+    ax25_rej_mode_t rej_mode;       // Negotiated reject mode
+    bool srej_exception;            // Currently in SREJ exception state
+    uint8_t srej_first_missing;     // First missing frame N(S) that triggered exception
+    uint8_t srej_count;             // Number of pending SREJ conditions
+    uint8_t srej_max;               // Maximum simultaneous SREJ (typically 1 per spec)
+
+    // Bitmap for tracking which frames we've sent SREJ for
+    // For modulo-8: 8 bits, for modulo-128: 128 bits = 16 bytes
+    uint8_t srej_bitmap[16];        // Bit set = SREJ sent for this N(S)
+
+    // REJ exception state - mutually exclusive with SREJ per Section 4.4.4
+    bool rej_exception;             // REJ condition pending
+
+    // Selective reject buffering - AX.25 v2.2 Section 6.4.4.2
     uint8_t srej_buffer[AX25_MAX_QUEUE_SIZE][256];  // Buffered out-of-seq frames
     uint8_t srej_buffer_len[AX25_MAX_QUEUE_SIZE];   //
-    uint8_t srej_buffer_ns[AX25_MAX_QUEUE_SIZE];    //
-    uint8_t srej_count;                             //
+    uint8_t srej_buffer_ns[AX25_MAX_QUEUE_SIZE];    // N(S) of buffered frame
+    uint8_t srej_buffer_count;                      // Number of buffered frames
+
+    // FRMR state tracking - AX.25 v2.2 Section 4.4.5
+    bool frmr_pending;              // FRMR frame needs to be retransmitted
+    uint8_t frmr_info[5];           // Stored FRMR info field for retransmission (max 5 bytes for modulo-128)
+    uint8_t frmr_info_len;          // Length of stored FRMR info (3 for modulo-8, 5 for modulo-128)
+    uint8_t frmr_retry_count;       // FRMR retransmission counter
 } ax25_connection_t;
 
 // API functions
@@ -109,5 +143,9 @@ uint8_t ax25_disconnect(ax25_connection_t *conn);
 uint8_t ax25_send_data(ax25_connection_t *conn, uint8_t *data, size_t len, uint8_t pid);
 void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame);
 void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms);  // Call every 10ms
+// Send RNR when local buffers full - AX.25 v2.2 Section 6.4.10
+uint8_t ax25_send_rnr(ax25_connection_t *conn);
+// Clear local busy condition - AX.25 v2.2 Section 6.4.10
+uint8_t ax25_clear_local_busy(ax25_connection_t *conn);
 
 #endif /* AX25_STATE_MACHINE_H_ */
