@@ -33,6 +33,19 @@
 #define FRMR_Y  0x04  // Info field exceeded max length (N1)
 #define FRMR_Z  0x08  // Invalid N(R) received
 
+#define AX25_MAX_PROTOCOL_HANDLERS 8
+
+// Protocol handler callback type - receives PID for context
+typedef void (*ax25_protocol_handler_t)(void *user_data, uint8_t *data, size_t len, uint8_t pid);
+
+// Protocol handler entry structure
+typedef struct {
+    uint8_t pid;                      // Protocol ID
+    ax25_protocol_handler_t handler;  // Handler function
+    void *user_data;                  // Handler context
+    bool active;                      // Handler registered
+} ax25_protocol_entry_t;
+
 // AX.25 v2.2 Section 2.5 - Data Link State Machine States
 typedef enum {
     AX25_STATE_DISCONNECTED = 0,     //
@@ -159,6 +172,11 @@ typedef struct {
     uint8_t t2_pending_nr;       // N(R) value to send when T2 expires
 
     ax25_test_stats_t test_stats;
+
+    // Layer 3 Protocol Multiplexing - AX.25 v2.2 Section 6.5
+    ax25_protocol_entry_t protocols[AX25_MAX_PROTOCOL_HANDLERS];  // Registered protocol handlers
+    ax25_protocol_handler_t default_handler;                      // Fallback for unregistered PIDs
+    void *default_user_data;                                      // Context for default handler
 } ax25_connection_t;
 
 // API functions
@@ -206,5 +224,24 @@ uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connect
 // Check if full-duplex operation is enabled for this connection
 // Returns: true if full-duplex, false if half-duplex
 bool ax25_is_full_duplex(ax25_connection_t *conn);
+
+// Register protocol handler for specific PID - AX.25 v2.2 Section 6.5
+// conn: Connection context
+// pid: Protocol Identifier (e.g., PID_ARPA_IP4, PID_NETROM)
+// handler: Callback function for this protocol
+// user_data: Context pointer passed to handler
+// Returns: 0 on success, 1 on invalid parameters, 2 on no free slots
+uint8_t ax25_register_protocol(ax25_connection_t *conn, uint8_t pid, ax25_protocol_handler_t handler, void *user_data);
+
+// Unregister protocol handler for specific PID
+// conn: Connection context
+// pid: Protocol Identifier to unregister
+void ax25_unregister_protocol(ax25_connection_t *conn, uint8_t pid);
+
+// Set default protocol handler for unregistered PIDs
+// conn: Connection context
+// handler: Default callback function (NULL to disable)
+// user_data: Context pointer passed to handler
+void ax25_set_default_protocol_handler(ax25_connection_t *conn, ax25_protocol_handler_t handler, void *user_data);
 
 #endif /* AX25_STATE_MACHINE_H_ */

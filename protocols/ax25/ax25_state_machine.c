@@ -50,6 +50,124 @@ static void cancel_t2(ax25_connection_t *conn) {
     conn->t2_ack_pending = false;
 }
 
+// Dispatch received I-frame data to appropriate protocol handler
+// AX.25 v2.2 Section 6.5 - Layer 3 Protocol Multiplexing
+static void dispatch_to_protocol(ax25_connection_t *conn, uint8_t *data, size_t len, uint8_t pid) {
+    if (!conn || !data || len == 0) {
+        return;
+    }
+
+    // Search for registered handler for this PID
+    for (uint8_t i = 0; i < AX25_MAX_PROTOCOL_HANDLERS; i++) {
+        if (conn->protocols[i].active && conn->protocols[i].pid == pid) {
+            // Found specific handler - dispatch to it
+            conn->protocols[i].handler(conn->protocols[i].user_data, data, len, pid);
+            return;
+        }
+    }
+
+    // No specific handler found - try default handler
+    if (conn->default_handler) {
+        conn->default_handler(conn->default_user_data, data, len, pid);
+        return;
+    }
+
+    // Fall back to legacy on_data callback for backward compatibility
+    if (conn->callbacks.on_data) {
+        conn->callbacks.on_data(conn->user_data, data, len);
+    }
+}
+
+// Clear SREJ pending for a specific N(S)
+static void clear_srej_pending(ax25_connection_t *conn, uint8_t ns) {
+    uint8_t byte_idx = ns >> 3;
+    uint8_t bit_idx = ns & 0x07;
+    if (byte_idx < 16) {
+        conn->srej_bitmap[byte_idx] &= ~(1U << bit_idx);
+    }
+}
+
+// Clear all SREJ state
+static void clear_srej_state(ax25_connection_t *conn) {
+    conn->srej_exception = false;
+    conn->srej_count = 0;
+    conn->srej_first_missing = 0;
+    memset(conn->srej_bitmap, 0, sizeof(conn->srej_bitmap));
+    conn->srej_buffer_count = 0;
+}
+
+// Check if we can use SREJ for this connection
+static bool can_use_srej(ax25_connection_t *conn) {
+    return (conn->rej_mode == AX25_REJ_MODE_SREJ || conn->rej_mode == AX25_REJ_MODE_SREJ_REJ);
+}
+
+// Check if we can use REJ for this connection
+static bool can_use_rej(ax25_connection_t *conn) {
+    return (conn->rej_mode == AX25_REJ_MODE_REJ || conn->rej_mode == AX25_REJ_MODE_SREJ_REJ);
+}
+
+// Deliver buffered SREJ frames in sequence
+static void deliver_buffered_srej_frames(ax25_connection_t *conn) {
+    bool delivered = true;
+
+    while (delivered && conn->srej_buffer_count > 0) {
+        delivered = false;
+
+        // Look for frame with N(S) = V(R)
+        for (uint8_t i = 0; i < conn->srej_buffer_count; i++) {
+            if (conn->srej_buffer_ns[i] == conn->vars.vr) {
+                // Deliver this frame to upper layer
+                if (conn->callbacks.on_data) {
+                    conn->callbacks.on_data(conn->user_data, conn->srej_buffer[i], conn->srej_buffer_len[i]);
+                }
+
+                // Advance V(R)
+                conn->vars.vr = INC_MOD(conn->vars.vr, conn->vars.mod);
+
+                // Clear SREJ pending for this N(S)
+                clear_srej_pending(conn, conn->srej_buffer_ns[i]);
+
+                // Remove from buffer by shifting remaining entries
+                for (uint8_t j = i; j < conn->srej_buffer_count - 1; j++) {
+                    conn->srej_buffer_ns[j] = conn->srej_buffer_ns[j + 1];
+                    conn->srej_buffer_len[j] = conn->srej_buffer_len[j + 1];
+                    memcpy(conn->srej_buffer[j], conn->srej_buffer[j + 1], conn->srej_buffer_len[j]);
+                }
+                conn->srej_buffer_count--;
+                conn->srej_count--;
+
+                delivered = true;
+                break;  // Restart search from beginning
+            }
+        }
+    }
+
+    // If all buffered frames delivered, clear SREJ exception
+    if (conn->srej_buffer_count == 0) {
+        conn->srej_exception = false;
+        conn->srej_count = 0;
+        memset(conn->srej_bitmap, 0, sizeof(conn->srej_bitmap));
+    }
+}
+
+// Internal: Send RR supervisory frame
+static void send_rr(ax25_connection_t *conn, bool pf) {
+    ax25_supervisory_frame_t rr;
+    rr.base.header = conn->peer_addr;
+    rr.base.type = (conn->vars.mod == 128) ? AX25_FRAME_SUPERVISORY_RR_16BIT : AX25_FRAME_SUPERVISORY_RR_8BIT;
+    rr.nr = conn->vars.vr;
+    rr.pf = pf;
+    rr.code = 0;  // RR
+
+    size_t len;
+    uint8_t err;
+    uint8_t *encoded = ax25_supervisory_frame_encode(&rr, &len, &err);
+    if (encoded && conn->callbacks.transmit) {
+        conn->callbacks.transmit(conn->user_data, encoded, len);
+    }
+    free(encoded);
+}
+
 // Handle UI frame - AX.25 v2.2 Section 6.4.12: UI frames accepted in any state
 static void handle_ui_frame(ax25_connection_t *conn, ax25_unnumbered_information_frame_t *ui) {
     // AX.25 v2.2 Section 6.4.12: UI frames can be received in any state
@@ -137,24 +255,6 @@ static void send_sabm(ax25_connection_t *conn, bool extended) {
     free(encoded);
 }
 
-// Internal: Send RR supervisory frame
-static void send_rr(ax25_connection_t *conn, bool pf) {
-    ax25_supervisory_frame_t rr;
-    rr.base.header = conn->peer_addr;
-    rr.base.type = (conn->vars.mod == 128) ? AX25_FRAME_SUPERVISORY_RR_16BIT : AX25_FRAME_SUPERVISORY_RR_8BIT;
-    rr.nr = conn->vars.vr;
-    rr.pf = pf;
-    rr.code = 0;  // RR
-
-    size_t len;
-    uint8_t err;
-    uint8_t *encoded = ax25_supervisory_frame_encode(&rr, &len, &err);
-    if (encoded && conn->callbacks.transmit) {
-        conn->callbacks.transmit(conn->user_data, encoded, len);
-    }
-    free(encoded);
-}
-
 // Internal: Send REJ frame
 static void send_rej(ax25_connection_t *conn, bool pf) {
     ax25_supervisory_frame_t rej;
@@ -205,34 +305,6 @@ static bool is_srej_pending(ax25_connection_t *conn, uint8_t ns) {
         return (conn->srej_bitmap[byte_idx] & (1U << bit_idx)) != 0;
     }
     return false;
-}
-
-// Clear SREJ pending for a specific N(S)
-static void clear_srej_pending(ax25_connection_t *conn, uint8_t ns) {
-    uint8_t byte_idx = ns >> 3;
-    uint8_t bit_idx = ns & 0x07;
-    if (byte_idx < 16) {
-        conn->srej_bitmap[byte_idx] &= ~(1U << bit_idx);
-    }
-}
-
-// Clear all SREJ state
-static void clear_srej_state(ax25_connection_t *conn) {
-    conn->srej_exception = false;
-    conn->srej_count = 0;
-    conn->srej_first_missing = 0;
-    memset(conn->srej_bitmap, 0, sizeof(conn->srej_bitmap));
-    conn->srej_buffer_count = 0;
-}
-
-// Check if we can use SREJ for this connection
-static bool can_use_srej(ax25_connection_t *conn) {
-    return (conn->rej_mode == AX25_REJ_MODE_SREJ || conn->rej_mode == AX25_REJ_MODE_SREJ_REJ);
-}
-
-// Check if we can use REJ for this connection
-static bool can_use_rej(ax25_connection_t *conn) {
-    return (conn->rej_mode == AX25_REJ_MODE_REJ || conn->rej_mode == AX25_REJ_MODE_SREJ_REJ);
 }
 
 // Calculate number of missing frames between V(R) and received N(S)
@@ -317,55 +389,12 @@ static void handle_out_of_sequence_iframe(ax25_connection_t *conn, ax25_informat
     // If neither SREJ nor REJ can be used, just discard the frame
 }
 
-// Deliver buffered SREJ frames in sequence
-static void deliver_buffered_srej_frames(ax25_connection_t *conn) {
-    bool delivered = true;
-
-    while (delivered && conn->srej_buffer_count > 0) {
-        delivered = false;
-
-        // Look for frame with N(S) = V(R)
-        for (uint8_t i = 0; i < conn->srej_buffer_count; i++) {
-            if (conn->srej_buffer_ns[i] == conn->vars.vr) {
-                // Deliver this frame to upper layer
-                if (conn->callbacks.on_data) {
-                    conn->callbacks.on_data(conn->user_data, conn->srej_buffer[i], conn->srej_buffer_len[i]);
-                }
-
-                // Advance V(R)
-                conn->vars.vr = INC_MOD(conn->vars.vr, conn->vars.mod);
-
-                // Clear SREJ pending for this N(S)
-                clear_srej_pending(conn, conn->srej_buffer_ns[i]);
-
-                // Remove from buffer by shifting remaining entries
-                for (uint8_t j = i; j < conn->srej_buffer_count - 1; j++) {
-                    conn->srej_buffer_ns[j] = conn->srej_buffer_ns[j + 1];
-                    conn->srej_buffer_len[j] = conn->srej_buffer_len[j + 1];
-                    memcpy(conn->srej_buffer[j], conn->srej_buffer[j + 1], conn->srej_buffer_len[j]);
-                }
-                conn->srej_buffer_count--;
-                conn->srej_count--;
-
-                delivered = true;
-                break;  // Restart search from beginning
-            }
-        }
-    }
-
-    // If all buffered frames delivered, clear SREJ exception
-    if (conn->srej_buffer_count == 0) {
-        conn->srej_exception = false;
-        conn->srej_count = 0;
-        memset(conn->srej_bitmap, 0, sizeof(conn->srej_bitmap));
-    }
-}
-
-// Process expected I-frame (N(S) == V(R))
+// Process expected I-frame (N(S) == V(R)) - modified to use protocol dispatch
 static void process_expected_iframe(ax25_connection_t *conn, ax25_information_frame_t *iframe) {
-    // Deliver frame to upper layer
-    if (conn->callbacks.on_data) {
-        conn->callbacks.on_data(conn->user_data, iframe->payload, iframe->payload_len);
+    // Deliver frame to upper layer via protocol multiplexer
+    // AX.25 v2.2 Section 6.5: Use PID to demultiplex to correct handler
+    if (iframe->payload_len > 0 && iframe->payload) {
+        dispatch_to_protocol(conn, iframe->payload, iframe->payload_len, iframe->pid);
     }
 
     // Advance V(R)
@@ -569,6 +598,13 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     // Initialize full-duplex mode
     // Default to half-duplex - will be updated if XID negotiation enables full-duplex
     conn->full_duplex = false;
+
+    // Initialize protocol multiplexing - all handlers inactive by default
+    for (uint8_t i = 0; i < AX25_MAX_PROTOCOL_HANDLERS; i++) {
+        conn->protocols[i].active = false;
+    }
+    conn->default_handler = NULL;
+    conn->default_user_data = NULL;
 
     return 0;
 }
@@ -1412,4 +1448,60 @@ bool ax25_is_full_duplex(ax25_connection_t *conn) {
     }
 
     return conn->full_duplex;
+}
+
+// API: Register protocol handler for specific PID
+uint8_t ax25_register_protocol(ax25_connection_t *conn, uint8_t pid, ax25_protocol_handler_t handler, void *user_data) {
+    if (!conn || !handler) {
+        return 1;  // Invalid parameters
+    }
+
+    // Check if already registered - update existing entry
+    for (uint8_t i = 0; i < AX25_MAX_PROTOCOL_HANDLERS; i++) {
+        if (conn->protocols[i].active && conn->protocols[i].pid == pid) {
+            // Update existing handler
+            conn->protocols[i].handler = handler;
+            conn->protocols[i].user_data = user_data;
+            return 0;  // Success (updated)
+        }
+    }
+
+    // Find free slot for new registration
+    for (uint8_t i = 0; i < AX25_MAX_PROTOCOL_HANDLERS; i++) {
+        if (!conn->protocols[i].active) {
+            conn->protocols[i].pid = pid;
+            conn->protocols[i].handler = handler;
+            conn->protocols[i].user_data = user_data;
+            conn->protocols[i].active = true;
+            return 0;  // Success (new)
+        }
+    }
+
+    return 2;  // No free slots available
+}
+
+// API: Unregister protocol handler for specific PID
+void ax25_unregister_protocol(ax25_connection_t *conn, uint8_t pid) {
+    if (!conn) {
+        return;
+    }
+
+    for (uint8_t i = 0; i < AX25_MAX_PROTOCOL_HANDLERS; i++) {
+        if (conn->protocols[i].active && conn->protocols[i].pid == pid) {
+            conn->protocols[i].active = false;
+            conn->protocols[i].handler = NULL;
+            conn->protocols[i].user_data = NULL;
+            return;
+        }
+    }
+}
+
+// API: Set default protocol handler for unregistered PIDs
+void ax25_set_default_protocol_handler(ax25_connection_t *conn, ax25_protocol_handler_t handler, void *user_data) {
+    if (!conn) {
+        return;
+    }
+
+    conn->default_handler = handler;
+    conn->default_user_data = user_data;
 }
