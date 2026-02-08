@@ -148,4 +148,14 @@ uint8_t ax25_send_rnr(ax25_connection_t *conn);
 // Clear local busy condition - AX.25 v2.2 Section 6.4.10
 uint8_t ax25_clear_local_busy(ax25_connection_t *conn);
 
+// Send UI frame without connection - AX.25 v2.2 Section 6.4.12
+// dest: Destination address
+// src: Source address
+// data: Data to send
+// len: Length of data
+// pid: Protocol Identifier
+// transmit: Callback to transmit the encoded frame
+// Returns: 0 on success, 1-3 on error
+uint8_t ax25_send_ui(ax25_address_t *dest, ax25_address_t *src, uint8_t *data, size_t len, uint8_t pid, void (*transmit)(uint8_t*, size_t));
+
 #endif /* AX25_STATE_MACHINE_H_ */

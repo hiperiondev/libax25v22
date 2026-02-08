@@ -23,6 +23,9 @@
 
 #include "ax25_state_machine.h"
 
+// EST frame handler - AX.25 v2.2 Section 4.3.3.8 and 6.4.13
+#define TEST_FRAME_MAX_PAYLOAD 256  // Maximum test payload for static buffer
+
 // Modulo arithmetic macros - avoid 64-bit, use 32-bit for safety
 #define INC_MOD8(x) (((x) + 1) & 0x07)
 #define INC_MOD128(x) (((x) + 1) & 0x7F)
@@ -30,6 +33,60 @@
 
 #define MOD_DIFF(a, b, m) (((a) - (b)) & ((m) == 8 ? 0x07 : 0x7F))
 #define MOD_LT(a, b, m) (MOD_DIFF(a, b, m) > 0 && MOD_DIFF(a, b, m) < ((m) == 8 ? 4 : 64))
+
+// Handle UI frame - AX.25 v2.2 Section 6.4.12: UI frames accepted in any state
+static void handle_ui_frame(ax25_connection_t *conn, ax25_unnumbered_information_frame_t *ui) {
+    // AX.25 v2.2 Section 6.4.12: UI frames can be received in any state
+    // No acknowledgment required, no connection needed
+    // Passed directly to upper layer if callback exists
+
+    if (conn->callbacks.on_data && ui->payload_len > 0 && ui->payload) {
+        // Deliver payload to upper layer
+        conn->callbacks.on_data(conn->user_data, ui->payload, ui->payload_len);
+    }
+
+    // UI frames can also update peer address if not connected
+    // This allows connectionless communication
+    if (conn->state == AX25_STATE_DISCONNECTED) {
+        conn->peer_addr = ui->base.base.header;
+    }
+}
+
+static void handle_test_frame(ax25_connection_t *conn, ax25_test_frame_t *test) {
+    // AX.25 v2.2 Section 6.4.13: Respond to TEST command with TEST response
+    // TEST frames work in any state - no connection required
+    if (test->base.base.header.cr) {
+        // Received TEST command - send TEST response
+        static uint8_t test_response_buffer[TEST_FRAME_MAX_PAYLOAD];
+
+        ax25_test_frame_t response;
+        response.base.base.header.destination = test->base.base.header.source;
+        response.base.base.header.source = test->base.base.header.destination;
+        response.base.base.header.cr = false;  // Response
+        response.base.base.type = AX25_FRAME_UNNUMBERED_TEST;
+        response.base.pf = test->base.pf;
+        response.base.modifier = 0xE3;  // TEST modifier
+
+        // Echo payload back - truncate if exceeds buffer size
+        response.payload_len = (test->payload_len > TEST_FRAME_MAX_PAYLOAD) ?
+        TEST_FRAME_MAX_PAYLOAD :
+                                                                              test->payload_len;
+        response.payload = test_response_buffer;
+        if (response.payload_len > 0 && test->payload) {
+            memcpy(response.payload, test->payload, response.payload_len);
+        }
+
+        size_t len;
+        uint8_t err;
+        uint8_t *encoded = ax25_test_frame_encode(&response, &len, &err);
+        if (encoded && conn->callbacks.transmit) {
+            conn->callbacks.transmit(conn->user_data, encoded, len);
+            free(encoded);
+        }
+    }
+    // TEST response received - application could be notified if callback exists
+    // For now, we silently accept TEST responses
+}
 
 // Send DM response when receiving frames in disconnected state
 static void send_dm(ax25_connection_t *conn, bool pf) {
@@ -994,6 +1051,20 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
             break;
         }
 
+        case AX25_FRAME_UNNUMBERED_TEST: {
+            // Handle TEST frame - works in any state per AX.25 v2.2 Section 6.4.13
+            ax25_test_frame_t *test = (ax25_test_frame_t*) frame;
+            handle_test_frame(conn, test);
+            break;
+        }
+
+        case AX25_FRAME_UNNUMBERED_INFORMATION: {
+            // Handle UI frame - AX.25 v2.2 Section 6.4.12
+            ax25_unnumbered_information_frame_t *ui = (ax25_unnumbered_information_frame_t*) frame;
+            handle_ui_frame(conn, ui);
+            break;
+        }
+
         default:
         break;
     }
@@ -1110,4 +1181,41 @@ uint8_t ax25_clear_local_busy(ax25_connection_t *conn) {
     send_rr(conn, false);
 
     return 0;
+}
+
+// Send UI frame without connection - AX.25 v2.2 Section 6.4.12
+// UI frames are connectionless and can be sent/received in any state
+uint8_t ax25_send_ui(ax25_address_t *dest, ax25_address_t *src, uint8_t *data, size_t len, uint8_t pid, void (*transmit)(uint8_t*, size_t)) {
+    if (!dest || !src || !data || !transmit) {
+        return 1;  // Invalid parameters
+    }
+
+    if (len == 0) {
+        return 2;  // No data to send
+    }
+
+    // Build UI frame
+    ax25_unnumbered_information_frame_t ui;
+    ui.base.base.header.destination = *dest;
+    ui.base.base.header.source = *src;
+    ui.base.base.header.cr = true;  // Command
+    ui.base.base.type = AX25_FRAME_UNNUMBERED_INFORMATION;
+    ui.base.pf = false;
+    ui.base.modifier = 0x03;  // UI modifier bits
+    ui.pid = pid;
+    ui.payload = data;
+    ui.payload_len = len;
+
+    size_t encoded_len;
+    uint8_t err;
+    uint8_t *encoded = ax25_unnumbered_information_frame_encode(&ui, &encoded_len, &err);
+    if (!encoded) {
+        return 3;  // Encoding failed
+    }
+
+    // Transmit the frame
+    transmit(encoded, encoded_len);
+    free(encoded);
+
+    return 0;  // Success
 }
