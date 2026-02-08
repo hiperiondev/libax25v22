@@ -19,15 +19,9 @@
  *
  */
 
-#include "test_ax25.h"
-#include "test_hdlc.h"
-#include "test_ax25_mgmt.h"
-#include "test_ax25_state_machine.h"
+#ifndef TEST_AX25_STATE_MACHINE_H_
+#define TEST_AX25_STATE_MACHINE_H_
 
-int main() {
-    test_hdlc_main();
-    test_ax25_main();
-    test_ax25_mgmt_main();
-    test_ax25_state_machine_main();
-}
+int test_ax25_state_machine_main();
 
+#endif /* TEST_AX25_STATE_MACHINE_H_ */
