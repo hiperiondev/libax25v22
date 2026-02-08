@@ -244,4 +244,9 @@ void ax25_unregister_protocol(ax25_connection_t *conn, uint8_t pid);
 // user_data: Context pointer passed to handler
 void ax25_set_default_protocol_handler(ax25_connection_t *conn, ax25_protocol_handler_t handler, void *user_data);
 
+// Adaptive T1 adjustment based on measured RTT from TEST frames
+// Per AX.25 v2.2 Section 6.7.1.1: T1 should be at least 2x round-trip time
+// Call this after receiving TEST response to optimize T1 for link conditions
+void ax25_adjust_t1_adaptive(ax25_connection_t *conn);
+
 #endif /* AX25_STATE_MACHINE_H_ */

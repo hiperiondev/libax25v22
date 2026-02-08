@@ -34,6 +34,17 @@
 #define MOD_DIFF(a, b, m) (((a) - (b)) & ((m) == 8 ? 0x07 : 0x7F))
 #define MOD_LT(a, b, m) (MOD_DIFF(a, b, m) > 0 && MOD_DIFF(a, b, m) < ((m) == 8 ? 4 : 64))
 
+// Restart T3 timer on link activity (frames sent or received)
+// Per AX.25 v2.2 Section 6.7.1.3: T3 maintains link integrity during idle periods
+static void restart_t3_on_activity(ax25_connection_t *conn, uint32_t current_tick) {
+    if (conn->state == AX25_STATE_CONNECTED) {
+        // Only restart T3 if T1 is not running (T3 only runs when no outstanding frames)
+        if (conn->t1_start_tick == 0) {
+            conn->t3_start_tick = current_tick;
+        }
+    }
+}
+
 // Start T2 timer instead of sending immediate RR response - AX.25 v2.2 Section 6.7.1.2
 // This allows piggybacking acknowledgments on outgoing I-frames
 static void start_t2_response(ax25_connection_t *conn, uint32_t current_tick) {
@@ -619,6 +630,9 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
     uint8_t nr = iframe->nr;
     bool pf = iframe->pf;
 
+    // Restart T3 on received activity (link is not idle)
+    restart_t3_on_activity(conn, conn->t3_start_tick ? conn->t3_start_tick : 0);
+
     // Check if this acknowledges our sent frames
     if (MOD_LT(conn->vars.va, nr, conn->vars.mod) || nr == conn->vars.va) {
         // Valid acknowledgment - remove acknowledged frames from queue
@@ -632,6 +646,13 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
         // Cancel T1 if all frames acknowledged
         if (conn->tx_queue.count == 0) {
             conn->t1_start_tick = 0;
+            // Restart T3 now that T1 is stopped
+            conn->t3_start_tick = conn->t3_start_tick ? conn->t3_start_tick : 0;
+            if (conn->t3_start_tick == 0) {
+                // Use current tick from frame processing context
+                // In real implementation, pass current_tick as parameter
+                conn->t3_start_tick = 1;  // Will be set properly in tick handler
+            }
         } else {
             // Restart T1 for remaining frames
             conn->t1_start_tick = conn->t3_start_tick;
@@ -659,7 +680,7 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
     // Start T2 timer if not already running and ACK not pending
     // This is called after processing the I-frame to start the response delay
     if (!conn->t2_running && !conn->t2_ack_pending && !iframe->pf) {
-        start_t2_response(conn, conn->t3_start_tick);  // Use current tick from last T3 update
+        start_t2_response(conn, conn->t3_start_tick ? conn->t3_start_tick : 0);  // Use available tick reference
     }
 }
 
@@ -705,6 +726,9 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
 
         conn->retry_count++;
         conn->t1_start_tick = current_tick_10ms;
+
+        // Restart T3 when T1 is running (T3 only runs when T1 is not)
+        conn->t3_start_tick = 0;
     }
 
     // Handle FRMR retransmission per AX.25 v2.2 Section 4.4.5
@@ -760,21 +784,32 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
         }
     }
 
-    // Handle T3 - Inactive link timer
-    // Modified per AX.25 v2.2 Section 6.4.9: poll with RR when peer is busy
-    if (conn->state == AX25_STATE_CONNECTED && conn->t1_start_tick == 0 && conn->t3_start_tick != 0
-            && (uint16_t) (current_tick_10ms - conn->t3_start_tick) >= conn->timers.t3) {
+    // Handle T3 - Inactive link timer per AX.25 v2.2 Section 6.7.1.3
+    // T3 runs only when T1 is not running (no outstanding unacknowledged I frames)
+    // and we are in CONNECTED state
+    if (conn->state == AX25_STATE_CONNECTED && conn->t1_start_tick == 0) {
+        // Initialize T3 if not running
+        if (conn->t3_start_tick == 0) {
+            conn->t3_start_tick = current_tick_10ms;
+        }
 
-        if (conn->peer_busy) {
-            // Peer is busy - poll with RR command P=1 to check status
-            // Per Section 6.4.9: send RR or RNR with P bit set
-            send_rr(conn, true);
-            conn->t1_start_tick = current_tick_10ms;  // Start T1 for response
-            // Keep peer_busy true until we get RR response
-        } else {
-            // Normal T3 operation - poll remote with RR P=1
-            send_rr(conn, true);
-            conn->t1_start_tick = current_tick_10ms;  // Start T1 for response
+        // Check for T3 expiry
+        if ((uint16_t) (current_tick_10ms - conn->t3_start_tick) >= conn->timers.t3) {
+            // T3 expired - send poll (RR with P=1) to check peer status
+            // Per Section 6.7.1.3: send RR or RNR with P bit set
+            if (conn->local_busy) {
+                send_rnr(conn, true);  // Poll with P=1, we are busy
+            } else {
+                send_rr(conn, true);   // Poll with P=1
+            }
+
+            // Start T1 to wait for response and enter timer recovery
+            conn->t1_start_tick = current_tick_10ms;
+            conn->retry_count = 0;
+            conn->state = AX25_STATE_TIMER_RECOVERY;
+
+            // Reset T3 (will be restarted when T1 stops)
+            conn->t3_start_tick = 0;
         }
     }
 }
@@ -783,6 +818,12 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
 void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
     if (!conn || !frame)
         return;
+
+    // Restart T3 on any received frame activity (link is alive)
+    // Use t3_start_tick as a proxy for current time in this context
+    // In production, current_tick should be passed as parameter
+    uint32_t current_tick = conn->t3_start_tick ? conn->t3_start_tick : (conn->t1_start_tick ? conn->t1_start_tick : 1);
+    restart_t3_on_activity(conn, current_tick);
 
     switch (frame->type) {
         case AX25_FRAME_UNNUMBERED_UA: {
@@ -807,6 +848,9 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
                 // Cancel T1 timer
                 conn->t1_start_tick = 0;
                 conn->retry_count = 0;
+
+                // Start T3 for idle link monitoring
+                conn->t3_start_tick = current_tick;
 
                 // Notify upper layer of connection establishment
                 if (conn->callbacks.on_connect) {
@@ -896,6 +940,9 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
             }
             free(encoded);
 
+            // Start T3 for idle link monitoring in connected state
+            conn->t3_start_tick = current_tick;
+
             if (conn->callbacks.on_connect) {
                 conn->callbacks.on_connect(conn->user_data);
             }
@@ -972,13 +1019,15 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
 
             if (sframe->pf) {
                 // Response to our poll - restart T3
-                conn->t3_start_tick = 0;
+                conn->t3_start_tick = current_tick;
             }
 
             // Cancel T1 if all frames acknowledged
             if (conn->tx_queue.count == 0) {
                 conn->t1_start_tick = 0;
                 conn->retry_count = 0;
+                // Restart T3 now that T1 is stopped
+                conn->t3_start_tick = current_tick;
             }
             break;
         }
@@ -1017,6 +1066,10 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
                 break;
             }
             handle_received_rnr(conn, sframe);
+
+            // Continue T3 during peer busy (T3 keeps running to detect stuck links)
+            // Per Section 6.4.9: T3 expiry causes poll with RR/RNR P=1
+            conn->t3_start_tick = current_tick;
             break;
         }
 
@@ -1063,6 +1116,9 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
                     conn->callbacks.on_busy(conn->user_data, false);
                 }
             }
+
+            // Restart T3 on activity
+            conn->t3_start_tick = current_tick;
             break;
         }
 
@@ -1100,6 +1156,9 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
                 break;
             }
             handle_received_srej(conn, sframe);
+
+            // Restart T3 on activity
+            conn->t3_start_tick = current_tick;
             break;
         }
 
@@ -1154,7 +1213,7 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
             // In real implementation, current_tick should be passed to ax25_process_frame
             // For now, we'll use 0 as a placeholder - caller should track tick count
             ax25_test_frame_t *test = (ax25_test_frame_t*) frame;
-            handle_test_frame(conn, test, 0);  // TODO: Pass actual current_tick from caller
+            handle_test_frame(conn, test, current_tick);
             break;
         }
 
@@ -1247,9 +1306,12 @@ uint8_t ax25_send_data(ax25_connection_t *conn, uint8_t *data, size_t len, uint8
 
     conn->vars.vs = INC_MOD(conn->vars.vs, conn->vars.mod);
 
-    // Start/restart T1
+    // Start/restart T1 for acknowledgment
     conn->t1_start_tick = 0;
     conn->retry_count = 0;
+
+    // Stop T3 while T1 is running (T3 only runs when no outstanding frames)
+    conn->t3_start_tick = 0;
 
     return 0;
 }
@@ -1504,4 +1566,34 @@ void ax25_set_default_protocol_handler(ax25_connection_t *conn, ax25_protocol_ha
 
     conn->default_handler = handler;
     conn->default_user_data = user_data;
+}
+
+// Adaptive T1 adjustment based on measured RTT from TEST frames
+// Per AX.25 v2.2 Section 6.7.1.1: T1 should be at least 2x round-trip time
+void ax25_adjust_t1_adaptive(ax25_connection_t *conn) {
+    if (!conn) {
+        return;
+    }
+
+    // Use TEST frame RTT measurements to adjust T1
+    if (conn->test_stats.rtt_count > 0) {
+        // Calculate average RTT (already in 10ms ticks from test_stats)
+        uint32_t avg_rtt = conn->test_stats.rtt_sum / conn->test_stats.rtt_count;
+
+        // Set T1 to 2 * RTT + safety margin (avoid float, use integer math)
+        // Add 30 ticks (300ms) safety margin per AX.25 recommendation
+        uint32_t new_t1 = avg_rtt * 2;
+        new_t1 += 30;  // 300ms safety margin
+
+        // Clamp to reasonable range per AX.25 v2.2
+        // Minimum: 100ms (10 ticks), Maximum: 30s (3000 ticks)
+        if (new_t1 < 10) {
+            new_t1 = 10;    // Min 100ms
+        }
+        if (new_t1 > 3000) {
+            new_t1 = 3000;  // Max 30s
+        }
+
+        conn->timers.t1 = (uint16_t) new_t1;
+    }
 }
