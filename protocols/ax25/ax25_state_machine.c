@@ -104,24 +104,6 @@ static void handle_test_frame(ax25_connection_t *conn, ax25_test_frame_t *test) 
     // For now, we silently accept TEST responses
 }
 
-// Send DM response when receiving frames in disconnected state
-static void send_dm(ax25_connection_t *conn, bool pf) {
-    ax25_unnumbered_frame_t dm;
-    dm.base.header = conn->peer_addr;
-    dm.base.header.cr = false;  // Response
-    dm.base.type = AX25_FRAME_UNNUMBERED_DM;
-    dm.pf = pf;
-    dm.modifier = 0x0F;
-
-    size_t len;
-    uint8_t err;
-    uint8_t *encoded = ax25_unnumbered_frame_encode(&dm, &len, &err);
-    if (encoded && conn->callbacks.transmit) {
-        conn->callbacks.transmit(conn->user_data, encoded, len);
-        free(encoded);
-    }
-}
-
 // Internal: Send SABM/SABME command
 static void send_sabm(ax25_connection_t *conn, bool extended) {
     ax25_unnumbered_frame_t sabm;
@@ -501,67 +483,6 @@ static void handle_received_rnr(ax25_connection_t *conn, ax25_supervisory_frame_
             send_rr(conn, true);   // F=1
         }
     }
-}
-
-// Send FRMR frame - AX.25 v2.2 Section 4.4.5
-// reason: FRMR_W | FRMR_X | FRMR_Y | FRMR_Z bits
-// is_response: true if rejected frame was a response, false if command
-static void send_frmr(ax25_connection_t *conn, uint16_t bad_control, uint8_t reason, bool is_response) {
-    ax25_frame_reject_frame_t frmr;
-
-    // Initialize base frame
-    frmr.base.base.header = conn->peer_addr;
-    frmr.base.base.type = AX25_FRAME_UNNUMBERED_FRMR;
-    frmr.base.pf = true;  // F bit set to 1 per Section 4.4.5
-    frmr.base.modifier = 0x87;  // FRMR control field
-
-    // Set FRMR specific fields
-    frmr.is_modulo128 = (conn->vars.mod == 128);
-    frmr.frmr_control = bad_control;
-    frmr.vs = conn->vars.vs;
-    frmr.vr = conn->vars.vr;
-    frmr.frmr_cr = is_response;
-    frmr.w = (reason & FRMR_W) != 0;
-    frmr.x = (reason & FRMR_X) != 0;
-    frmr.y = (reason & FRMR_Y) != 0;
-    frmr.z = (reason & FRMR_Z) != 0;
-
-    // Encode and send
-    size_t len;
-    uint8_t err;
-    uint8_t *encoded = ax25_frame_reject_frame_encode(&frmr, &len, &err);
-    if (encoded && conn->callbacks.transmit) {
-        conn->callbacks.transmit(conn->user_data, encoded, len);
-    }
-    free(encoded);
-
-    // Store FRMR info for potential retransmission per Section 4.4.5
-    // Info field format per AX.25 v2.2 Section 4.3.3.6:
-    // Modulo-8 (3 bytes): [control][V(R)|C/R|V(S)|0][0|0|0|0|Z|Y|X|W]
-    // Modulo-128 (5 bytes): [control-low][control-high][N(S)|0][N(R)|C/R][0|0|0|0|Z|Y|X|W]
-    if (conn->vars.mod == 128) {
-        conn->frmr_info[0] = bad_control & 0xFF;           // Control low byte
-        conn->frmr_info[1] = (bad_control >> 8) & 0xFF;    // Control high byte
-        conn->frmr_info[2] = (conn->vars.vs & 0x7F) << 1;  // N(S) in bits 1-7
-        conn->frmr_info[3] = ((conn->vars.vr & 0x7F) << 1) | (is_response ? 0x01 : 0x00);  // N(R) in bits 1-7, C/R in bit 0
-        conn->frmr_info[4] = reason & 0x0F;                // W,X,Y,Z in bits 0-3
-        conn->frmr_info_len = 5;
-    } else {
-        conn->frmr_info[0] = bad_control & 0xFF;           // Control byte
-        // Byte 1: V(R) in bits 5-7, C/R in bit 4, V(S) in bits 1-3, bit 0 = 0
-        conn->frmr_info[1] = ((conn->vars.vr & 0x07) << 5) | (is_response ? 0x10 : 0x00) | ((conn->vars.vs & 0x07) << 1);
-        conn->frmr_info[2] = reason & 0x0F;                // W,X,Y,Z in bits 0-3
-        conn->frmr_info_len = 3;
-    }
-
-    conn->frmr_pending = true;
-    conn->frmr_retry_count = 0;
-
-    // Enter frame reject state per Section 4.4.5
-    conn->state = AX25_STATE_FRAME_REJECT;
-
-    // Start T1 timer for FRMR retransmission
-    conn->t1_start_tick = 0;  // Will be set by tick handler
 }
 
 // Handle received FRMR frame - AX.25 v2.2 Section 4.4.5
