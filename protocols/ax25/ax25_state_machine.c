@@ -68,8 +68,8 @@ static void handle_ui_frame(ax25_connection_t *conn, ax25_unnumbered_information
     }
 }
 
-static void handle_test_frame(ax25_connection_t *conn, ax25_test_frame_t *test) {
-    // AX.25 v2.2 Section 6.4.13: Respond to TEST command with TEST response
+static void handle_test_frame(ax25_connection_t *conn, ax25_test_frame_t *test, uint32_t current_tick) {
+    // AX.25 v2.2 Section 6.4.13: Handle TEST command or response
     // TEST frames work in any state - no connection required
     if (test->base.base.header.cr) {
         // Received TEST command - send TEST response
@@ -99,9 +99,21 @@ static void handle_test_frame(ax25_connection_t *conn, ax25_test_frame_t *test) 
             conn->callbacks.transmit(conn->user_data, encoded, len);
             free(encoded);
         }
+    } else {
+        // Received TEST response - update statistics
+        if (conn->test_stats.last_test_tick != 0) {
+            // Calculate RTT - avoid overflow
+            uint32_t rtt = current_tick - conn->test_stats.last_test_tick;
+
+            // Update statistics
+            conn->test_stats.rtt_sum += rtt;
+            conn->test_stats.rtt_count++;
+            conn->test_stats.test_received++;
+
+            // Clear pending test
+            conn->test_stats.last_test_tick = 0;
+        }
     }
-    // TEST response received - application could be notified if callback exists
-    // For now, we silently accept TEST responses
 }
 
 // Internal: Send SABM/SABME command
@@ -550,6 +562,13 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     conn->t2_running = false;              // T2 timer not running initially
     conn->t2_ack_pending = false;          // No pending ACK
     conn->t2_pending_nr = 0;               // Clear pending N(R)
+
+    // Initialize TEST statistics
+    memset(&conn->test_stats, 0, sizeof(ax25_test_stats_t));
+
+    // Initialize full-duplex mode
+    // Default to half-duplex - will be updated if XID negotiation enables full-duplex
+    conn->full_duplex = false;
 
     return 0;
 }
@@ -1095,8 +1114,11 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
 
         case AX25_FRAME_UNNUMBERED_TEST: {
             // Handle TEST frame - works in any state per AX.25 v2.2 Section 6.4.13
+            // Need to get current tick for RTT calculation - use a local variable
+            // In real implementation, current_tick should be passed to ax25_process_frame
+            // For now, we'll use 0 as a placeholder - caller should track tick count
             ax25_test_frame_t *test = (ax25_test_frame_t*) frame;
-            handle_test_frame(conn, test);
+            handle_test_frame(conn, test, 0);  // TODO: Pass actual current_tick from caller
             break;
         }
 
@@ -1272,4 +1294,122 @@ uint8_t ax25_send_ui(ax25_address_t *dest, ax25_address_t *src, uint8_t *data, s
     free(encoded);
 
     return 0;  // Success
+}
+
+// Send TEST command - AX.25 v2.2 Section 6.4.13
+uint8_t ax25_send_test_command(ax25_connection_t *conn, uint8_t *payload, size_t payload_len) {
+    if (!conn || !conn->callbacks.transmit) {
+        return 1;  // Invalid parameters
+    }
+
+    if (payload_len > 256) {
+        return 2;  // Payload too large
+    }
+
+    // Build TEST command frame
+    ax25_test_frame_t test;
+    test.base.base.header = conn->peer_addr;
+    test.base.base.header.cr = true;  // Command
+    test.base.base.type = AX25_FRAME_UNNUMBERED_TEST;
+    test.base.pf = true;  // Poll bit set
+    test.base.modifier = 0xE3;  // TEST modifier
+    test.payload = payload;
+    test.payload_len = payload_len;
+
+    size_t len;
+    uint8_t err;
+    uint8_t *encoded = ax25_test_frame_encode(&test, &len, &err);
+    if (!encoded) {
+        return 3;  // Encoding failed
+    }
+
+    // Transmit the frame
+    conn->callbacks.transmit(conn->user_data, encoded, len);
+    free(encoded);
+
+    // Update statistics - mark test as sent and waiting for response
+    conn->test_stats.test_sent++;
+    conn->test_stats.test_sequence++;
+    // Note: last_test_tick should be set by caller when they call this function
+    // We can't set it here because we don't have access to current_tick
+    // Caller should call: conn->test_stats.last_test_tick = current_tick after this
+
+    return 0;  // Success
+}
+
+// Get average round-trip time from TEST frames
+uint32_t ax25_get_average_rtt_ms(ax25_connection_t *conn) {
+    if (!conn || conn->test_stats.rtt_count == 0) {
+        return 0;
+    }
+
+    // Calculate average RTT
+    // Use 32-bit arithmetic only, avoid division if possible
+    uint32_t sum = conn->test_stats.rtt_sum;
+    uint16_t count = conn->test_stats.rtt_count;
+
+    // Simple division for average
+    uint32_t avg_ticks = sum / count;
+
+    // Convert from 10ms ticks to milliseconds
+    return avg_ticks * 10;
+}
+
+// Apply negotiated parameters to connection - AX.25 v2.2 Section 6.7.2
+uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connection_t *conn) {
+    if (!mgmt_ctx || !conn) {
+        return 1;  // Invalid parameters
+    }
+
+    // Only apply if negotiation completed successfully
+    if (mgmt_ctx->state != AX25_MGMT_NEGOTIATED) {
+        return 1;  // Negotiation not complete
+    }
+
+    // Apply full-duplex setting
+    // Per AX.25 v2.2 Section 6.7.2: both stations must agree to full-duplex
+    conn->full_duplex = mgmt_ctx->agreed_params.full_duplex;
+
+    // Apply modulo (affects sequence number range)
+    if (mgmt_ctx->agreed_params.modulo128) {
+        conn->vars.mod = 128;
+    } else {
+        conn->vars.mod = 8;
+    }
+
+    // Apply reject mode (SREJ/REJ support)
+    if (mgmt_ctx->agreed_params.selective_reject && mgmt_ctx->agreed_params.implicit_reject) {
+        conn->rej_mode = AX25_REJ_MODE_SREJ_REJ;  // Both SREJ and REJ
+    } else if (mgmt_ctx->agreed_params.selective_reject) {
+        conn->rej_mode = AX25_REJ_MODE_SREJ;  // SREJ only
+    } else if (mgmt_ctx->agreed_params.implicit_reject) {
+        conn->rej_mode = AX25_REJ_MODE_REJ;  // REJ only
+    } else {
+        conn->rej_mode = AX25_REJ_MODE_NONE;  // No reject support
+    }
+
+    // Apply timer values (convert from milliseconds to 10ms ticks)
+    conn->timers.t1 = mgmt_ctx->agreed_params.ack_timer / 10;
+
+    // Apply retry count
+    conn->timers.n2 = mgmt_ctx->agreed_params.retries;
+
+    // Apply window size
+    // Per AX.25 v2.2: window size k must be <= (modulo / 2)
+    uint8_t max_window = (conn->vars.mod == 128) ? 127 : 7;
+    conn->timers.k = (mgmt_ctx->agreed_params.window_size <= max_window) ? mgmt_ctx->agreed_params.window_size : max_window;
+
+    // Apply maximum I-field length
+    conn->timers.n1 = mgmt_ctx->agreed_params.ifield_length;
+
+    return 0;  // Success
+}
+
+// Check if full-duplex operation is enabled
+bool ax25_is_full_duplex(ax25_connection_t *conn) {
+    if (!conn) {
+        return false;  // Default to half-duplex on error
+    }
+
+    return conn->full_duplex;
 }

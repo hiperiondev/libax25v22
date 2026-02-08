@@ -25,6 +25,7 @@
 #include <stdbool.h>
 
 #include "ax25.h"
+#include "ax25_mgmt.h"
 
 // FRMR reason codes per AX.25 v2.2 Section 4.3.3.6
 #define FRMR_W  0x01  // Invalid control field or not implemented
@@ -90,6 +91,17 @@ typedef enum {
     AX25_REJ_MODE_SREJ_REJ     // Selective reject-reject (SREJ/REJ) - default per spec
 } ax25_rej_mode_t;
 
+// TEST frame statistics - AX.25 v2.2 Section 6.4.13
+typedef struct {
+    uint16_t test_sent;         // Number of TEST commands sent
+    uint16_t test_received;     // Number of TEST responses received
+    uint16_t test_lost;         // Number of lost TEST frames
+    uint32_t last_test_tick;    // Time of last TEST command (10ms units)
+    uint32_t rtt_sum;           // Sum of round-trip times (10ms units)
+    uint16_t rtt_count;         // Number of RTT measurements
+    uint8_t test_sequence;      // TEST sequence number for tracking
+} ax25_test_stats_t;
+
 // Main connection context - modified fields only
 typedef struct {
     ax25_link_state_t state;        //
@@ -108,6 +120,12 @@ typedef struct {
     bool peer_busy;          //
     bool local_busy;         //
     uint32_t rnr_start_tick;  // When peer busy state entered (for T3 polling)
+
+    // Full-duplex operation - AX.25 v2.2 Section 6.7.2
+    // Negotiated via XID Class of Procedures parameter
+    // When true, both stations can transmit simultaneously at link layer
+    // Note: Physical layer enforcement is handled by HDLC/modem layer
+    bool full_duplex;            // Full-duplex mode negotiated and enabled
 
     // SREJ state tracking - AX.25 v2.2 Section 4.4.4 and 6.4.4
     ax25_rej_mode_t rej_mode;       // Negotiated reject mode
@@ -139,6 +157,8 @@ typedef struct {
     bool t2_running;             // T2 timer active flag
     bool t2_ack_pending;         // Pending ACK waiting for T2 expiration
     uint8_t t2_pending_nr;       // N(R) value to send when T2 expires
+
+    ax25_test_stats_t test_stats;
 } ax25_connection_t;
 
 // API functions
@@ -162,5 +182,29 @@ uint8_t ax25_clear_local_busy(ax25_connection_t *conn);
 // transmit: Callback to transmit the encoded frame
 // Returns: 0 on success, 1-3 on error
 uint8_t ax25_send_ui(ax25_address_t *dest, ax25_address_t *src, uint8_t *data, size_t len, uint8_t pid, void (*transmit)(uint8_t*, size_t));
+
+// Send TEST command - AX.25 v2.2 Section 6.4.13
+// conn: Connection context
+// payload: Test payload data to echo
+// payload_len: Length of payload (max 256 bytes)
+// Returns: 0 on success, 1-3 on error
+uint8_t ax25_send_test_command(ax25_connection_t *conn, uint8_t *payload, size_t payload_len);
+
+// Get average round-trip time from TEST frames
+// conn: Connection context
+// Returns: Average RTT in milliseconds, 0 if no measurements
+uint32_t ax25_get_average_rtt_ms(ax25_connection_t *conn);
+
+// Apply negotiated parameters to connection - AX.25 v2.2 Section 6.7.2
+// This function should be called after XID negotiation completes to update
+// the connection with the agreed parameters from the management context
+// mgmt_ctx: Management context containing negotiated parameters
+// conn: Connection to apply parameters to
+// Returns: 0 on success, 1 on error
+uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connection_t *conn);
+
+// Check if full-duplex operation is enabled for this connection
+// Returns: true if full-duplex, false if half-duplex
+bool ax25_is_full_duplex(ax25_connection_t *conn);
 
 #endif /* AX25_STATE_MACHINE_H_ */
