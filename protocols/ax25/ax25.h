@@ -63,7 +63,7 @@
  * @{
  * Constants defining the maximum number of repeaters and callsign length.
  */
-#define MAX_REPEATERS 8    ///< Maximum number of repeaters in path
+#define AX25_MAX_REPEATERS 8    ///< Maximum number of repeaters in path
 #define CALLSIGN_MAX 7     ///< Maximum length of callsign (6 chars + null)
 /** @} */
 
@@ -213,8 +213,8 @@ typedef struct {
  * Number of repeaters in the path, capped at MAX_REPEATERS.
  */
 typedef struct {
-    ax25_address_t repeaters[MAX_REPEATERS];  ///< Array of repeater addresses
-    int num_repeaters;                      ///< Number of repeaters (0 to 8)
+    ax25_address_t repeaters[AX25_MAX_REPEATERS];  ///< Array of repeater addresses
+    int num_repeaters;                             ///< Number of repeaters (0 to 8)
 } ax25_path_t;
 
 /**
@@ -1221,5 +1221,69 @@ bool ax25_validate_address_field(const uint8_t *addr_field, size_t len, size_t *
  * @return true if SSID is valid (0-15), false otherwise
  */
 bool ax25_validate_ssid(int ssid);
+
+/**
+ * @brief Reverse repeater path for response frames
+ *
+ * Per AX.25 v2.2 Section 3.12.4: When responding to a frame received through
+ * digipeaters, the repeater path must be reversed and H-bits reset.
+ * This allows the response to follow the same path back to the originator.
+ *
+ * Example: If received path is DIGI1*,DIGI2*,DIGI3 (where * = H-bit set)
+ * The reversed path becomes DIGI3,DIGI2,DIGI1 with all H-bits cleared
+ *
+ * @param header Pointer to frame header containing repeater path to reverse
+ */
+void ax25_reverse_repeater_path(ax25_frame_header_t *header);
+
+/**
+ * @brief Check if frame has been digipeated through specified station
+ *
+ * Per AX.25 v2.2 Section 3.12.3: The H-bit (has-been-repeated bit) in a
+ * digipeater address indicates whether that digipeater has already processed
+ * the frame. This function checks if a specific station appears in the path
+ * with its H-bit set.
+ *
+ * @param header Pointer to frame header to check
+ * @param our_call Our callsign to search for
+ * @param our_ssid Our SSID to search for
+ * @return true if frame has been digipeated by the specified station, false otherwise
+ */
+bool ax25_frame_digipeated_by(const ax25_frame_header_t *header, const char *our_call, uint8_t our_ssid);
+
+/**
+ * @brief Find next unused digipeater in path
+ *
+ * Per AX.25 v2.2 Section 3.12.3: Digipeaters process frames sequentially.
+ * This function finds the first digipeater in the path whose H-bit is not set,
+ * indicating it has not yet processed the frame.
+ *
+ * The digipeater path is processed left to right. When a digipeater receives
+ * a frame, it checks if it matches the next unused digipeater in the path.
+ *
+ * @param header Pointer to frame header to search
+ * @return Index of next unused digipeater (0-7), or -1 if all used or no path
+ */
+int8_t ax25_find_next_digi(const ax25_frame_header_t *header);
+
+/**
+ * @brief Simple digipeater function for frame forwarding
+ *
+ * Per AX.25 v2.2 Section 3.12.3: A digipeater examines the address field
+ * of each frame. If the digipeater's address matches the next unused address
+ * in the path, it:
+ * 1. Sets the H-bit for that address
+ * 2. Retransmits the frame
+ *
+ * This implements a basic digipeater that can run on a separate node.
+ * For more complex routing or selective digipeating, extend this function.
+ *
+ * @param frame_data Pointer to received AX.25 frame data
+ * @param len Length of frame data
+ * @param my_call Our digipeater callsign
+ * @param my_ssid Our digipeater SSID
+ * @param retransmit Callback function to retransmit the modified frame
+ */
+void ax25_digipeat_frame(uint8_t *frame_data, size_t len, const char *my_call, uint8_t my_ssid, void (*retransmit)(uint8_t*, size_t));
 
 #endif /* AX25_H_ */

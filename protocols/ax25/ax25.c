@@ -315,7 +315,7 @@ ax25_path_t* ax25_path_new(ax25_address_t **repeaters, int num, uint8_t *err) {
     *err = 0;
 
     // Validate input parameters
-    if (repeaters == NULL || num <= 0 || num > MAX_REPEATERS) {
+    if (repeaters == NULL || num <= 0 || num > AX25_MAX_REPEATERS) {
         *err = 2;  // Invalid input
         return NULL;
     }
@@ -364,12 +364,12 @@ header_decode_result_t ax25_frame_header_decode(const uint8_t *data, size_t len,
     *err = 0;
     header_decode_result_t result = { NULL, data, len };
 
-    ax25_address_t addresses[2 + MAX_REPEATERS];
+    ax25_address_t addresses[2 + AX25_MAX_REPEATERS];
     int addr_count = 0;
     size_t pos = 0;
 
     // Parse addresses until extension bit is set or max repeaters reached
-    while (pos + 7 <= len && addr_count < 2 + MAX_REPEATERS) {
+    while (pos + 7 <= len && addr_count < 2 + AX25_MAX_REPEATERS) {
         // Decode address directly into stack array
         uint8_t *addr_data = (uint8_t*) (data + pos);
 
@@ -1872,4 +1872,127 @@ bool ax25_validate_address_field(const uint8_t *addr_field, size_t len, size_t *
 bool ax25_validate_ssid(int ssid) {
     // SSID must be in range 0-15 (4 bits)
     return (ssid >= 0 && ssid <= 15);
+}
+
+void ax25_reverse_repeater_path(ax25_frame_header_t *header) {
+    // Input validation
+    if (!header || header->repeaters.num_repeaters == 0) {
+        return;
+    }
+
+    // AX.25 v2.2 Section 3.12.4: Reverse the digipeater path for response frames
+    // Maximum 8 digipeaters per Section 3.12.3
+    if (header->repeaters.num_repeaters > AX25_MAX_REPEATERS) {
+        return;  // Invalid path, don't modify
+    }
+
+    // Create temporary copy for reversal
+    ax25_address_t temp[AX25_MAX_REPEATERS];
+    uint8_t count = (uint8_t) header->repeaters.num_repeaters;
+
+    // Copy in reverse order
+    for (uint8_t i = 0; i < count; i++) {
+        temp[i] = header->repeaters.repeaters[count - 1 - i];
+    }
+
+    // Copy back and reset H-bits
+    for (uint8_t i = 0; i < count; i++) {
+        header->repeaters.repeaters[i] = temp[i];
+        // Per Section 3.12.4: Reset H-bits for reverse path
+        // The response will traverse the path anew
+        header->repeaters.repeaters[i].ch = false;
+    }
+}
+
+bool ax25_frame_digipeated_by(const ax25_frame_header_t *header, const char *our_call, uint8_t our_ssid) {
+    // Input validation
+    if (!header || !our_call) {
+        return false;
+    }
+
+    // Validate SSID range per AX.25 v2.2 Section 3.12.2
+    if (!ax25_validate_ssid(our_ssid)) {
+        return false;
+    }
+
+    // AX.25 v2.2 Section 3.12.3: Check each digipeater in path
+    // The H-bit (ch field) indicates has-been-repeated status
+    for (int i = 0; i < header->repeaters.num_repeaters; i++) {
+        const ax25_address_t *digi = &header->repeaters.repeaters[i];
+
+        // Compare callsign (case-sensitive per spec) and SSID
+        if (strcmp(digi->callsign, our_call) == 0 && digi->ssid == our_ssid && digi->ch) {  // H-bit must be set
+            return true;
+        }
+    }
+
+    return false;
+}
+
+int8_t ax25_find_next_digi(const ax25_frame_header_t *header) {
+    // Input validation
+    if (!header || header->repeaters.num_repeaters == 0) {
+        return -1;  // No digipeaters in path
+    }
+
+    // AX.25 v2.2 Section 3.12.3: Find first digipeater with H-bit not set
+    // Digipeaters are processed left to right (index 0 to n)
+    for (int i = 0; i < header->repeaters.num_repeaters; i++) {
+        if (!header->repeaters.repeaters[i].ch) {  // H-bit not set
+            return (int8_t) i;
+        }
+    }
+
+    // All digipeaters have been used
+    return -1;
+}
+
+void ax25_digipeat_frame(uint8_t *frame_data, size_t len, const char *my_call, uint8_t my_ssid, void (*retransmit)(uint8_t*, size_t)) {
+    // Input validation
+    if (!frame_data || !my_call || !retransmit) {
+        return;
+    }
+
+    // Validate SSID range per AX.25 v2.2 Section 3.12.2
+    if (!ax25_validate_ssid(my_ssid)) {
+        return;
+    }
+
+    // Decode the frame - use MODULO128_AUTO to let decoder determine modulo
+    uint8_t err;
+    ax25_frame_t *frame = ax25_frame_decode(frame_data, len, MODULO128_AUTO, &err);
+    if (!frame) {
+        return;  // Invalid frame, cannot digipeat
+    }
+
+    // AX.25 v2.2 Section 3.12.3: Find next digipeater slot
+    int8_t next_idx = ax25_find_next_digi(&frame->header);
+    if (next_idx < 0) {
+        // No digipeater slots available or all already used
+        ax25_frame_free(frame, &err);
+        return;
+    }
+
+    // Check if this digipeater slot is for us
+    ax25_address_t *digi = &frame->header.repeaters.repeaters[next_idx];
+
+    // Compare callsign and SSID
+    // Per AX.25 v2.2: Callsign comparison is case-sensitive
+    if (strcmp(digi->callsign, my_call) == 0 && digi->ssid == my_ssid) {
+        // This frame is addressed to us for digipeating
+        // Set H-bit to mark as used per Section 3.12.3
+        digi->ch = true;
+
+        // Re-encode the frame with modified path
+        size_t new_len;
+        uint8_t *new_frame = ax25_frame_encode(frame, &new_len, &err);
+        if (new_frame) {
+            // Retransmit the modified frame
+            retransmit(new_frame, new_len);
+            free(new_frame);
+        }
+    }
+
+    // Free the decoded frame structure
+    ax25_frame_free(frame, &err);
 }

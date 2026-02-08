@@ -130,17 +130,17 @@ int test_path_functions() {
 
     // Test 3: Maximum repeaters (8)
     {
-        ax25_address_t *repeaters[MAX_REPEATERS];
-        for (int i = 0; i < MAX_REPEATERS; i++) {
+        ax25_address_t *repeaters[AX25_MAX_REPEATERS];
+        for (int i = 0; i < AX25_MAX_REPEATERS; i++) {
             char callsign[12];
             sprintf(callsign, "RPT%d-%d*", i, i);
             repeaters[i] = ax25_address_from_string(callsign, &err);
             TEST_ASSERT(repeaters[i] != NULL, "Repeater address creation should succeed", err);
         }
-        ax25_path_t *path = ax25_path_new(repeaters, MAX_REPEATERS, &err);
+        ax25_path_t *path = ax25_path_new(repeaters, AX25_MAX_REPEATERS, &err);
         TEST_ASSERT(path != NULL, "Path creation with max repeaters should succeed", err);
-        TEST_ASSERT(path->num_repeaters == MAX_REPEATERS, "Path should have 8 repeaters", err);
-        for (int i = 0; i < MAX_REPEATERS; i++) {
+        TEST_ASSERT(path->num_repeaters == AX25_MAX_REPEATERS, "Path should have 8 repeaters", err);
+        for (int i = 0; i < AX25_MAX_REPEATERS; i++) {
             char expected_callsign[7];
             sprintf(expected_callsign, "RPT%d", i);
             TEST_ASSERT(strcmp(path->repeaters[i].callsign, expected_callsign) == 0, "Repeater callsign should match", err);
@@ -148,24 +148,24 @@ int test_path_functions() {
             TEST_ASSERT(path->repeaters[i].ch == true, "Repeater ch should be true", err);
         }
         ax25_path_free(path, &err);
-        for (int i = 0; i < MAX_REPEATERS; i++) {
+        for (int i = 0; i < AX25_MAX_REPEATERS; i++) {
             ax25_address_free(repeaters[i], &err);
         }
     }
 
     // Test 4: Exceeding maximum repeaters (9)
     {
-        ax25_address_t *repeaters[MAX_REPEATERS + 1];
-        for (int i = 0; i < MAX_REPEATERS + 1; i++) {
+        ax25_address_t *repeaters[AX25_MAX_REPEATERS + 1];
+        for (int i = 0; i < AX25_MAX_REPEATERS + 1; i++) {
             char callsign[12];
             sprintf(callsign, "RPT%d-%d*", i, i);
             repeaters[i] = ax25_address_from_string(callsign, &err);
             TEST_ASSERT(repeaters[i] != NULL, "Repeater address creation should succeed", err);
         }
-        ax25_path_t *path = ax25_path_new(repeaters, MAX_REPEATERS + 1, &err);
+        ax25_path_t *path = ax25_path_new(repeaters, AX25_MAX_REPEATERS + 1, &err);
         TEST_ASSERT(path == NULL, "Path creation exceeding max repeaters should fail", err);
         TEST_ASSERT(err == 2, "Error should be 2 for too many repeaters", err);
-        for (int i = 0; i < MAX_REPEATERS + 1; i++) {
+        for (int i = 0; i < AX25_MAX_REPEATERS + 1; i++) {
             ax25_address_free(repeaters[i], &err);
         }
     }
