@@ -31,37 +31,22 @@
 #define MOD_DIFF(a, b, m) (((a) - (b)) & ((m) == 8 ? 0x07 : 0x7F))
 #define MOD_LT(a, b, m) (MOD_DIFF(a, b, m) > 0 && MOD_DIFF(a, b, m) < ((m) == 8 ? 4 : 64))
 
-uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void *user_data) {
-    if (!conn || !cb)
-        return 1;
+// Send DM response when receiving frames in disconnected state
+static void send_dm(ax25_connection_t *conn, bool pf) {
+    ax25_unnumbered_frame_t dm;
+    dm.base.header = conn->peer_addr;
+    dm.base.header.cr = false;  // Response
+    dm.base.type = AX25_FRAME_UNNUMBERED_DM;
+    dm.pf = pf;
+    dm.modifier = 0x0F;
 
-    memset(conn, 0, sizeof(ax25_connection_t));
-    conn->state = AX25_STATE_DISCONNECTED;  //
-    conn->vars.mod = 8;                    // Default to modulo 8
-    conn->timers.t1 = 30;                  // 3 seconds default
-    conn->timers.t2 = 15;                  // 1.5 seconds default
-    conn->timers.t3 = 300;                 // 30 seconds default
-    conn->timers.n2 = 10;                  //
-    conn->timers.k = 7;                    //
-    conn->timers.n1 = 256;                 //
-    conn->callbacks = *cb;                 //
-    conn->user_data = user_data;           //
-    conn->peer_busy = false;               // Initialize peer busy state
-    conn->local_busy = false;              // Initialize local busy state
-    conn->rnr_start_tick = 0;              // Initialize RNR tracking
-    conn->frmr_pending = false;            // No FRMR pending
-    conn->frmr_retry_count = 0;            // Clear FRMR retry counter
-
-    // Initialize SREJ state per AX.25 v2.2 defaults
-    conn->rej_mode = AX25_REJ_MODE_SREJ_REJ;  // Default per Section 6.3.2
-    conn->srej_max = 1;                       // Typically 1 per specification
-    conn->srej_exception = false;
-    conn->rej_exception = false;
-    conn->srej_count = 0;
-    conn->srej_buffer_count = 0;
-    memset(conn->srej_bitmap, 0, sizeof(conn->srej_bitmap));
-
-    return 0;
+    size_t len;
+    uint8_t err;
+    uint8_t *encoded = ax25_unnumbered_frame_encode(&dm, &len, &err);
+    if (encoded && conn->callbacks.transmit) {
+        conn->callbacks.transmit(conn->user_data, encoded, len);
+        free(encoded);
+    }
 }
 
 // Internal: Send SABM/SABME command
@@ -531,6 +516,39 @@ static void handle_received_frmr(ax25_connection_t *conn, ax25_frame_reject_fram
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void *user_data) {
+    if (!conn || !cb)
+        return 1;
+
+    memset(conn, 0, sizeof(ax25_connection_t));
+    conn->state = AX25_STATE_DISCONNECTED;  //
+    conn->vars.mod = 8;                    // Default to modulo 8
+    conn->timers.t1 = 30;                  // 3 seconds default
+    conn->timers.t2 = 15;                  // 1.5 seconds default
+    conn->timers.t3 = 300;                 // 30 seconds default
+    conn->timers.n2 = 10;                  //
+    conn->timers.k = 7;                    //
+    conn->timers.n1 = 256;                 //
+    conn->callbacks = *cb;                 //
+    conn->user_data = user_data;           //
+    conn->peer_busy = false;               // Initialize peer busy state
+    conn->local_busy = false;              // Initialize local busy state
+    conn->rnr_start_tick = 0;              // Initialize RNR tracking
+    conn->frmr_pending = false;            // No FRMR pending
+    conn->frmr_retry_count = 0;            // Clear FRMR retry counter
+
+    // Initialize SREJ state per AX.25 v2.2 defaults
+    conn->rej_mode = AX25_REJ_MODE_SREJ_REJ;  // Default per Section 6.3.2
+    conn->srej_max = 1;                       // Typically 1 per specification
+    conn->srej_exception = false;
+    conn->rej_exception = false;
+    conn->srej_count = 0;
+    conn->srej_buffer_count = 0;
+    memset(conn->srej_bitmap, 0, sizeof(conn->srej_bitmap));
+
+    return 0;
+}
 
 // Process received I-frame - AX.25 v2.2 Section 6.4.4
 void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *iframe) {

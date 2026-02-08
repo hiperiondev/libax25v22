@@ -24,6 +24,11 @@
 
 #include "fx25.h"
 
+typedef struct {
+    uint8_t coeff[64];   // Max parity bytes
+    uint8_t length;
+} rs_poly_t;
+
 // GF(2^8) with primitive polynomial x^8 + x^4 + x^3 + x^2 + 1 (0x11D)
 const uint8_t fx25_gf_exp[512] = {
 // Precomputed exponent table: exp[i] = alpha^i
@@ -79,6 +84,100 @@ static const fx25_mode_t fx25_modes[] = {  //
                 { 0x0B, { 0x4A, 0x4A, 0xBE, 0xC4, 0xA7, 0x24, 0xB7, 0x96 }, 64, 64, 32 },  //
                 { 0, { 0, 0, 0, 0, 0, 0, 0, 0 }, 0, 0, 0 }                                 //
         };
+
+// Berlekamp-Massey algorithm for finding error locator polynomial
+static void rs_find_error_locator(const uint8_t *syndromes, uint8_t nsyn, rs_poly_t *lambda) {
+    rs_poly_t lambda_prev;
+    rs_poly_t temp;
+    uint8_t k = 0;
+    uint8_t l = 0;
+    uint8_t dm = 1;  // Discrepancy from previous iteration
+
+    // Initialize
+    memset(lambda, 0, sizeof(rs_poly_t));
+    memset(&lambda_prev, 0, sizeof(rs_poly_t));
+    lambda->coeff[0] = 1;
+    lambda->length = 1;
+    lambda_prev.coeff[0] = 1;
+    lambda_prev.length = 1;
+
+    for (k = 0; k < nsyn; k++) {
+        // Calculate discrepancy
+        uint8_t d = syndromes[k];
+        for (uint8_t i = 1; i < lambda->length; i++) {
+            d ^= GF_MUL(lambda->coeff[i], syndromes[k - i]);
+        }
+
+        if (d != 0) {
+            // Update lambda
+            temp = *lambda;
+
+            uint8_t factor = GF_MUL(d, GF_DIV(1, dm));
+            for (uint8_t i = 0; i < lambda_prev.length; i++) {
+                uint8_t idx = i + k + 1 - (lambda_prev.length - 1);
+                if (idx < 64) {
+                    lambda->coeff[idx] ^= GF_MUL(factor, lambda_prev.coeff[i]);
+                }
+            }
+
+            if (lambda->length < k + 1 - l + lambda_prev.length) {
+                lambda->length = k + 1 - l + lambda_prev.length;
+            }
+
+            if (2 * l <= k) {
+                l = k + 1 - l;
+                lambda_prev = temp;
+                dm = d;
+            }
+        }
+    }
+}
+
+// Find error positions using Chien search
+static uint8_t rs_find_error_positions(const rs_poly_t *lambda, uint8_t codeword_len, uint8_t *error_pos) {
+    uint8_t num_errors = 0;
+
+    // Chien search: evaluate lambda at each alpha^i
+    for (uint8_t i = 0; i < codeword_len; i++) {
+        uint8_t sum = lambda->coeff[0];
+
+        for (uint8_t j = 1; j < lambda->length; j++) {
+            sum ^= GF_MUL(lambda->coeff[j], fx25_gf_exp[(j * i) % 255]);
+        }
+
+        if (sum == 0) {
+            // Error at position (codeword_len - 1 - i)
+            if (num_errors < 32) {  // Max correctable
+                error_pos[num_errors++] = codeword_len - 1 - i;
+            }
+        }
+    }
+
+    return num_errors;
+}
+
+// Calculate error magnitudes using Forney algorithm
+static void rs_calculate_error_magnitudes(const uint8_t *syndromes, const rs_poly_t *lambda, const uint8_t *error_pos, uint8_t num_errors, uint8_t *error_mag) {
+    for (uint8_t i = 0; i < num_errors; i++) {
+        uint8_t pos = error_pos[i];
+        uint8_t x_inv = fx25_gf_exp[255 - pos];  // alpha^(-pos)
+
+        // Calculate omega(x_inv) - numerator
+        uint8_t omega = syndromes[0];
+        for (uint8_t j = 1; j < lambda->length; j++) {
+            omega ^= GF_MUL(syndromes[j], GF_POW(x_inv, j));
+        }
+
+        // Calculate lambda'(x_inv) - denominator
+        uint8_t lambda_prime = lambda->coeff[1];
+        for (uint8_t j = 2; j < lambda->length; j += 2) {
+            lambda_prime ^= GF_MUL(lambda->coeff[j + 1], GF_POW(x_inv, j));
+        }
+
+        // Error magnitude = omega / lambda'
+        error_mag[i] = GF_DIV(omega, lambda_prime);
+    }
+}
 
 // Helper function to compare two 8-byte correlation tags
 // Returns true if tags match, false otherwise
@@ -260,49 +359,30 @@ uint8_t fx25_decode(const uint8_t *rx_data, size_t rx_len, fx25_frame_t *fx25_fr
         return 0;  // Success, no errors
     }
 
-    // Check if errors are correctable by counting non-zero syndromes
-    uint8_t error_count = 0;
-    for (uint8_t i = 0; i < mode->parity_bytes; i++) {
-        if (syndromes[i] != 0)
-            error_count++;
-    }
+    // Find error locator polynomial using Berlekamp-Massey
+    rs_poly_t lambda;
+    rs_find_error_locator(syndromes, mode->parity_bytes, &lambda);
 
-    if (error_count > mode->correctable_bytes) {
+    // Find error positions using Chien search
+    uint8_t error_pos[32];
+    uint8_t num_errors = rs_find_error_positions(&lambda, fx25_frame->codeword_len, error_pos);
+
+    if (num_errors == 0 || num_errors > mode->correctable_bytes) {
         *corrected_errors = 0xFF;  // Uncorrectable
         return 6;
     }
 
-    // Simplified: For small error counts, try byte-by-byte correction
-    // This is not efficient but works for microcontrollers
-    uint8_t *codeword = fx25_frame->rs_codeword;
-    bool corrected = false;
+    // Calculate error magnitudes using Forney algorithm
+    uint8_t error_mag[32];
+    rs_calculate_error_magnitudes(syndromes, &lambda, error_pos, num_errors, error_mag);
 
-    for (uint8_t pos = 0; pos < fx25_frame->codeword_len && !corrected; pos++) {
-        for (int err_val = 1; err_val < 256; err_val++) {
-            codeword[pos] ^= err_val;
-
-            uint8_t test_syndromes[64];
-            rs_compute_syndromes(codeword, fx25_frame->codeword_len, mode->parity_bytes, test_syndromes);
-
-            bool still_errors = false;
-            for (uint8_t i = 0; i < mode->parity_bytes; i++) {
-                if (test_syndromes[i] != 0) {
-                    still_errors = true;
-                    break;
-                }
-            }
-
-            if (!still_errors) {
-                *corrected_errors = 1;  // Corrected 1 error
-                return 0;
-            }
-
-            codeword[pos] ^= err_val;  // Restore
-        }
+    // Correct errors
+    for (uint8_t i = 0; i < num_errors; i++) {
+        fx25_frame->rs_codeword[error_pos[i]] ^= error_mag[i];
     }
 
-    *corrected_errors = 0xFF;
-    return 6;  // Uncorrectable
+    *corrected_errors = num_errors;
+    return 0;
 }
 
 void fx25_frame_free(fx25_frame_t *frame) {
