@@ -306,9 +306,9 @@ int test_frame_header_functions() {
     uint8_t err = 0;
 
     // Test data: Header with destination "ABCDEF-7" and source "GHIJKL-1*"
-    // Dest: 'A'<<1=0x82, 'B'<<1=0x84, 'C'<<1=0x86, 'D'<<1=0x88, 'E'<<1=0x8A, 'F'<<1=0x8C, SSID=7, ch=1, res0=1, res1=1, ext=0: 0xEE
-    // Src:  'G'<<1=0x8E, 'H'<<1=0x90, 'I'<<1=0x92, 'J'<<1=0x94, 'K'<<1=0x96, 'L'<<1=0x98, SSID=1, ch=0, res0=1, res1=1, ext=1: 0x63
-    uint8_t header_data[] = { 0x82, 0x84, 0x86, 0x88, 0x8A, 0x8C, 0xEE, 0x8E, 0x90, 0x92, 0x94, 0x96, 0x98, 0x63 };
+    // Dest: 'A'<<1=0x82, 'B'<<1=0x84, 'C'<<1=0x86, 'D'<<1=0x88, 'E'<<1=0x8A, 'F'<<1=0x8C, SSID=7, ch=1, res0=1, res1=0, ext=0: 0xAE
+    // Src:  'G'<<1=0x8E, 'H'<<1=0x90, 'I'<<1=0x92, 'J'<<1=0x94, 'K'<<1=0x96, 'L'<<1=0x98, SSID=1, ch=0, res0=1, res1=0, ext=1: 0x23
+    uint8_t header_data[] = { 0x82, 0x84, 0x86, 0x88, 0x8A, 0x8C, 0xAE, 0x8E, 0x90, 0x92, 0x94, 0x96, 0x98, 0x23 };
     header_decode_result_t result = ax25_frame_header_decode(header_data, sizeof(header_data), &err);
     TEST_ASSERT(result.header != NULL, "ax25_frame_header_decode should return non-NULL header", err);
     if (result.header) {
@@ -317,14 +317,14 @@ int test_frame_header_functions() {
         TEST_ASSERT(result.header->destination.ssid == 7, "Destination SSID should be 7", err);
         TEST_ASSERT(result.header->destination.ch == true, "Destination ch should be true", err);
         TEST_ASSERT(result.header->destination.res0 == true, "Destination res0 should be true", err);
-        TEST_ASSERT(result.header->destination.res1 == true, "Destination res1 should be true", err);
+        TEST_ASSERT(result.header->destination.res1 == false, "Destination res1 should be false", err);
         TEST_ASSERT(result.header->destination.extension == false, "Destination extension should be false", err);
 
         TEST_ASSERT(strcmp(result.header->source.callsign, "GHIJKL") == 0, "Source callsign should be GHIJKL", err);
         TEST_ASSERT(result.header->source.ssid == 1, "Source SSID should be 1", err);
         TEST_ASSERT(result.header->source.ch == false, "Source ch should be false", err);
         TEST_ASSERT(result.header->source.res0 == true, "Source res0 should be true", err);
-        TEST_ASSERT(result.header->source.res1 == true, "Source res1 should be true", err);
+        TEST_ASSERT(result.header->source.res1 == false, "Source res1 should be false", err);
         TEST_ASSERT(result.header->source.extension == true, "Source extension should be true", err);
 
         TEST_ASSERT(result.header->cr == true, "cr should be true (dest ch=1, src ch=0)", err);
@@ -347,7 +347,9 @@ int test_frame_functions() {
     uint8_t err = 0;
 
     // Test data: UI frame with dest "ABCDEF-7", src "GHIJKL-1*", control=0x03, PID=0xF0, payload="TEST"
-    uint8_t frame_data[] = { 0x82, 0x84, 0x86, 0x88, 0x8A, 0x8C, 0xEE, 0x8E, 0x90, 0x92, 0x94, 0x96, 0x98, 0x63, 0x03, 0xF0, 'T', 'E', 'S', 'T' };
+    // Dest SSID byte: 0xAE (ch=1, res0=1, res1=0, ssid=7, ext=0)
+    // Src SSID byte: 0x23 (ch=0, res0=1, res1=0, ssid=1, ext=1)
+    uint8_t frame_data[] = { 0x82, 0x84, 0x86, 0x88, 0x8A, 0x8C, 0xAE, 0x8E, 0x90, 0x92, 0x94, 0x96, 0x98, 0x23, 0x03, 0xF0, 'T', 'E', 'S', 'T' };
     ax25_frame_t *frame = ax25_frame_decode(frame_data, sizeof(frame_data), 0, &err);
     TEST_ASSERT(frame != NULL, "ax25_frame_decode should return non-NULL", err);
     if (frame) {
@@ -805,38 +807,50 @@ int test_ax25_connection(void) {
     // AX.25 Connection Test Packets
     // 1. CONNECT Request (Station A -> Station B: SABM)
     // Dest: VA3BBB-7 (C=1, ext=0), Src: VA3AAA-1 (C=0, ext=1), Control: 0x3F (SABM, P=1)
-    unsigned char ax25_sabm_packet[] = { 0xAC, 0x82, 0x66, 0x84, 0x84, 0x84, 0xEE, 0xAC, 0x82, 0x66, 0x82, 0x82, 0x82, 0x63, 0x3F };
+    // Dest SSID byte: 0xAE (ch=1, res0=1, res1=0, ssid=7, ext=0)
+    // Src SSID byte: 0x23 (ch=0, res0=1, res1=0, ssid=1, ext=1)
+    unsigned char ax25_sabm_packet[] = { 0xAC, 0x82, 0x66, 0x84, 0x84, 0x84, 0xAE, 0xAC, 0x82, 0x66, 0x82, 0x82, 0x82, 0x23, 0x3F };
     size_t ax25_sabm_packet_len = sizeof(ax25_sabm_packet);
 
     // 2. CONNECT Acknowledgment (Station B -> Station A: UA)
     // Dest: VA3AAA-1 (C=0, ext=0), Src: VA3BBB-7 (C=1, ext=1), Control: 0x73 (UA, F=1)
-    unsigned char ax25_ua_connect_packet[] = { 0xAC, 0x82, 0x66, 0x82, 0x82, 0x82, 0x62, 0xAC, 0x82, 0x66, 0x84, 0x84, 0x84, 0xEF, 0x73 };
+    // Dest SSID byte: 0x22 (ch=0, res0=1, res1=0, ssid=1, ext=0)
+    // Src SSID byte: 0xAF (ch=1, res0=1, res1=0, ssid=7, ext=1)
+    unsigned char ax25_ua_connect_packet[] = { 0xAC, 0x82, 0x66, 0x82, 0x82, 0x82, 0x22, 0xAC, 0x82, 0x66, 0x84, 0x84, 0x84, 0xAF, 0x73 };
     size_t ax25_ua_connect_packet_len = sizeof(ax25_ua_connect_packet);
 
     // 3. SEND Data (Station A -> Station B: I-Frame)
     // Dest: VA3BBB-7, Src: VA3AAA-1, Control: 0x00 (I, N(S)=0, N(R)=0), PID: 0xF0, Payload: "Hello, World!"
-    unsigned char ax25_i_frame_packet[] = { 0xAC, 0x82, 0x66, 0x84, 0x84, 0x84, 0xEE, 0xAC, 0x82, 0x66, 0x82, 0x82, 0x82, 0x63, 0x00, 0xF0, 0x48, 0x65, 0x6C,
+    // Dest SSID byte: 0xAE (ch=1, res0=1, res1=0, ssid=7, ext=0)
+    // Src SSID byte: 0x23 (ch=0, res0=1, res1=0, ssid=1, ext=1)
+    unsigned char ax25_i_frame_packet[] = { 0xAC, 0x82, 0x66, 0x84, 0x84, 0x84, 0xAE, 0xAC, 0x82, 0x66, 0x82, 0x82, 0x82, 0x23, 0x00, 0xF0, 0x48, 0x65, 0x6C,
             0x6C, 0x6F, 0x2C, 0x20, 0x57, 0x6F, 0x72, 0x6C, 0x64, 0x21 };
     size_t ax25_i_frame_packet_len = sizeof(ax25_i_frame_packet);
 
     // 4. RECEIVE Data Acknowledgment (Station B -> Station A: RR)
     // Dest: VA3AAA-1, Src: VA3BBB-7, Control: 0x31 (RR, N(R)=1, P/F=1)
-    unsigned char ax25_rr_packet[] = { 0xAC, 0x82, 0x66, 0x82, 0x82, 0x82, 0x62, 0xAC, 0x82, 0x66, 0x84, 0x84, 0x84, 0xEF, 0x31 };
+    // Dest SSID byte: 0x22 (ch=0, res0=1, res1=0, ssid=1, ext=0)
+    // Src SSID byte: 0xAF (ch=1, res0=1, res1=0, ssid=7, ext=1)
+    unsigned char ax25_rr_packet[] = { 0xAC, 0x82, 0x66, 0x82, 0x82, 0x82, 0x22, 0xAC, 0x82, 0x66, 0x84, 0x84, 0x84, 0xAF, 0x31 };
     size_t ax25_rr_packet_len = sizeof(ax25_rr_packet);
 
     // 5. DISCONNECT Request (Station A -> Station B: DISC)
     // Dest: VA3BBB-7, Src: VA3AAA-1, Control: 0x43 (DISC, P=0)
+    // Dest SSID byte: 0xAE (ch=1, res0=1, res1=0, ssid=7, ext=0)
+    // Src SSID byte: 0x23 (ch=0, res0=1, res1=0, ssid=1, ext=1)
     unsigned char ax25_disc_packet[] = {  //
-            0xAC, 0x82, 0x66, 0x84, 0x84, 0x84, 0xEE, 0xAC, 0x82, 0x66, 0x82, 0x82, 0x82, 0x63, 0x43 };
+            0xAC, 0x82, 0x66, 0x84, 0x84, 0x84, 0xAE, 0xAC, 0x82, 0x66, 0x82, 0x82, 0x82, 0x23, 0x43 };
     size_t ax25_disc_packet_len = sizeof(ax25_disc_packet);
 
     // 6. DISCONNECT Acknowledgment (Station B -> Station A: UA)
     // Dest: VA3AAA-1, Src: VA3BBB-7, Control: 0x73 (UA, F=1)
-    unsigned char ax25_ua_disconnect_packet[] = { 0xAC, 0x82, 0x66, 0x82, 0x82, 0x82, 0x62, 0xAC, 0x82, 0x66, 0x84, 0x84, 0x84, 0xEF, 0x73 };
+    // Dest SSID byte: 0x22 (ch=0, res0=1, res1=0, ssid=1, ext=0)
+    // Src SSID byte: 0xAF (ch=1, res0=1, res1=0, ssid=7, ext=1)
+    unsigned char ax25_ua_disconnect_packet[] = { 0xAC, 0x82, 0x66, 0x82, 0x82, 0x82, 0x22, 0xAC, 0x82, 0x66, 0x84, 0x84, 0x84, 0xAF, 0x73 };
     size_t ax25_ua_disconnect_packet_len = sizeof(ax25_ua_disconnect_packet);
 
     // Invalid packet for error testing
-    unsigned char invalid_packet[] = { 0xAC, 0x82, 0x66, 0x84, 0x84, 0x84, 0xEE, 0xAC, 0x82, 0x66, 0x82, 0x82, 0x82, 0x63, 0xFF };
+    unsigned char invalid_packet[] = { 0xAC, 0x82, 0x66, 0x84, 0x84, 0x84, 0xAE, 0xAC, 0x82, 0x66, 0x82, 0x82, 0x82, 0x23, 0xFF };
     size_t invalid_packet_len = sizeof(invalid_packet);
 
     unsigned char short_packet[] = { 0xAC, 0x82, 0x66 };
@@ -910,7 +924,7 @@ int test_ax25_connection(void) {
         TEST_ASSERT(decoded_frame->type == AX25_FRAME_SUPERVISORY_RR_8BIT, "Frame type should be RR 8-bit", err);
         ax25_supervisory_frame_t *s_frame = (ax25_supervisory_frame_t*) decoded_frame;
         TEST_ASSERT(s_frame->nr == 1, "nr should be 1", err);
-        TEST_ASSERT(s_frame->pf == true, "Poll/Final should be true", err);  // Changed from false to true
+        TEST_ASSERT(s_frame->pf == true, "Poll/Final should be true", err);
         TEST_ASSERT(s_frame->code == 0x00, "Code should be 0x00 (RR)", err);
         encode_result = ax25_frame_encode(decoded_frame, &encoded_len, &err);
         TEST_ASSERT(encode_result != NULL && err == 0, "Encoding RR frame", err);

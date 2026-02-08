@@ -192,11 +192,12 @@ typedef struct {
  */
 typedef struct {
     char callsign[CALLSIGN_MAX];  ///< Callsign, up to 6 chars, null-terminated
-    int ssid;                    ///< SSID, 4-bit value (0-15)
-    bool ch;                     ///< C bit (dest/source) or H bit (repeater)
-    bool res0;                   ///< Reserved bit 0, typically 0
-    bool res1;                   ///< Reserved bit 1, typically 0
-    bool extension;              ///< HDLC extension bit (1 = last address)
+    int ssid;                     ///< SSID, 4-bit value (0-15)
+    bool ch;                      ///< C bit (dest/source) or H bit (repeater)
+    bool res0;                    ///< Reserved bit 0, typically 0
+    bool res1;                    ///< Reserved bit 1, typically 0
+    bool mod128;                  ///< bit 6: false = modulo-128 frame, true = modulo-8 frame
+    bool extension;               ///< HDLC extension bit (1 = last address)
 } ax25_address_t;
 
 /**
@@ -1103,7 +1104,7 @@ ax25_xid_parameter_t* ax25_xid_class_of_procedures_new(bool a_flag, bool b_flag,
  */
 ax25_xid_parameter_t* ax25_xid_hdlc_optional_functions_new(bool rnr, bool rej, bool srej, bool sabm, bool sabme, bool dm, bool disc, bool ua, bool frmr,
 bool ui, bool xid, bool test, bool modulo8, bool modulo128, bool res1, bool res2, bool res3, bool res4, bool res5, bool res6, bool res7, uint8_t reserved,
-        bool ext, uint8_t *err);
+bool ext, uint8_t *err);
 
 /**
  * @brief Creates an XID parameter with a big-endian integer value.

@@ -115,12 +115,12 @@ static uint32_t uint_decode(const uint8_t *data, size_t len, bool big_endian, ui
 ax25_address_t* ax25_address_decode(const uint8_t *data, uint8_t *err) {
     *err = 0;
     if (data == NULL) {
-        *err = 2;  // Invalid input
+        *err = 2;
         return NULL;
     }
     ax25_address_t *addr = malloc(sizeof(ax25_address_t));
     if (!addr) {
-        *err = 1;  // Memory allocation failure
+        *err = 1;
         return NULL;
     }
     for (int i = 0; i < 6; i++) {
@@ -129,8 +129,9 @@ ax25_address_t* ax25_address_decode(const uint8_t *data, uint8_t *err) {
     addr->callsign[6] = '\0';
     addr->ssid = (data[6] & 0x1E) >> 1;
     addr->ch = (data[6] & 0x80) != 0;
-    addr->res1 = (data[6] & 0x40) != 0;  // res1 is bit 6
-    addr->res0 = (data[6] & 0x20) != 0;  // res0 is bit 5
+    addr->mod128 = ((data[6] & 0x40) == 0);  // bit 6 cleared indicates modulo-128
+    addr->res0 = (data[6] & 0x20) != 0;
+    addr->res1 = (data[6] & 0x40) != 0;      // kept for compatibility
     addr->extension = (data[6] & 0x01) != 0;
     return addr;
 }
@@ -267,29 +268,30 @@ ax25_address_t* ax25_address_from_string(const char *str, uint8_t *err) {
 
 uint8_t* ax25_address_encode(const ax25_address_t *addr, size_t *len, uint8_t *err) {
     *err = 0;
-    uint8_t *bytes = malloc(7);
-
-    if (!bytes) {
+    if (addr == NULL) {
+        *err = 2;
+        return NULL;
+    }
+    uint8_t *data = malloc(7);
+    if (!data) {
         *err = 1;
         return NULL;
     }
-
     for (int i = 0; i < 6; i++) {
-        bytes[i] = (addr->callsign[i] ? addr->callsign[i] : ' ') << 1;
+        data[i] = (addr->callsign[i] & 0x7F) << 1;
     }
-
-    bytes[6] = (addr->ssid << 1) & 0x1E;
-    if (addr->extension)
-        bytes[6] |= 0x01;
-    if (addr->res0)
-        bytes[6] |= 0x20;
-    if (addr->res1)
-        bytes[6] |= 0x40;
+    uint8_t ssid_byte = (addr->ssid << 1) & 0x1E;
     if (addr->ch)
-        bytes[6] |= 0x80;
+        ssid_byte |= 0x80;
+    if (!addr->mod128)
+        ssid_byte &= ~0x40;  // clear bit 6 for modulo-128
+    if (addr->res0)
+        ssid_byte |= 0x20;
+    if (addr->extension)
+        ssid_byte |= 0x01;
+    data[6] = ssid_byte;
     *len = 7;
-
-    return bytes;
+    return data;
 }
 
 ax25_address_t* ax25_address_copy(const ax25_address_t *addr, uint8_t *err) {
