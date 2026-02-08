@@ -34,6 +34,22 @@
 #define MOD_DIFF(a, b, m) (((a) - (b)) & ((m) == 8 ? 0x07 : 0x7F))
 #define MOD_LT(a, b, m) (MOD_DIFF(a, b, m) > 0 && MOD_DIFF(a, b, m) < ((m) == 8 ? 4 : 64))
 
+// Start T2 timer instead of sending immediate RR response - AX.25 v2.2 Section 6.7.1.2
+// This allows piggybacking acknowledgments on outgoing I-frames
+static void start_t2_response(ax25_connection_t *conn, uint32_t current_tick) {
+    conn->t2_start_tick = current_tick;
+    conn->t2_running = true;
+    conn->t2_ack_pending = true;
+    conn->t2_pending_nr = conn->vars.vr;
+}
+
+// Cancel T2 timer when sending I-frame (ACK is piggybacked)
+// This is called whenever we send an I-frame that includes N(R)
+static void cancel_t2(ax25_connection_t *conn) {
+    conn->t2_running = false;
+    conn->t2_ack_pending = false;
+}
+
 // Handle UI frame - AX.25 v2.2 Section 6.4.12: UI frames accepted in any state
 static void handle_ui_frame(ax25_connection_t *conn, ax25_unnumbered_information_frame_t *ui) {
     // AX.25 v2.2 Section 6.4.12: UI frames can be received in any state
@@ -376,8 +392,11 @@ static void process_expected_iframe(ax25_connection_t *conn, ax25_information_fr
         conn->rej_exception = false;
     }
 
-    // Send acknowledgment
-    send_rr(conn, iframe->pf);
+    // Send acknowledgment - use T2 delay unless P/F bit is set
+    if (iframe->pf) {
+        send_rr(conn, true);  // Immediate response required for P/F bit
+    }
+    // For non-P/F frames, T2 timer will send RR after delay (started in tick handler)
 }
 
 // Handle received SREJ frame - AX.25 v2.2 Section 6.4.8
@@ -604,6 +623,11 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     conn->srej_buffer_count = 0;
     memset(conn->srej_bitmap, 0, sizeof(conn->srej_bitmap));
 
+    // T2 timer state initialization
+    conn->t2_running = false;              // T2 timer not running initially
+    conn->t2_ack_pending = false;          // No pending ACK
+    conn->t2_pending_nr = 0;               // Clear pending N(R)
+
     return 0;
 }
 
@@ -647,7 +671,17 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
 
     } else {
         // Duplicate or old frame - ignore but acknowledge per Section 6.4.4
-        send_rr(conn, pf);
+        // Use T2 delay for duplicate frame ACK unless P/F set
+        if (pf) {
+            send_rr(conn, true);  // Immediate response for P/F bit
+        }
+        // For non-P/F, T2 timer will send RR after delay
+    }
+
+    // Start T2 timer if not already running and ACK not pending
+    // This is called after processing the I-frame to start the response delay
+    if (!conn->t2_running && !conn->t2_ack_pending && !iframe->pf) {
+        start_t2_response(conn, conn->t3_start_tick);  // Use current tick from last T3 update
     }
 }
 
@@ -655,6 +689,20 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
 void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
     if (!conn)
         return;
+
+    // T2 Response Delay Timer - AX.25 v2.2 Section 6.7.1.2
+    // Allows piggybacking of acknowledgments on I-frames to improve efficiency
+    if (conn->t2_running && conn->state == AX25_STATE_CONNECTED) {
+        // T2 value is already in 1/10 second units (same as tick resolution)
+        if ((current_tick_10ms - conn->t2_start_tick) >= conn->timers.t2) {
+            // T2 expired - send pending acknowledgment
+            if (conn->t2_ack_pending) {
+                send_rr(conn, false);
+                conn->t2_ack_pending = false;
+            }
+            conn->t2_running = false;
+        }
+    }
 
     // Handle T1 - Acknowledgment timer
     if (conn->t1_start_tick != 0 && (uint16_t) (current_tick_10ms - conn->t1_start_tick) >= conn->timers.t1) {
@@ -1132,6 +1180,9 @@ uint8_t ax25_send_data(ax25_connection_t *conn, uint8_t *data, size_t len, uint8
     if (conn->callbacks.transmit) {
         conn->callbacks.transmit(conn->user_data, encoded, frame_len);
     }
+
+    // Cancel T2 timer when sending I-frame (ACK is piggybacked in N(R))
+    cancel_t2(conn);
 
     conn->vars.vs = INC_MOD(conn->vars.vs, conn->vars.mod);
 

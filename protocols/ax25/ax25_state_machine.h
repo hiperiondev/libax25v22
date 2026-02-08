@@ -134,6 +134,11 @@ typedef struct {
     uint8_t frmr_info[5];           // Stored FRMR info field for retransmission (max 5 bytes for modulo-128)
     uint8_t frmr_info_len;          // Length of stored FRMR info (3 for modulo-8, 5 for modulo-128)
     uint8_t frmr_retry_count;       // FRMR retransmission counter
+
+    // T2 Response Delay Timer - AX.25 v2.2 Section 6.7.1.2
+    bool t2_running;             // T2 timer active flag
+    bool t2_ack_pending;         // Pending ACK waiting for T2 expiration
+    uint8_t t2_pending_nr;       // N(R) value to send when T2 expires
 } ax25_connection_t;
 
 // API functions
