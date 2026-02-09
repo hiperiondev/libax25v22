@@ -885,30 +885,7 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
 
     // Handle T1 - Acknowledgment timer
     if (conn->t1_start_tick != 0 && (uint16_t) (current_tick_10ms - conn->t1_start_tick) >= conn->timers.t1) {
-
-        if (conn->retry_count >= conn->timers.n2) {
-            // Max retries exceeded - disconnect
-            conn->state = AX25_STATE_DISCONNECTED;
-            if (conn->callbacks.on_disconnect) {
-                conn->callbacks.on_disconnect(conn->user_data, 1);  // Timeout
-            }
-            return;
-        }
-
-        // Retransmit all unacknowledged frames
-        uint8_t idx = conn->tx_queue.head;
-        for (uint8_t i = 0; i < conn->tx_queue.count; i++) {
-            if (conn->callbacks.transmit) {
-                conn->callbacks.transmit(conn->user_data, conn->tx_queue.frames[idx], conn->tx_queue.lengths[idx]);
-            }
-            idx = (idx + 1) % AX25_MAX_QUEUE_SIZE;
-        }
-
-        conn->retry_count++;
-        conn->t1_start_tick = current_tick_10ms;
-
-        // Restart T3 when T1 is running (T3 only runs when T1 is not)
-        conn->t3_start_tick = 0;
+        handle_t1_timeout(conn, current_tick_10ms);
     }
 
     // Handle FRMR retransmission per AX.25 v2.2 Section 4.4.5
@@ -1191,36 +1168,7 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
                 break;
             }
 
-            // Process acknowledgment
-            uint8_t nr = sframe->nr;
-            while (conn->tx_queue.count > 0 && MOD_LT(conn->tx_queue.ns[conn->tx_queue.head], nr, conn->vars.mod)) {
-                free(conn->tx_queue.frames[conn->tx_queue.head]);
-                conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
-                conn->tx_queue.count--;
-            }
-            conn->vars.va = nr;
-
-            // Clear peer busy condition on RR per AX.25 v2.2 Section 4.3.2.2
-            if (conn->peer_busy) {
-                conn->peer_busy = false;
-                conn->rnr_start_tick = 0;
-                if (conn->callbacks.on_busy) {
-                    conn->callbacks.on_busy(conn->user_data, false);
-                }
-            }
-
-            if (sframe->pf) {
-                // Response to our poll - restart T3
-                conn->t3_start_tick = current_tick;
-            }
-
-            // Cancel T1 if all frames acknowledged
-            if (conn->tx_queue.count == 0) {
-                conn->t1_start_tick = 0;
-                conn->retry_count = 0;
-                // Restart T3 now that T1 is stopped
-                conn->t3_start_tick = current_tick;
-            }
+            handle_received_rr(conn, sframe);
             break;
         }
 
