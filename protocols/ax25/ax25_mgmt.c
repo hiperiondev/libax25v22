@@ -41,6 +41,7 @@ uint8_t ax25_mgmt_init(ax25_mgmt_context_t *ctx) {
     ctx->local_params.window_size = 7;           // k default (modulo-8)
     ctx->local_params.ack_timer = 3000;          // T1 = 3 seconds
     ctx->local_params.retries = 10;              // N2 default
+    ctx->local_params.response_delay_timer = 500;  // T2 default = 500ms
 
     return 0;
 }
@@ -120,6 +121,11 @@ uint8_t ax25_mgmt_start_negotiation(ax25_mgmt_context_t *ctx, ax25_address_t *de
     XID_PI_RETRIES, ctx->local_params.retries, 1,  // 1 byte
             &err);
 
+    // Response Delay Timer (PI=11) - use big-endian function
+    params[num_params++] = ax25_xid_big_endian_new(
+    XID_PI_RESP_DELAY_TIMER, ctx->local_params.response_delay_timer, 2,  // 2 bytes
+            &err);
+
     xid.parameters = params;
     xid.param_count = num_params;
 
@@ -161,6 +167,7 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
     remote.window_size = 4;  // AX.25 v2.0 default
     remote.ack_timer = 3000;
     remote.retries = 10;
+    remote.response_delay_timer = 500;  // T2 default
 
     // Parse each parameter
     for (size_t i = 0; i < xid->param_count; i++) {
@@ -211,6 +218,12 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
                     remote.retries = raw->pv[0];
                 }
             break;
+
+            case XID_PI_RESP_DELAY_TIMER:  // 11
+                if (raw->pv_len == 2) {
+                    remote.response_delay_timer = (raw->pv[0] << 8) | raw->pv[1];
+                }
+            break;
         }
     }
 
@@ -225,6 +238,9 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
     ctx->agreed_params.window_size = (ctx->local_params.window_size < remote.window_size) ? ctx->local_params.window_size : remote.window_size;
     ctx->agreed_params.ack_timer = (ctx->local_params.ack_timer > remote.ack_timer) ? ctx->local_params.ack_timer : remote.ack_timer;
     ctx->agreed_params.retries = (ctx->local_params.retries < remote.retries) ? ctx->local_params.retries : remote.retries;
+    // Negotiate T2: use maximum (safer) or match local policy. Similar to T1 logic here.
+    ctx->agreed_params.response_delay_timer =
+            (ctx->local_params.response_delay_timer > remote.response_delay_timer) ? ctx->local_params.response_delay_timer : remote.response_delay_timer;
 
     // If this was a command, send response
     if (xid->base.base.header.cr) {
@@ -290,6 +306,11 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
         // Retries (PI=10)
         params[num_params++] = ax25_xid_big_endian_new(
         XID_PI_RETRIES, ctx->agreed_params.retries, 1,  // 1 byte
+                &err);
+
+        // Response Delay Timer (PI=11)
+        params[num_params++] = ax25_xid_big_endian_new(
+        XID_PI_RESP_DELAY_TIMER, ctx->agreed_params.response_delay_timer, 2,  // 2 bytes
                 &err);
 
         response.parameters = params;

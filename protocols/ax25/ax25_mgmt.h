@@ -33,6 +33,7 @@
 #define XID_PI_WINDOW_SIZE_RX          8  //
 #define XID_PI_ACK_TIMER               9  //
 #define XID_PI_RETRIES                 10 //
+#define XID_PI_RESP_DELAY_TIMER        11 // Response Delay Timer (T2)
 
 // Class of Procedures bits
 #define XID_COP_HALF_DUPLEX  0x01 //
@@ -68,6 +69,7 @@ typedef struct {
     uint8_t window_size;     // k - max outstanding I-frames
     uint16_t ack_timer;      // T1 in milliseconds
     uint8_t retries;         // N2
+    uint16_t response_delay_timer;  // T2 in milliseconds
 } ax25_negotiated_params_t;
 
 // Management state machine states
