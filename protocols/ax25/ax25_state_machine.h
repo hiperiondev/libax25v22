@@ -289,4 +289,14 @@ const ax25_statistics_t* ax25_get_statistics(ax25_connection_t *conn);
 // Reset all statistics counters to zero
 void ax25_reset_statistics(ax25_connection_t *conn);
 
+// Send data with optional FX.25 Forward Error Correction
+// conn: Connection context
+// data: Data to send
+// len: Length of data
+// pid: Protocol Identifier
+// use_fx25: true to enable FX.25 wrapping, false for standard AX.25
+// channel_quality: 0-100 (0=worst, 100=perfect) - used for FX.25 mode selection
+// Returns: 0 on success, 1-5 on error
+uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t len, uint8_t pid, bool use_fx25, uint8_t channel_quality);
+
 #endif /* AX25_STATE_MACHINE_H_ */

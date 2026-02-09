@@ -85,6 +85,16 @@ static const fx25_mode_t fx25_modes[] = {  //
                 { 0, { 0, 0, 0, 0, 0, 0, 0, 0 }, 0, 0, 0 }                                 //
         };
 
+// Helper function to compare correlation tags (byte-by-byte comparison)
+static bool tag_matches(const uint8_t *tag1, const uint8_t *tag2) {
+    for (int i = 0; i < 8; i++) {
+        if (tag1[i] != tag2[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Berlekamp-Massey algorithm for finding error locator polynomial
 static void rs_find_error_locator(const uint8_t *syndromes, uint8_t nsyn, rs_poly_t *lambda) {
     rs_poly_t lambda_prev;
@@ -177,17 +187,6 @@ static void rs_calculate_error_magnitudes(const uint8_t *syndromes, const rs_pol
         // Error magnitude = omega / lambda'
         error_mag[i] = GF_DIV(omega, lambda_prime);
     }
-}
-
-// Helper function to compare two 8-byte correlation tags
-// Returns true if tags match, false otherwise
-static bool tag_matches(const uint8_t *tag1, const uint8_t *tag2) {
-    for (int i = 0; i < 8; i++) {
-        if (tag1[i] != tag2[i]) {
-            return false;
-        }
-    }
-    return true;
 }
 
 const fx25_mode_t* fx25_get_mode(uint8_t mode_id) {
@@ -389,5 +388,55 @@ void fx25_frame_free(fx25_frame_t *frame) {
     if (frame && frame->rs_codeword) {
         free(frame->rs_codeword);
         frame->rs_codeword = NULL;
+    }
+}
+
+// Select optimal FX.25 mode based on channel quality and frame size
+// channel_quality: 0-100 (0=worst, 100=perfect)
+// Returns: mode_id for fx25_encode()
+uint8_t fx25_select_mode_for_conditions(size_t ax25_len, uint8_t channel_quality) {
+    // Clamp channel quality to valid range
+    if (channel_quality > 100) {
+        channel_quality = 100;
+    }
+
+    // For poor channels (<30%), use high redundancy (64 parity bytes)
+    if (channel_quality < 30) {
+        if (ax25_len <= 32) {
+            return FX25_MODE_32_32;  // 32+32 provides better ratio for tiny frames
+        }
+        if (ax25_len <= 64) {
+            return FX25_MODE_64_64;
+        }
+        if (ax25_len <= 128) {
+            return FX25_MODE_128_64;
+        }
+        return FX25_MODE_191_64;
+    }
+    // For medium channels (30-70%), use medium redundancy (32 parity bytes)
+    else if (channel_quality < 70) {
+        if (ax25_len <= 32) {
+            return FX25_MODE_32_32;
+        }
+        if (ax25_len <= 64) {
+            return FX25_MODE_64_32;
+        }
+        if (ax25_len <= 128) {
+            return FX25_MODE_128_32;
+        }
+        return FX25_MODE_223_32;
+    }
+    // For good channels (>=70%), use low redundancy (16 parity bytes)
+    else {
+        if (ax25_len <= 32) {
+            return FX25_MODE_32_16;
+        }
+        if (ax25_len <= 64) {
+            return FX25_MODE_64_16;
+        }
+        if (ax25_len <= 128) {
+            return FX25_MODE_128_16;
+        }
+        return FX25_MODE_239_16;
     }
 }

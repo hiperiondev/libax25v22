@@ -62,7 +62,7 @@ extern const uint8_t fx25_gf_log[256];
 
 // FX.25 frame structure
 typedef struct {
-    uint8_t correlation_tag[8]; // 8 bytes
+    uint8_t correlation_tag[8];  // 8 bytes
     uint8_t *rs_codeword;       // D + P bytes (AX.25 frame + parity)
     size_t codeword_len;        // D + P (max 255)
     uint8_t mode_id;            // Selected mode
@@ -73,6 +73,12 @@ uint8_t fx25_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mode_id,
 uint8_t fx25_decode(const uint8_t *rx_data, size_t rx_len, fx25_frame_t *fx25_frame, uint8_t *corrected_errors);
 void fx25_frame_free(fx25_frame_t *frame);
 const fx25_mode_t* fx25_get_mode(uint8_t mode_id);
-uint8_t fx25_select_mode(size_t ax25_len); // Auto-select best mode
+uint8_t fx25_select_mode(size_t ax25_len);  // Auto-select best mode
+
+// Select optimal FX.25 mode based on AX.25 frame length and channel quality
+// ax25_len: Length of AX.25 frame to be encoded
+// channel_quality: 0-100 (0=worst, 100=perfect channel)
+// Returns: mode_id suitable for fx25_encode()
+uint8_t fx25_select_mode_for_conditions(size_t ax25_len, uint8_t channel_quality);
 
 #endif /* FX25_H_ */

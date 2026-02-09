@@ -21,6 +21,7 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include "fx25.h"
 #include "ax25_state_machine.h"
 
 // EST frame handler - AX.25 v2.2 Section 4.3.3.8 and 6.4.13
@@ -1846,3 +1847,102 @@ void ax25_reset_statistics(ax25_connection_t *conn) {
     memset(&conn->stats, 0, sizeof(ax25_statistics_t));
 }
 
+// Send data with optional FX.25 Forward Error Correction
+// This function wraps ax25_send_data() with FX.25 encoding when requested
+uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t len, uint8_t pid, bool use_fx25, uint8_t channel_quality) {
+    if (!conn || !data || len == 0) {
+        return 1;
+    }
+
+    // If FX.25 not requested, use standard AX.25
+    if (!use_fx25) {
+        return ax25_send_data(conn, data, len, pid);
+    }
+
+    // Build AX.25 I-frame first (without HDLC encoding)
+    // We need to construct the complete AX.25 frame that will be wrapped by FX.25
+
+    // Calculate frame size: address(14) + control(1-2) + pid(1) + data(len)
+    bool extended = (conn->vars.mod == 128);
+    uint16_t ctrl_len = extended ? 2 : 1;
+    uint16_t ax25_frame_len = 14 + ctrl_len + 1 + len;
+
+    // Allocate buffer for AX.25 frame (static allocation to avoid malloc on MCU)
+    uint8_t ax25_frame[256];  // Max reasonable frame size
+    if (ax25_frame_len > sizeof(ax25_frame)) {
+        return 2;  // Frame too large
+    }
+
+    uint16_t offset = 0;
+
+    // Build address field (destination + source, 7 bytes each)
+    memcpy(&ax25_frame[offset], &conn->peer_addr.destination, 7);
+    offset += 7;
+    memcpy(&ax25_frame[offset], &conn->peer_addr.source, 7);
+    offset += 7;
+
+    // Build control field (I-frame format)
+    uint8_t ns = conn->vars.vs;
+    uint8_t nr = conn->vars.vr;
+
+    if (extended) {
+        // Modulo-128: 2 bytes
+        ax25_frame[offset++] = (ns << 1);  // N(S) in bits 1-7, bit 0 = 0
+        ax25_frame[offset++] = (nr << 1);  // N(R) in bits 1-7, bit 0 = P
+    } else {
+        // Modulo-8: 1 byte
+        ax25_frame[offset++] = (nr << 5) | (ns << 1);  // N(R)|N(S)|0
+    }
+
+    // Add PID
+    ax25_frame[offset++] = pid;
+
+    // Add data
+    memcpy(&ax25_frame[offset], data, len);
+    offset += len;
+
+    // Now wrap with FX.25
+    fx25_frame_t fx25;
+    uint8_t mode = fx25_select_mode_for_conditions(ax25_frame_len, channel_quality);
+    uint8_t err = fx25_encode(ax25_frame, ax25_frame_len, mode, &fx25);
+
+    if (err != 0) {
+        return 3;  // FX.25 encoding failed
+    }
+
+    // Transmit FX.25 frame: correlation tag + RS codeword
+    if (conn->callbacks.transmit) {
+        // Allocate temporary buffer for transmission
+        uint16_t tx_len = 8 + fx25.codeword_len;
+        uint8_t *tx_buffer = malloc(tx_len);
+
+        if (!tx_buffer) {
+            fx25_frame_free(&fx25);
+            return 4;  // Memory allocation failed
+        }
+
+        // Copy correlation tag (8 bytes)
+        memcpy(tx_buffer, fx25.correlation_tag, 8);
+
+        // Copy RS codeword (data + parity)
+        memcpy(tx_buffer + 8, fx25.rs_codeword, fx25.codeword_len);
+
+        // Transmit
+        conn->callbacks.transmit(conn->user_data, tx_buffer, tx_len);
+
+        // Cleanup
+        free(tx_buffer);
+    }
+
+    // Free FX.25 frame resources
+    fx25_frame_free(&fx25);
+
+    // Update state machine as if we sent a normal I-frame
+    conn->vars.vs = INC_MOD(conn->vars.vs, conn->vars.mod);
+
+    // Update statistics
+    conn->stats.iframe_sent++;
+    conn->stats.bytes_sent += len;
+
+    return 0;
+}
