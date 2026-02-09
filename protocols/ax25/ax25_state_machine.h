@@ -38,6 +38,38 @@
 // Protocol handler callback type - receives PID for context
 typedef void (*ax25_protocol_handler_t)(void *user_data, uint8_t *data, size_t len, uint8_t pid);
 
+// AX.25 v2.2 Statistics structure for monitoring link quality and performance
+typedef struct {
+    // Frame counters
+    uint32_t iframe_sent;
+    uint32_t iframe_received;
+    uint32_t iframe_retransmitted;
+    uint32_t sframe_sent;
+    uint32_t sframe_received;
+    uint32_t uframe_sent;
+    uint32_t uframe_received;
+
+    // Error counters (use 16-bit to prevent overflow on small MCUs)
+    uint16_t fcs_errors;
+    uint16_t aborts;
+    uint16_t overruns;
+    uint16_t crc_errors;
+    uint16_t frmr_sent;
+    uint16_t frmr_received;
+
+    // Performance metrics
+    uint16_t t1_expirations;
+    uint16_t retries;
+    uint32_t bytes_sent;
+    uint32_t bytes_received;
+
+    // Current state
+    uint8_t current_vs;
+    uint8_t current_vr;
+    uint8_t current_va;
+    uint8_t tx_queue_depth;
+} ax25_statistics_t;
+
 // Protocol handler entry structure
 typedef struct {
     uint8_t pid;                      // Protocol ID
@@ -177,6 +209,8 @@ typedef struct {
     ax25_protocol_entry_t protocols[AX25_MAX_PROTOCOL_HANDLERS];  // Registered protocol handlers
     ax25_protocol_handler_t default_handler;                      // Fallback for unregistered PIDs
     void *default_user_data;                                      // Context for default handler
+
+    ax25_statistics_t stats;  // Statistics and diagnostics
 } ax25_connection_t;
 
 // API functions
@@ -248,5 +282,11 @@ void ax25_set_default_protocol_handler(ax25_connection_t *conn, ax25_protocol_ha
 // Per AX.25 v2.2 Section 6.7.1.1: T1 should be at least 2x round-trip time
 // Call this after receiving TEST response to optimize T1 for link conditions
 void ax25_adjust_t1_adaptive(ax25_connection_t *conn);
+
+// Get statistics structure (read-only access)
+const ax25_statistics_t* ax25_get_statistics(ax25_connection_t *conn);
+
+// Reset all statistics counters to zero
+void ax25_reset_statistics(ax25_connection_t *conn);
 
 #endif /* AX25_STATE_MACHINE_H_ */

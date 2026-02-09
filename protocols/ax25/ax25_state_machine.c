@@ -175,6 +175,12 @@ static void send_rr(ax25_connection_t *conn, bool pf) {
     uint8_t *encoded = ax25_supervisory_frame_encode(&rr, &len, &err);
     if (encoded && conn->callbacks.transmit) {
         conn->callbacks.transmit(conn->user_data, encoded, len);
+
+        // Update statistics - S-frame sent
+        conn->stats.sframe_sent++;
+        if (conn->stats.sframe_sent == 0) {
+            conn->stats.sframe_sent = 1;  // Prevent overflow
+        }
     }
     free(encoded);
 }
@@ -261,9 +267,68 @@ static void send_sabm(ax25_connection_t *conn, bool extended) {
 
     if (encoded && conn->callbacks.transmit) {
         conn->callbacks.transmit(conn->user_data, encoded, len);
+
+        // Update statistics - U-frame sent
+        conn->stats.uframe_sent++;
+        if (conn->stats.uframe_sent == 0) {
+            conn->stats.uframe_sent = 1;  // Prevent overflow
+        }
     }
 
     free(encoded);
+}
+
+static void handle_t1_timeout(ax25_connection_t *conn, uint32_t current_tick_10ms) {
+    // Update statistics - T1 expiration
+    conn->stats.t1_expirations++;
+    if (conn->stats.t1_expirations == 0) {
+        conn->stats.t1_expirations = 1;  // Prevent overflow on 16-bit
+    }
+
+    // Increment retry counter
+    conn->retry_count++;
+
+    // **NEW** - Update retry statistics
+    conn->stats.retries++;
+    if (conn->stats.retries == 0) {
+        conn->stats.retries = 1;  // Prevent overflow on 16-bit
+    }
+
+    // Check if max retries exceeded
+    if (conn->retry_count >= conn->timers.n2) {
+        conn->state = AX25_STATE_DISCONNECTED;
+        conn->t1_start_tick = 0;
+
+        clear_srej_state(conn);
+        conn->rej_exception = false;
+        conn->peer_busy = false;
+        conn->local_busy = false;
+        conn->rnr_start_tick = 0;
+
+        if (conn->callbacks.on_disconnect) {
+            conn->callbacks.on_disconnect(conn->user_data, 1);
+        }
+        return;
+    }
+
+    conn->state = AX25_STATE_TIMER_RECOVERY;
+
+    // Retransmit all pending I-frames
+    uint8_t idx = conn->tx_queue.head;
+    for (uint8_t i = 0; i < conn->tx_queue.count; i++) {
+        if (conn->callbacks.transmit) {
+            conn->callbacks.transmit(conn->user_data, conn->tx_queue.frames[idx], conn->tx_queue.lengths[idx]);
+
+            // Update statistics - I-frame retransmitted
+            conn->stats.iframe_retransmitted++;
+            if (conn->stats.iframe_retransmitted == 0) {
+                conn->stats.iframe_retransmitted = 1;
+            }
+        }
+        idx = (idx + 1) % AX25_MAX_QUEUE_SIZE;
+    }
+
+    conn->t1_start_tick = current_tick_10ms;
 }
 
 // Internal: Send REJ frame
@@ -280,6 +345,12 @@ static void send_rej(ax25_connection_t *conn, bool pf) {
     uint8_t *encoded = ax25_supervisory_frame_encode(&rej, &len, &err);
     if (encoded && conn->callbacks.transmit) {
         conn->callbacks.transmit(conn->user_data, encoded, len);
+
+        // Update statistics - S-frame sent
+        conn->stats.sframe_sent++;
+        if (conn->stats.sframe_sent == 0) {
+            conn->stats.sframe_sent = 1;  // Prevent overflow
+        }
     }
     free(encoded);
 }
@@ -298,6 +369,12 @@ static void send_srej(ax25_connection_t *conn, uint8_t missing_ns, bool pf) {
     uint8_t *encoded = ax25_supervisory_frame_encode(&srej, &len, &err);
     if (encoded && conn->callbacks.transmit) {
         conn->callbacks.transmit(conn->user_data, encoded, len);
+
+        // Update statistics - S-frame sent
+        conn->stats.sframe_sent++;
+        if (conn->stats.sframe_sent == 0) {
+            conn->stats.sframe_sent = 1;  // Prevent overflow
+        }
     }
     free(encoded);
 
@@ -439,12 +516,24 @@ static void process_expected_iframe(ax25_connection_t *conn, ax25_information_fr
 static void handle_received_srej(ax25_connection_t *conn, ax25_supervisory_frame_t *sframe) {
     uint8_t nr = sframe->nr;
 
+    // Update statistics - S-frame received
+    conn->stats.sframe_received++;
+    if (conn->stats.sframe_received == 0) {
+        conn->stats.sframe_received = 1;  // Prevent overflow
+    }
+
     // Retransmit the specific frame with N(S) = N(R) of SREJ
     uint8_t idx = conn->tx_queue.head;
     for (uint8_t i = 0; i < conn->tx_queue.count; i++) {
         if (conn->tx_queue.ns[idx] == nr) {
             if (conn->callbacks.transmit) {
                 conn->callbacks.transmit(conn->user_data, conn->tx_queue.frames[idx], conn->tx_queue.lengths[idx]);
+
+                // Update statistics - I-frame retransmitted
+                conn->stats.iframe_retransmitted++;
+                if (conn->stats.iframe_retransmitted == 0) {
+                    conn->stats.iframe_retransmitted = 1;
+                }
             }
             break;  // Only retransmit the specific frame
         }
@@ -459,12 +548,24 @@ static void handle_received_srej(ax25_connection_t *conn, ax25_supervisory_frame
 static void handle_received_rej(ax25_connection_t *conn, ax25_supervisory_frame_t *sframe) {
     uint8_t nr = sframe->nr;
 
+    // Update statistics - S-frame received
+    conn->stats.sframe_received++;
+    if (conn->stats.sframe_received == 0) {
+        conn->stats.sframe_received = 1;  // Prevent overflow
+    }
+
     // Section 6.4.7: Retransmit from N(R) onwards
     uint8_t idx = conn->tx_queue.head;
     for (uint8_t i = 0; i < conn->tx_queue.count; i++) {
         if (MOD_LT(nr, conn->tx_queue.ns[idx], conn->vars.mod) || nr == conn->tx_queue.ns[idx]) {
             if (conn->callbacks.transmit) {
                 conn->callbacks.transmit(conn->user_data, conn->tx_queue.frames[idx], conn->tx_queue.lengths[idx]);
+
+                // Update statistics - I-frame retransmitted
+                conn->stats.iframe_retransmitted++;
+                if (conn->stats.iframe_retransmitted == 0) {
+                    conn->stats.iframe_retransmitted = 1;
+                }
             }
         }
         idx = (idx + 1) % AX25_MAX_QUEUE_SIZE;
@@ -488,6 +589,12 @@ static void send_rnr(ax25_connection_t *conn, bool pf) {
     uint8_t *encoded = ax25_supervisory_frame_encode(&rnr, &len, &err);
     if (encoded && conn->callbacks.transmit) {
         conn->callbacks.transmit(conn->user_data, encoded, len);
+
+        // Update statistics - S-frame sent
+        conn->stats.sframe_sent++;
+        if (conn->stats.sframe_sent == 0) {
+            conn->stats.sframe_sent = 1;  // Prevent overflow
+        }
     }
     free(encoded);
 }
@@ -495,6 +602,12 @@ static void send_rnr(ax25_connection_t *conn, bool pf) {
 // Handle received RNR frame - AX.25 v2.2 Section 6.4.9
 static void handle_received_rnr(ax25_connection_t *conn, ax25_supervisory_frame_t *rnr) {
     uint8_t nr = rnr->nr;
+
+    // Update statistics - S-frame received
+    conn->stats.sframe_received++;
+    if (conn->stats.sframe_received == 0) {
+        conn->stats.sframe_received = 1;  // Prevent overflow
+    }
 
     // Acknowledge frames up to N(R)-1 (same as RR processing)
     // Per AX.25 v2.2 Section 6.4.9: frames up to N(R)-1 are acknowledged
@@ -535,6 +648,56 @@ static void handle_received_rnr(ax25_connection_t *conn, ax25_supervisory_frame_
             send_rnr(conn, true);  // F=1
         } else {
             send_rr(conn, true);   // F=1
+        }
+    }
+}
+
+static void handle_received_rr(ax25_connection_t *conn, ax25_supervisory_frame_t *rr) {
+    uint8_t nr = rr->nr;
+    bool pf = rr->pf;
+
+    // Update statistics - S-frame received
+    conn->stats.sframe_received++;
+    if (conn->stats.sframe_received == 0) {
+        conn->stats.sframe_received = 1;  // Prevent overflow
+    }
+
+    // Acknowledge frames up to N(R)-1
+    while (conn->tx_queue.count > 0) {
+        uint8_t head_ns = conn->tx_queue.ns[conn->tx_queue.head];
+        uint8_t diff = (nr - head_ns) & (conn->vars.mod == 8 ? 0x07 : 0x7F);
+        if (diff > 0 && diff < (conn->vars.mod == 8 ? 4 : 64)) {
+            free(conn->tx_queue.frames[conn->tx_queue.head]);
+            conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
+            conn->tx_queue.count--;
+        } else {
+            break;
+        }
+    }
+
+    conn->vars.va = nr;
+
+    if (conn->peer_busy) {
+        conn->peer_busy = false;
+        conn->rnr_start_tick = 0;
+        if (conn->callbacks.on_busy) {
+            conn->callbacks.on_busy(conn->user_data, false);
+        }
+    }
+
+    if (conn->tx_queue.count == 0) {
+        conn->t1_start_tick = 0;
+    } else {
+        if (conn->t1_start_tick == 0) {
+            conn->t1_start_tick = conn->t3_start_tick ? conn->t3_start_tick : 1;
+        }
+    }
+
+    if (pf) {
+        if (conn->local_busy) {
+            send_rnr(conn, true);
+        } else {
+            send_rr(conn, true);
         }
     }
 }
@@ -617,6 +780,9 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     conn->default_handler = NULL;
     conn->default_user_data = NULL;
 
+    // Initialize statistics
+    memset(&conn->stats, 0, sizeof(ax25_statistics_t));
+
     return 0;
 }
 
@@ -632,6 +798,19 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
 
     // Restart T3 on received activity (link is not idle)
     restart_t3_on_activity(conn, conn->t3_start_tick ? conn->t3_start_tick : 0);
+
+    // Update statistics - I-frame received
+    conn->stats.iframe_received++;
+    // Prevent overflow on 32-bit counter
+    if (conn->stats.iframe_received == 0) {
+        conn->stats.iframe_received = 1;
+    }
+    // Update bytes received (approximate - includes payload)
+    conn->stats.bytes_received += iframe->payload_len;
+    if (conn->stats.bytes_received < iframe->payload_len) {
+        // Overflow occurred
+        conn->stats.bytes_received = iframe->payload_len;
+    }
 
     // Check if this acknowledges our sent frames
     if (MOD_LT(conn->vars.va, nr, conn->vars.mod) || nr == conn->vars.va) {
@@ -827,6 +1006,12 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
 
     switch (frame->type) {
         case AX25_FRAME_UNNUMBERED_UA: {
+            // Update statistics - U-frame received
+            conn->stats.uframe_received++;
+            if (conn->stats.uframe_received == 0) {
+                conn->stats.uframe_received = 1;
+            }
+
             if (conn->state == AX25_STATE_AWAITING_CONNECTION) {
                 // Connection established - transition to CONNECTED state
                 conn->vars.vs = conn->vars.vr = conn->vars.va = 0;
@@ -897,6 +1082,12 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
 
         case AX25_FRAME_UNNUMBERED_SABM:
         case AX25_FRAME_UNNUMBERED_SABME: {
+            // Update statistics - U-frame received
+            conn->stats.uframe_received++;
+            if (conn->stats.uframe_received == 0) {
+                conn->stats.uframe_received = 1;
+            }
+
             // Connection request
             conn->peer_addr = frame->header;
             conn->peer_addr.cr = false;  // Response will have opposite CR bit
@@ -1170,6 +1361,12 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
         }
 
         case AX25_FRAME_UNNUMBERED_DISC: {
+            // Update statistics - U-frame received
+            conn->stats.uframe_received++;
+            if (conn->stats.uframe_received == 0) {
+                conn->stats.uframe_received = 1;
+            }
+
             // Disconnect request
             conn->state = AX25_STATE_DISCONNECTED;
 
@@ -1208,6 +1405,12 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
         }
 
         case AX25_FRAME_UNNUMBERED_TEST: {
+            // Update statistics - U-frame received
+            conn->stats.uframe_received++;
+            if (conn->stats.uframe_received == 0) {
+                conn->stats.uframe_received = 1;
+            }
+
             // Handle TEST frame - works in any state per AX.25 v2.2 Section 6.4.13
             // Need to get current tick for RTT calculation - use a local variable
             // In real implementation, current_tick should be passed to ax25_process_frame
@@ -1218,6 +1421,12 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
         }
 
         case AX25_FRAME_UNNUMBERED_INFORMATION: {
+            // Update statistics - U-frame received
+            conn->stats.uframe_received++;
+            if (conn->stats.uframe_received == 0) {
+                conn->stats.uframe_received = 1;
+            }
+
             // Handle UI frame - AX.25 v2.2 Section 6.4.12
             ax25_unnumbered_information_frame_t *ui = (ax25_unnumbered_information_frame_t*) frame;
             handle_ui_frame(conn, ui);
@@ -1299,6 +1508,18 @@ uint8_t ax25_send_data(ax25_connection_t *conn, uint8_t *data, size_t len, uint8
     // Send immediately
     if (conn->callbacks.transmit) {
         conn->callbacks.transmit(conn->user_data, encoded, frame_len);
+    }
+
+    // Update statistics - I-frame sent
+    conn->stats.iframe_sent++;
+    if (conn->stats.iframe_sent == 0) {
+        conn->stats.iframe_sent = 1;  // Prevent overflow
+    }
+    // Update bytes sent
+    conn->stats.bytes_sent += iframe.payload_len;
+    if (conn->stats.bytes_sent < iframe.payload_len) {
+        // Overflow occurred
+        conn->stats.bytes_sent = iframe.payload_len;
     }
 
     // Cancel T2 timer when sending I-frame (ACK is piggybacked in N(R))
@@ -1597,3 +1818,31 @@ void ax25_adjust_t1_adaptive(ax25_connection_t *conn) {
         conn->timers.t1 = (uint16_t) new_t1;
     }
 }
+
+// Get statistics structure (read-only access)
+// conn: Connection context
+// Returns: Pointer to statistics structure or NULL on error
+const ax25_statistics_t* ax25_get_statistics(ax25_connection_t *conn) {
+    if (!conn) {
+        return NULL;
+    }
+
+    // Update current state variables
+    conn->stats.current_vs = conn->vars.vs;
+    conn->stats.current_vr = conn->vars.vr;
+    conn->stats.current_va = conn->vars.va;
+    conn->stats.tx_queue_depth = conn->tx_queue.count;
+
+    return &conn->stats;
+}
+
+// Reset all statistics counters to zero
+// conn: Connection context
+void ax25_reset_statistics(ax25_connection_t *conn) {
+    if (!conn) {
+        return;
+    }
+
+    memset(&conn->stats, 0, sizeof(ax25_statistics_t));
+}
+
