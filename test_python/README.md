@@ -2,9 +2,7 @@
 
 Production-ready functional test suite for validating **`libax25v22`**, a C implementation of the AX.25 v2.2 amateur packet radio protocol.
 
-This project provides **~179 automated tests** using the **PyHam AX.25 Python library** as a reference (“gold standard”) implementation. It validates frame encoding/decoding, control logic, CRC/FCS, HDLC behavior, flow control, and real-world scenarios such as APRS and packet radio.
-
-Coverage is approximately **90% of AX.25 v2.2 core protocol features**.
+This project provides  automated tests using the **PyHam AX.25 Python library** as a reference (“gold standard”) implementation. It validates frame encoding/decoding, control logic, CRC/FCS, HDLC behavior, flow control, and real-world scenarios.
 
 ---
 
@@ -14,7 +12,7 @@ Coverage is approximately **90% of AX.25 v2.2 core protocol features**.
 ✅ Bit-accurate comparison against PyHam
 ✅ Supports C library integration via `ctypes`
 ✅ JSON + text reporting
-✅ Real-world scenarios (APRS, file transfer, BBS)
+✅ Real-world scenarios
 ✅ Modular and extensible design
 
 Includes:
@@ -98,18 +96,6 @@ DELIVERABLES.md          # Detailed inventory
 
 ---
 
-## 📊 Quick Stats
-
-| Metric              | Value |
-| ------------------- | ----- |
-| Total Tests         | 179+  |
-| Protocol Coverage   | ~90%  |
-| Frame Types         | 13    |
-| Practical Scenarios | 4     |
-| Lines of Code       | ~3000 |
-
----
-
 ## 🚀 Installation
 
 ### Requirements
@@ -189,45 +175,6 @@ gcc -o test_wrapper test_wrapper.c -lax25v22
 
 ---
 
-## 📄 AX.25 Frame Reference
-
-```
-+------+----------+---------+-----+------+-----+
-| Flag | Address  | Control | PID | Info | FCS |
-+------+----------+---------+-----+------+-----+
-| 0x7E | 14–70 B  | 1–2 B   | 1 B | 0–N  | 2 B |
-```
-
-### Address
-
-* 6-byte shifted ASCII callsign
-* SSID (0–15)
-* C/R bit
-* H bit
-* Extension bit
-
-### Control
-
-**I Frame**
-
-```
-NR | P | NS | 0
-```
-
-**S Frame**
-
-```
-NR | P | SS | 01
-```
-
-**U Frame**
-
-```
-M | P | M | 11
-```
-
----
-
 ## ⚠️ Known Limitations
 
 ### PyHam
@@ -254,16 +201,6 @@ M | P | M | 11
 * State machine validation
 * Hardware-in-loop
 * Benchmarking
-
----
-
-## 🎯 Use Cases
-
-* Validate libax25v22 correctness
-* Regression testing
-* Protocol compliance
-* Integration testing
-* Educational reference
 
 ---
 

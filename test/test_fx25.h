@@ -16,19 +16,11 @@
  * along with this software; see the file COPYING.  If not, write to
  * the Free Software Foundation, Inc., 51 Franklin Street,
  * Boston, MA 02110-1301, USA.
- *
  */
 
-#include "test_ax25.h"
-#include "test_hdlc.h"
-#include "test_ax25_mgmt.h"
-#include "test_ax25_state_machine.h"
-#include "test_fx25.h"
+#ifndef TEST_FX25_H_
+#define TEST_FX25_H_
 
-int main() {
-    test_hdlc_main();
-    test_ax25_main();
-    test_ax25_mgmt_main();
-    test_ax25_state_machine_main();
-    test_fx25_main();
-}
+int test_fx25_main();
+
+#endif /* TEST_FX25_H_ */
