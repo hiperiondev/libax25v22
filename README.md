@@ -518,8 +518,8 @@ This checklist documents the implementation status of all features defined in:
 - ✅ Mode selection based on frame size
 - ✅ Adaptive mode selection (channel quality)
 - ✅ Galois Field GF(2^8) operations (table-based, no FPU)
-- ⚠️ FEC decoding and error correction
-- ❌ Integration with HDLC layer
+- ✅ FEC decoding and error correction
+- ✅ Integration with HDLC layer
 
 ### 15.2 IL2P (Improved Layer 2 Protocol)
 - ❌ IL2P header mapping
