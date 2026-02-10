@@ -149,11 +149,11 @@ The implementation strictly adheres to:
 - ISO 3309 error detection (FCS/CRC)
 - PE1CHL extended sequence numbering specification (Modulo 128)
 - TAPR/ARRL AX.25 protocol specifications
+- FX.25 Forward Error Correction wrapper support
 
 ### Future Extensions
 
 Planned enhancements include:
-- FX.25 Forward Error Correction wrapper support
 - IL2P (Improved Layer 2 Protocol) compatibility layer
 - KISS protocol interface implementation
 - Integration examples with popular modems (Bell 202, G3RUH, GFSK)
@@ -183,428 +183,429 @@ This checklist documents the implementation status of all features defined in:
 - Related TAPR/ARRL standards
 
 **Legend:**
-- `[COMPLETED]` - Fully implemented and tested
-- `[INCOMPLETED]` - Partially implemented, needs work
-- `[MISSING]` - Not yet implemented
+- ✅ **COMPLETED** - Fully implemented and tested
+- ⚠️ **INCOMPLETED** - Partially implemented, needs work
+- ❌ **MISSING** - Not yet implemented
+- ⚪ **N/A** - Out of scope (deprecated or hardware-specific)
 
 ---
 
 ## 1. FRAME STRUCTURE (Section 3)
 
 ### 1.1 Basic Frame Components
-- `[COMPLETED]` Flag field (0x7E) encoding/decoding
-- `[COMPLETED]` Address field encoding (destination, source, repeaters)
-- `[COMPLETED]` Control field (8-bit and 16-bit)
-- `[COMPLETED]` PID (Protocol Identifier) field
-- `[COMPLETED]` Information field handling
-- `[COMPLETED]` Bit stuffing (zero insertion after five 1s)
-- `[COMPLETED]` Frame Check Sequence (FCS/CRC-16-CCITT)
-- `[COMPLETED]` LSB-first bit transmission order
-- `[COMPLETED]` Invalid frame detection (Section 3.9)
-- `[COMPLETED]` Frame abort sequence (15+ contiguous 1s)
-- `[COMPLETED]` Inter-frame time fill (contiguous flags)
+- ✅ Flag field (0x7E) encoding/decoding
+- ✅ Address field encoding (destination, source, repeaters)
+- ✅ Control field (8-bit and 16-bit)
+- ✅ PID (Protocol Identifier) field
+- ✅ Information field handling
+- ✅ Bit stuffing (zero insertion after five 1s)
+- ✅ Frame Check Sequence (FCS/CRC-16-CCITT)
+- ✅ LSB-first bit transmission order
+- ✅ Invalid frame detection (Section 3.9)
+- ✅ Frame abort sequence (15+ contiguous 1s)
+- ✅ Inter-frame time fill (contiguous flags)
 
 ### 1.2 Address Field Encoding (Section 3.12)
-- `[COMPLETED]` Non-repeater address field encoding
-- `[COMPLETED]` Destination subfield encoding (7 octets)
-- `[COMPLETED]` Source subfield encoding (7 octets)
-- `[COMPLETED]` Callsign encoding (6 chars + SSID)
-- `[COMPLETED]` SSID encoding (4-bit, 0-15)
-- `[COMPLETED]` Command/Response (C) bit handling
-- `[COMPLETED]` Reserved bits (RR) management
-- `[COMPLETED]` Extension bit handling
-- `[COMPLETED]` Layer 2 repeater address encoding (up to 8 repeaters)
-- `[INCOMPLETED]` Multiple repeater operation (max 2 per spec v2.2)
-- `[COMPLETED]` Has-been-repeated (H) bit handling
+- ✅ Non-repeater address field encoding
+- ✅ Destination subfield encoding (7 octets)
+- ✅ Source subfield encoding (7 octets)
+- ✅ Callsign encoding (6 chars + SSID)
+- ✅ SSID encoding (4-bit, 0-15)
+- ✅ Command/Response (C) bit handling
+- ✅ Reserved bits (RR) management
+- ✅ Extension bit handling
+- ✅ Layer 2 repeater address encoding (up to 8 repeaters)
+- ⚠️ Multiple repeater operation (max 2 per spec v2.2)
+- ✅ Has-been-repeated (H) bit handling
 
 ---
 
 ## 2. CONTROL FIELD FORMATS (Section 4.2)
 
 ### 2.1 Information Transfer Format (I-frames)
-- `[COMPLETED]` 8-bit control field (modulo 8)
-- `[COMPLETED]` 16-bit control field (modulo 128)
-- `[COMPLETED]` Send sequence number N(S) encoding
-- `[COMPLETED]` Receive sequence number N(R) encoding
-- `[COMPLETED]` Poll/Final (P/F) bit handling
+- ✅ 8-bit control field (modulo 8)
+- ✅ 16-bit control field (modulo 128)
+- ✅ Send sequence number N(S) encoding
+- ✅ Receive sequence number N(R) encoding
+- ✅ Poll/Final (P/F) bit handling
 
 ### 2.2 Supervisory Format (S-frames)
-- `[COMPLETED]` RR (Receive Ready) command/response
-- `[COMPLETED]` RNR (Receive Not Ready) command/response
-- `[COMPLETED]` REJ (Reject) command/response
-- `[COMPLETED]` SREJ (Selective Reject) command/response
-- `[COMPLETED]` 8-bit S-frame control (modulo 8)
-- `[COMPLETED]` 16-bit S-frame control (modulo 128)
+- ✅ RR (Receive Ready) command/response
+- ✅ RNR (Receive Not Ready) command/response
+- ✅ REJ (Reject) command/response
+- ✅ SREJ (Selective Reject) command/response
+- ✅ 8-bit S-frame control (modulo 8)
+- ✅ 16-bit S-frame control (modulo 128)
 
 ### 2.3 Unnumbered Format (U-frames)
-- `[COMPLETED]` SABM (Set Asynchronous Balanced Mode) command
-- `[COMPLETED]` SABME (Set ABM Extended - modulo 128) command
-- `[COMPLETED]` DISC (Disconnect) command
-- `[COMPLETED]` UA (Unnumbered Acknowledge) response
-- `[COMPLETED]` DM (Disconnected Mode) response
-- `[COMPLETED]` UI (Unnumbered Information) frame
-- `[COMPLETED]` XID (Exchange Identification) frame
-- `[COMPLETED]` TEST frame (command/response)
-- `[INCOMPLETED]` FRMR (Frame Reject) response - deprecated in v2.2
+- ✅ SABM (Set Asynchronous Balanced Mode) command
+- ✅ SABME (Set ABM Extended - modulo 128) command
+- ✅ DISC (Disconnect) command
+- ✅ UA (Unnumbered Acknowledge) response
+- ✅ DM (Disconnected Mode) response
+- ✅ UI (Unnumbered Information) frame
+- ✅ XID (Exchange Identification) frame
+- ✅ TEST frame (command/response)
+- ⚠️ FRMR (Frame Reject) response - deprecated in v2.2
 
 ---
 
 ## 3. SEQUENCE NUMBERS & STATE VARIABLES (Section 4.2.2)
 
 ### 3.1 Modulo 8 Operation
-- `[COMPLETED]` 3-bit sequence numbers (0-7)
-- `[COMPLETED]` Maximum 7 outstanding I-frames
-- `[COMPLETED]` Send state variable V(S)
-- `[COMPLETED]` Receive state variable V(R)
-- `[COMPLETED]` Acknowledge state variable V(A)
+- ✅ 3-bit sequence numbers (0-7)
+- ✅ Maximum 7 outstanding I-frames
+- ✅ Send state variable V(S)
+- ✅ Receive state variable V(R)
+- ✅ Acknowledge state variable V(A)
 
 ### 3.2 Modulo 128 Operation (PE1CHL Extension)
-- `[COMPLETED]` 7-bit sequence numbers (0-127)
-- `[COMPLETED]` Maximum 127 outstanding I-frames
-- `[COMPLETED]` Extended control field encoding
-- `[COMPLETED]` Negotiation via SABME command
-- `[COMPLETED]` XID parameter negotiation for modulo 128
+- ✅ 7-bit sequence numbers (0-127)
+- ✅ Maximum 127 outstanding I-frames
+- ✅ Extended control field encoding
+- ✅ Negotiation via SABME command
+- ✅ XID parameter negotiation for modulo 128
 
 ---
 
 ## 4. PARAMETER NEGOTIATION (XID - Section 4.3.3.7)
 
 ### 4.1 XID Frame Structure
-- `[COMPLETED]` Format Identifier (FI = 0x82)
-- `[COMPLETED]` Group Identifier (GI = 0x80)
-- `[COMPLETED]` Group Length (GL) encoding
-- `[COMPLETED]` Parameter field (PI/PL/PV) structure
+- ✅ Format Identifier (FI = 0x82)
+- ✅ Group Identifier (GI = 0x80)
+- ✅ Group Length (GL) encoding
+- ✅ Parameter field (PI/PL/PV) structure
 
 ### 4.2 Class of Procedures (PI=2)
-- `[COMPLETED]` Half-duplex operation negotiation
-- `[COMPLETED]` Full-duplex operation negotiation
-- `[INCOMPLETED]` Asymmetric operation modes (not implemented per v2.2)
+- ✅ Half-duplex operation negotiation
+- ✅ Full-duplex operation negotiation
+- ⚠️ Asymmetric operation modes (not implemented per v2.2)
 
 ### 4.3 HDLC Optional Functions (PI=3)
-- `[COMPLETED]` REJ (Implicit Reject) negotiation
-- `[COMPLETED]` SREJ (Selective Reject) negotiation
-- `[COMPLETED]` SREJ/REJ (Selective Reject-Reject) mode
-- `[COMPLETED]` Modulo 8 capability indication
-- `[COMPLETED]` Modulo 128 capability indication
-- `[COMPLETED]` Extended address encoding support
-- `[COMPLETED]` 16-bit FCS support
-- `[MISSING]` 32-bit FCS option (not implemented)
-- `[COMPLETED]` TEST command/response support
-- `[COMPLETED]` XID command/response support
+- ✅ REJ (Implicit Reject) negotiation
+- ✅ SREJ (Selective Reject) negotiation
+- ✅ SREJ/REJ (Selective Reject-Reject) mode
+- ✅ Modulo 8 capability indication
+- ✅ Modulo 128 capability indication
+- ✅ Extended address encoding support
+- ✅ 16-bit FCS support
+- ❌ 32-bit FCS option (not implemented)
+- ✅ TEST command/response support
+- ✅ XID command/response support
 
 ### 4.4 Other XID Parameters
-- `[COMPLETED]` I-field Length Receive (PI=6) - N1 parameter
-- `[COMPLETED]` Window Size Receive (PI=8) - k parameter
-- `[COMPLETED]` Acknowledge Timer (PI=9) - T1 parameter
-- `[COMPLETED]` Retries (PI=10) - N2 parameter
-- `[COMPLETED]` Response Delay Timer (PI=11) - T2 parameter (v2.2 addition)
+- ✅ I-field Length Receive (PI=6) - N1 parameter
+- ✅ Window Size Receive (PI=8) - k parameter
+- ✅ Acknowledge Timer (PI=9) - T1 parameter
+- ✅ Retries (PI=10) - N2 parameter
+- ✅ Response Delay Timer (PI=11) - T2 parameter (v2.2 addition)
 
 ---
 
 ## 5. LINK ERROR REPORTING & RECOVERY (Section 4.4)
 
 ### 5.1 Error Detection
-- `[COMPLETED]` TNC busy condition (RNR)
-- `[COMPLETED]` Send sequence number error detection
-- `[COMPLETED]` Invalid frame detection
-- `[COMPLETED]` FCS error detection
+- ✅ TNC busy condition (RNR)
+- ✅ Send sequence number error detection
+- ✅ Invalid frame detection
+- ✅ FCS error detection
 
 ### 5.2 Recovery Mechanisms
-- `[COMPLETED]` REJ (Reject) recovery - implicit reject mode
-- `[COMPLETED]` SREJ (Selective Reject) recovery
-- `[COMPLETED]` SREJ/REJ combined mode (default per v2.2)
-- `[COMPLETED]` T1 timer recovery (acknowledgment timeout)
-- `[COMPLETED]` T3 timer recovery (idle link polling)
-- `[COMPLETED]` Timeout error recovery with N2 retries
+- ✅ REJ (Reject) recovery - implicit reject mode
+- ✅ SREJ (Selective Reject) recovery
+- ✅ SREJ/REJ combined mode (default per v2.2)
+- ✅ T1 timer recovery (acknowledgment timeout)
+- ✅ T3 timer recovery (idle link polling)
+- ✅ Timeout error recovery with N2 retries
 
 ---
 
 ## 6. DATA LINK STATE MACHINE (Section 6 & Appendix C4)
 
 ### 6.1 Connection States
-- `[COMPLETED]` Disconnected state
-- `[COMPLETED]` Awaiting connection state
-- `[COMPLETED]` Awaiting release state
-- `[COMPLETED]` Connected/Information transfer state
-- `[COMPLETED]` Timer recovery state
-- `[INCOMPLETED]` Frame reject state (minimal - FRMR deprecated)
+- ✅ Disconnected state
+- ✅ Awaiting connection state
+- ✅ Awaiting release state
+- ✅ Connected/Information transfer state
+- ✅ Timer recovery state
+- ⚠️ Frame reject state (minimal - FRMR deprecated)
 
 ### 6.2 Link Setup & Disconnection (Section 6.3)
-- `[COMPLETED]` AX.25 link connection establishment (SABM/SABME)
-- `[COMPLETED]` Parameter negotiation phase (XID exchange)
-- `[COMPLETED]` Information transfer phase
-- `[COMPLETED]` Link disconnection (DISC/UA)
-- `[COMPLETED]` Collision recovery (half-duplex)
-- `[COMPLETED]` Collision of unnumbered commands
-- `[COMPLETED]` Connectionless operation (UI frames)
+- ✅ AX.25 link connection establishment (SABM/SABME)
+- ✅ Parameter negotiation phase (XID exchange)
+- ✅ Information transfer phase
+- ✅ Link disconnection (DISC/UA)
+- ✅ Collision recovery (half-duplex)
+- ✅ Collision of unnumbered commands
+- ✅ Connectionless operation (UI frames)
 
 ### 6.3 Information Transfer Procedures (Section 6.4)
-- `[COMPLETED]` Sending I-frames with flow control
-- `[COMPLETED]` Receiving I-frames (in-sequence)
-- `[COMPLETED]` Out-of-sequence frame handling
-- `[COMPLETED]` Reception of REJ frames
-- `[COMPLETED]` Reception of SREJ frames
-- `[COMPLETED]` Reception of RNR frames
-- `[COMPLETED]` Sending busy indication (RNR)
-- `[COMPLETED]` Waiting acknowledgment (T1 expiry handling)
-- `[COMPLETED]` Priority acknowledge (T2 response delay)
+- ✅ Sending I-frames with flow control
+- ✅ Receiving I-frames (in-sequence)
+- ✅ Out-of-sequence frame handling
+- ✅ Reception of REJ frames
+- ✅ Reception of SREJ frames
+- ✅ Reception of RNR frames
+- ✅ Sending busy indication (RNR)
+- ✅ Waiting acknowledgment (T1 expiry handling)
+- ✅ Priority acknowledge (T2 response delay)
 
 ### 6.4 Advanced Flow Control
-- `[COMPLETED]` Sliding window protocol (modulo 8 & 128)
-- `[COMPLETED]` Window size negotiation (k parameter)
-- `[COMPLETED]` I-field length negotiation (N1 parameter)
-- `[COMPLETED]` Adaptive T1 timer adjustment (based on RTT)
-- `[COMPLETED]` Exponential backoff option
+- ✅ Sliding window protocol (modulo 8 & 128)
+- ✅ Window size negotiation (k parameter)
+- ✅ I-field length negotiation (N1 parameter)
+- ✅ Adaptive T1 timer adjustment (based on RTT)
+- ✅ Exponential backoff option
 
 ---
 
 ## 7. TIMERS & PARAMETERS (Section 6.7)
 
 ### 7.1 Timers
-- `[COMPLETED]` T1 - Acknowledgment timer (default 3000 ms)
-- `[COMPLETED]` T2 - Response delay timer (default 500 ms) - v2.2 addition
-- `[COMPLETED]` T3 - Inactive link timer (idle channel polling)
-- `[MISSING]` T100 - Repeater hang timer (AXHANG) - digipeater function
-- `[MISSING]` T101 - Priority window timer (PRIACK)
-- `[MISSING]` T102 - Slot time timer (p-persistence)
-- `[MISSING]` T103 - Transmitter startup timer (TXDELAY)
-- `[MISSING]` T104 - Repeater startup timer (AXDELAY)
-- `[MISSING]` T105 - Remote receiver sync timer
-- `[MISSING]` T106 - Ten minute transmission limit timer
-- `[MISSING]` T107 - Anti-hogging limit timer
-- `[MISSING]` T108 - Receiver startup timer
+- ✅ T1 - Acknowledgment timer (default 3000 ms)
+- ✅ T2 - Response delay timer (default 500 ms) - v2.2 addition
+- ✅ T3 - Inactive link timer (idle channel polling)
+- ❌ T100 - Repeater hang timer (AXHANG) - digipeater function
+- ❌ T101 - Priority window timer (PRIACK)
+- ❌ T102 - Slot time timer (p-persistence)
+- ❌ T103 - Transmitter startup timer (TXDELAY)
+- ❌ T104 - Repeater startup timer (AXDELAY)
+- ❌ T105 - Remote receiver sync timer
+- ❌ T106 - Ten minute transmission limit timer
+- ❌ T107 - Anti-hogging limit timer
+- ❌ T108 - Receiver startup timer
 
 ### 7.2 Parameters
-- `[COMPLETED]` N1 - Maximum I-field octets (default 256, negotiable)
-- `[COMPLETED]` N2 - Maximum retries (default 10, negotiable)
-- `[COMPLETED]` k - Window size (default 7 for modulo 8, 32 for modulo 128)
+- ✅ N1 - Maximum I-field octets (default 256, negotiable)
+- ✅ N2 - Maximum retries (default 10, negotiable)
+- ✅ k - Window size (default 7 for modulo 8, 32 for modulo 128)
 
 ---
 
 ## 8. LAYER SEGMENTATION/REASSEMBLY (Section 2.4, 6.6, Appendix C6)
 
 ### 8.1 Segmenter State Machine
-- `[COMPLETED]` Segmentation of large data units (>N1)
-- `[COMPLETED]` Segment header encoding (First/Last flags, sequence)
-- `[COMPLETED]` PID preservation across segments
-- `[COMPLETED]` Segment transmission sequencing
-- `[MISSING]` Next segment timer TR210
+- ✅ Segmentation of large data units (>N1)
+- ✅ Segment header encoding (First/Last flags, sequence)
+- ✅ PID preservation across segments
+- ✅ Segment transmission sequencing
+- ❌ Next segment timer TR210
 
 ### 8.2 Reassembler State Machine
-- `[COMPLETED]` Segment reception and buffering
-- `[COMPLETED]` In-order reassembly
-- `[COMPLETED]` Segment timeout detection
-- `[COMPLETED]` Delivery of complete payload to Layer 3
-- `[INCOMPLETED]` Out-of-order segment handling (basic only)
+- ✅ Segment reception and buffering
+- ✅ In-order reassembly
+- ✅ Segment timeout detection
+- ✅ Delivery of complete payload to Layer 3
+- ⚠️ Out-of-order segment handling (basic only)
 
 ---
 
 ## 9. LAYER 3 PROTOCOL MULTIPLEXING (Section 3.4, 6.5)
 
 ### 9.1 PID Support
-- `[COMPLETED]` PID field encoding/decoding
-- `[COMPLETED]` Protocol handler registration mechanism
-- `[COMPLETED]` Default handler for unknown PIDs
-- `[COMPLETED]` Segmentation fragment PID (0x08)
+- ✅ PID field encoding/decoding
+- ✅ Protocol handler registration mechanism
+- ✅ Default handler for unknown PIDs
+- ✅ Segmentation fragment PID (0x08)
 
 ### 9.2 Supported Layer 3 Protocols
-- `[COMPLETED]` No Layer 3 (PID 0xF0)
-- `[COMPLETED]` ISO 8208/CCITT X.25 (PID 0x01)
-- `[COMPLETED]` Compressed TCP/IP (PID 0x06)
-- `[COMPLETED]` Uncompressed TCP/IP (PID 0x07)
-- `[COMPLETED]` ARPA IP (PID 0xCC)
-- `[COMPLETED]` ARPA ARP (PID 0xCD)
-- `[COMPLETED]` NET/ROM (PID 0xCF)
-- `[COMPLETED]` FlexNet (PID 0xCE)
-- `[COMPLETED]` Link Quality Protocol (PID 0xC4)
-- `[COMPLETED]` TEXNET (PID 0xC3)
-- `[COMPLETED]` Appletalk (PID 0xCA, 0xCB)
-- `[COMPLETED]` Escape character (PID 0xFF) for extended PIDs
+- ✅ No Layer 3 (PID 0xF0)
+- ✅ ISO 8208/CCITT X.25 (PID 0x01)
+- ✅ Compressed TCP/IP (PID 0x06)
+- ✅ Uncompressed TCP/IP (PID 0x07)
+- ✅ ARPA IP (PID 0xCC)
+- ✅ ARPA ARP (PID 0xCD)
+- ✅ NET/ROM (PID 0xCF)
+- ✅ FlexNet (PID 0xCE)
+- ✅ Link Quality Protocol (PID 0xC4)
+- ✅ TEXNET (PID 0xC3)
+- ✅ Appletalk (PID 0xCA, 0xCB)
+- ✅ Escape character (PID 0xFF) for extended PIDs
 
 ---
 
 ## 10. HDLC FRAMING LAYER (Section 3, Appendix C2)
 
 ### 10.1 Physical Layer State Machine - Simplex
-- `[COMPLETED]` Flag detection and generation
-- `[COMPLETED]` Bit stuffing/destuffing
-- `[COMPLETED]` NRZI encoding support (hardware abstraction)
-- `[COMPLETED]` Abort sequence generation
-- `[COMPLETED]` CRC-16-CCITT calculation (table-driven)
+- ✅ Flag detection and generation
+- ✅ Bit stuffing/destuffing
+- ✅ NRZI encoding support (hardware abstraction)
+- ✅ Abort sequence generation
+- ✅ CRC-16-CCITT calculation (table-driven)
 
 ### 10.2 Physical Layer State Machine - Duplex
-- `[INCOMPLETED]` Full-duplex operation (abstracted to upper layers)
-- `[MISSING]` Hardware-specific PTT control
-- `[MISSING]` Carrier detect interfacing
-- `[MISSING]` Transmitter/receiver switching delays
+- ⚠️ Full-duplex operation (abstracted to upper layers)
+- ❌ Hardware-specific PTT control
+- ❌ Carrier detect interfacing
+- ❌ Transmitter/receiver switching delays
 
 ---
 
 ## 11. LINK MULTIPLEXER (Section 2.7, Appendix C3)
 
 ### 11.1 Multiple Link Support
-- `[INCOMPLETED]` Multiple data-link connections (structure exists, needs testing)
-- `[MISSING]` Link rotation algorithm
-- `[MISSING]` Per-link scheduling
-- `[MISSING]` Priority-based transmission
+- ⚠️ Multiple data-link connections (structure exists, needs testing)
+- ❌ Link rotation algorithm
+- ❌ Per-link scheduling
+- ❌ Priority-based transmission
 
 ---
 
 ## 12. MANAGEMENT DATA LINK (Section 2.6, Appendix C5)
 
 ### 12.1 Management Functions
-- `[COMPLETED]` XID parameter negotiation
-- `[COMPLETED]` XID command/response handling
-- `[COMPLETED]` Parameter conflict resolution
-- `[COMPLETED]` Negotiation timeout handling
-- `[COMPLETED]` Fallback to v2.0 defaults
+- ✅ XID parameter negotiation
+- ✅ XID command/response handling
+- ✅ Parameter conflict resolution
+- ✅ Negotiation timeout handling
+- ✅ Fallback to v2.0 defaults
 
 ---
 
 ## 13. ADVANCED FEATURES (v2.2 Improvements)
 
 ### 13.1 Selective Reject (Section 6.4.4)
-- `[COMPLETED]` SREJ command/response encoding
-- `[COMPLETED]` SREJ exception state tracking
-- `[COMPLETED]` Out-of-sequence frame buffering
-- `[COMPLETED]` SREJ bitmap for multiple outstanding frames
-- `[COMPLETED]` SREJ/REJ combined mode (per v2.2 default)
-- `[INCOMPLETED]` Multiple simultaneous SREJ conditions (partial)
+- ✅ SREJ command/response encoding
+- ✅ SREJ exception state tracking
+- ✅ Out-of-sequence frame buffering
+- ✅ SREJ bitmap for multiple outstanding frames
+- ✅ SREJ/REJ combined mode (per v2.2 default)
+- ⚠️ Multiple simultaneous SREJ conditions (partial)
 
 ### 13.2 Extended Sequence Numbers
-- `[COMPLETED]` 7-bit sequence numbers (modulo 128)
-- `[COMPLETED]` 127-frame window support
-- `[COMPLETED]` SABME negotiation
-- `[COMPLETED]` 16-bit control field encoding/decoding
+- ✅ 7-bit sequence numbers (modulo 128)
+- ✅ 127-frame window support
+- ✅ SABME negotiation
+- ✅ 16-bit control field encoding/decoding
 
 ### 13.3 Full-Duplex Operation (Section 6.7.2)
-- `[COMPLETED]` XID negotiation for full-duplex
-- `[COMPLETED]` State variable tracking for full-duplex
-- `[INCOMPLETED]` Physical layer full-duplex (hardware abstraction exists)
+- ✅ XID negotiation for full-duplex
+- ✅ State variable tracking for full-duplex
+- ⚠️ Physical layer full-duplex (hardware abstraction exists)
 
 ### 13.4 Response Delay Timer (T2)
-- `[COMPLETED]` T2 timer implementation (v2.2 addition)
-- `[COMPLETED]` Priority acknowledge mechanism
-- `[COMPLETED]` T2 XID negotiation
+- ✅ T2 timer implementation (v2.2 addition)
+- ✅ Priority acknowledge mechanism
+- ✅ T2 XID negotiation
 
 ---
 
 ## 14. STATISTICS & DIAGNOSTICS
 
 ### 14.1 Performance Metrics
-- `[COMPLETED]` Frame counters (I, S, U frames sent/received)
-- `[COMPLETED]` Error counters (FCS, CRC, aborts, overruns)
-- `[COMPLETED]` Retransmission tracking
-- `[COMPLETED]` T1 expiration counting
-- `[COMPLETED]` Byte counters (sent/received)
-- `[COMPLETED]` Current state variables (V(S), V(R), V(A))
+- ✅ Frame counters (I, S, U frames sent/received)
+- ✅ Error counters (FCS, CRC, aborts, overruns)
+- ✅ Retransmission tracking
+- ✅ T1 expiration counting
+- ✅ Byte counters (sent/received)
+- ✅ Current state variables (V(S), V(R), V(A))
 
 ### 14.2 TEST Frame Statistics (Section 4.3.3.8)
-- `[COMPLETED]` TEST command/response counters
-- `[COMPLETED]` Round-trip time (RTT) measurement
-- `[COMPLETED]` Average RTT calculation
-- `[COMPLETED]` TEST sequence number tracking
-- `[COMPLETED]` Lost TEST frame detection
+- ✅ TEST command/response counters
+- ✅ Round-trip time (RTT) measurement
+- ✅ Average RTT calculation
+- ✅ TEST sequence number tracking
+- ✅ Lost TEST frame detection
 
 ---
 
 ## 15. EXTENSIONS & ENHANCEMENTS
 
 ### 15.1 FX.25 Forward Error Correction
-- `[COMPLETED]` Reed-Solomon FEC encoding
-- `[COMPLETED]` Correlation tag structure (8 bytes)
-- `[COMPLETED]` Multiple FEC modes (11 predefined)
-- `[COMPLETED]` Mode selection based on frame size
-- `[COMPLETED]` Adaptive mode selection (channel quality)
-- `[COMPLETED]` Galois Field GF(2^8) operations (table-based, no FPU)
-- `[INCOMPLETED]` FEC decoding and error correction
-- `[MISSING]` Integration with HDLC layer
+- ✅ Reed-Solomon FEC encoding
+- ✅ Correlation tag structure (8 bytes)
+- ✅ Multiple FEC modes (11 predefined)
+- ✅ Mode selection based on frame size
+- ✅ Adaptive mode selection (channel quality)
+- ✅ Galois Field GF(2^8) operations (table-based, no FPU)
+- ⚠️ FEC decoding and error correction
+- ❌ Integration with HDLC layer
 
 ### 15.2 IL2P (Improved Layer 2 Protocol)
-- `[MISSING]` IL2P header mapping
-- `[MISSING]` SIXBIT callsign compression
-- `[MISSING]` Reed-Solomon payload blocks
-- `[MISSING]` 24-bit sync word
-- `[MISSING]` Scrambling/descrambling
-- `[MISSING]` Type 0 transparent encapsulation
-- `[MISSING]` Type 1 translated encapsulation
+- ❌ IL2P header mapping
+- ❌ SIXBIT callsign compression
+- ❌ Reed-Solomon payload blocks
+- ❌ 24-bit sync word
+- ❌ Scrambling/descrambling
+- ❌ Type 0 transparent encapsulation
+- ❌ Type 1 translated encapsulation
 
 ### 15.3 KISS Interface Protocol
-- `[MISSING]` KISS framing (FEND, FESC encoding)
-- `[MISSING]` KISS command byte processing
-- `[MISSING]` TxDelay, Persistence, SlotTime, TxTail parameters
-- `[MISSING]` Full-duplex mode control
-- `[MISSING]` Hardware-specific commands
-- `[MISSING]` Multi-port TNC support
+- ❌ KISS framing (FEND, FESC encoding)
+- ❌ KISS command byte processing
+- ❌ TxDelay, Persistence, SlotTime, TxTail parameters
+- ❌ Full-duplex mode control
+- ❌ Hardware-specific commands
+- ❌ Multi-port TNC support
 
 ### 15.4 SMACK (CRC-enhanced KISS)
-- `[MISSING]` SMACK CRC-16 over KISS frames
-- `[MISSING]` Automatic KISS/SMACK mode detection
-- `[MISSING]` RS-232 error protection
+- ❌ SMACK CRC-16 over KISS frames
+- ❌ Automatic KISS/SMACK mode detection
+- ❌ RS-232 error protection
 
 ---
 
 ## 16. EMBEDDED SYSTEMS OPTIMIZATION
 
 ### 16.1 No-FPU Design
-- `[COMPLETED]` Integer-only arithmetic throughout
-- `[COMPLETED]` Fixed-point timer handling (10ms ticks)
-- `[COMPLETED]` Table-driven CRC (512 bytes flash)
-- `[COMPLETED]` GF arithmetic via lookup tables (FX.25)
+- ✅ Integer-only arithmetic throughout
+- ✅ Fixed-point timer handling (10ms ticks)
+- ✅ Table-driven CRC (512 bytes flash)
+- ✅ GF arithmetic via lookup tables (FX.25)
 
 ### 16.2 Memory Management
-- `[COMPLETED]` Static buffer allocation where possible
-- `[COMPLETED]` Configurable frame queue sizes
-- `[COMPLETED]` No dynamic allocation in critical paths (mostly)
-- `[COMPLETED]` Minimal stack usage
+- ✅ Static buffer allocation where possible
+- ✅ Configurable frame queue sizes
+- ✅ No dynamic allocation in critical paths (mostly)
+- ✅ Minimal stack usage
 
 ### 16.3 Platform Abstraction
-- `[COMPLETED]` Hardware-independent core protocol
-- `[COMPLETED]` Callback-based I/O (no direct hardware access)
-- `[COMPLETED]` Portable C99 code
-- `[COMPLETED]` Configurable compile-time options
+- ✅ Hardware-independent core protocol
+- ✅ Callback-based I/O (no direct hardware access)
+- ✅ Portable C99 code
+- ✅ Configurable compile-time options
 
 ---
 
 ## 17. UPPER LAYER INTERFACES
 
 ### 17.1 Data Link Service Access Point (DLSAP) Primitives
-- `[INCOMPLETED]` DL-CONNECT request/indication/confirm
-- `[INCOMPLETED]` DL-DISCONNECT request/indication/confirm
-- `[INCOMPLETED]` DL-DATA request/indication
-- `[INCOMPLETED]` DL-UNIT-DATA request/indication
-- `[INCOMPLETED]` DL-ERROR indication
-- `[INCOMPLETED]` DL-FLOW-OFF/ON request
+- ⚠️ DL-CONNECT request/indication/confirm
+- ⚠️ DL-DISCONNECT request/indication/confirm
+- ⚠️ DL-DATA request/indication
+- ⚠️ DL-UNIT-DATA request/indication
+- ⚠️ DL-ERROR indication
+- ⚠️ DL-FLOW-OFF/ON request
 
 ### 17.2 Management Data Link Primitives
-- `[COMPLETED]` MDL-NEGOTIATE request/confirm
-- `[COMPLETED]` MDL-ERROR indication
+- ✅ MDL-NEGOTIATE request/confirm
+- ✅ MDL-ERROR indication
 
 ---
 
 ## 18. NOT IMPLEMENTED (Out of Scope)
 
 ### 18.1 Deprecated Features
-- `[N/A]` FRMR generation (v2.2 replaces with link reset)
-- `[N/A]` Unbalanced operation modes (NRM, ARM)
-- `[N/A]` SIM/RIM commands (removed in v2.2)
-- `[N/A]` UP command (removed in v2.2)
-- `[N/A]` RSET command (removed in v2.2)
-- `[N/A]` RD response (removed in v2.2)
+- ⚪ FRMR generation (v2.2 replaces with link reset)
+- ⚪ Unbalanced operation modes (NRM, ARM)
+- ⚪ SIM/RIM commands (removed in v2.2)
+- ⚪ UP command (removed in v2.2)
+- ⚪ RSET command (removed in v2.2)
+- ⚪ RD response (removed in v2.2)
 
 ### 18.2 Hardware-Specific Features
-- `[N/A]` Modem modulation/demodulation (AFSK, G3RUH, etc.)
-- `[N/A]` Audio DSP processing
-- `[N/A]` Radio PTT control circuits
-- `[N/A]` Carrier detect (DCD) processing
-- `[N/A]` Audio tone generation/detection
+- ⚪ Modem modulation/demodulation (AFSK, G3RUH, etc.)
+- ⚪ Audio DSP processing
+- ⚪ Radio PTT control circuits
+- ⚪ Carrier detect (DCD) processing
+- ⚪ Audio tone generation/detection
 
 ### 18.3 Network Layer (Layer 3)
-- `[N/A]` NET/ROM routing protocol
-- `[N/A]` ROSE X.25 packet layer
-- `[N/A]` TCP/IP stack implementation
-- `[N/A]` APRS encoding/decoding
-- `[N/A]` BBS protocols
+- ⚪ NET/ROM routing protocol
+- ⚪ ROSE X.25 packet layer
+- ⚪ TCP/IP stack implementation
+- ⚪ APRS encoding/decoding
+- ⚪ BBS protocols
 
 ---
 
