@@ -215,7 +215,7 @@ This checklist documents the implementation status of all features defined in:
 - ✅ Reserved bits (RR) management
 - ✅ Extension bit handling
 - ✅ Layer 2 repeater address encoding (up to 8 repeaters)
-- ⚠️ Multiple repeater operation (max 2 per spec v2.2)
+- ✅ Multiple repeater operation (max 2 per spec v2.2 1998 but extended to 8 in this case)
 - ✅ Has-been-repeated (H) bit handling
 
 ---
@@ -289,7 +289,7 @@ This checklist documents the implementation status of all features defined in:
 - ✅ Modulo 128 capability indication
 - ✅ Extended address encoding support
 - ✅ 16-bit FCS support
-- ❌ 32-bit FCS option (not implemented)
+- ❌ 32-bit FCS option (not implemented: Version 2.2 Revision: July 1998 defines only 16-bit FCS)
 - ✅ TEST command/response support
 - ✅ XID command/response support
 

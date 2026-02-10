@@ -51,15 +51,6 @@ typedef struct {
 #define FX25_MODE_128_64  0x0A  // 128 data, 64 parity, correct 32
 #define FX25_MODE_64_64   0x0B  // 64 data, 64 parity, correct 32
 
-// Galois Field GF(2^8) operations - using lookup tables, no 64-bit
-extern const uint8_t fx25_gf_exp[512];
-extern const uint8_t fx25_gf_log[256];
-
-// GF multiplication using log tables: 32-bit intermediate only
-#define GF_MUL(a, b) ((a) == 0 || (b) == 0 ? 0 : fx25_gf_exp[fx25_gf_log[a] + fx25_gf_log[b]])
-#define GF_DIV(a, b) ((a) == 0 ? 0 : fx25_gf_exp[fx25_gf_log[a] - fx25_gf_log[b] + 255])
-#define GF_POW(a, n) (fx25_gf_exp[(fx25_gf_log[a] * (n)) % 255])
-
 // FX.25 frame structure
 typedef struct {
     uint8_t correlation_tag[8];  // 8 bytes

@@ -22,12 +22,8 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include "fx25_rs.h"
 #include "fx25.h"
-
-typedef struct {
-    uint8_t coeff[64];   // Max parity bytes
-    uint8_t length;
-} rs_poly_t;
 
 // GF(2^8) with primitive polynomial x^8 + x^4 + x^3 + x^2 + 1 (0x11D)
 const uint8_t fx25_gf_exp[512] = {
@@ -85,108 +81,17 @@ static const fx25_mode_t fx25_modes[] = {  //
                 { 0, { 0, 0, 0, 0, 0, 0, 0, 0 }, 0, 0, 0 }                                 //
         };
 
-// Helper function to compare correlation tags (byte-by-byte comparison)
-static bool tag_matches(const uint8_t *tag1, const uint8_t *tag2) {
+static int hamming_distance_tags(const uint8_t *tag1, const uint8_t *tag2) {
+    int distance = 0;
     for (int i = 0; i < 8; i++) {
-        if (tag1[i] != tag2[i]) {
-            return false;
+        uint8_t xor_byte = tag1[i] ^ tag2[i];
+        // Count set bits (Brian Kernighan's algorithm - microcontroller friendly)
+        while (xor_byte) {
+            distance++;
+            xor_byte &= (xor_byte - 1);  // Clear lowest set bit
         }
     }
-    return true;
-}
-
-// Berlekamp-Massey algorithm for finding error locator polynomial
-static void rs_find_error_locator(const uint8_t *syndromes, uint8_t nsyn, rs_poly_t *lambda) {
-    rs_poly_t lambda_prev;
-    rs_poly_t temp;
-    uint8_t k = 0;
-    uint8_t l = 0;
-    uint8_t dm = 1;  // Discrepancy from previous iteration
-
-    // Initialize
-    memset(lambda, 0, sizeof(rs_poly_t));
-    memset(&lambda_prev, 0, sizeof(rs_poly_t));
-    lambda->coeff[0] = 1;
-    lambda->length = 1;
-    lambda_prev.coeff[0] = 1;
-    lambda_prev.length = 1;
-
-    for (k = 0; k < nsyn; k++) {
-        // Calculate discrepancy
-        uint8_t d = syndromes[k];
-        for (uint8_t i = 1; i < lambda->length; i++) {
-            d ^= GF_MUL(lambda->coeff[i], syndromes[k - i]);
-        }
-
-        if (d != 0) {
-            // Update lambda
-            temp = *lambda;
-
-            uint8_t factor = GF_MUL(d, GF_DIV(1, dm));
-            for (uint8_t i = 0; i < lambda_prev.length; i++) {
-                uint8_t idx = i + k + 1 - (lambda_prev.length - 1);
-                if (idx < 64) {
-                    lambda->coeff[idx] ^= GF_MUL(factor, lambda_prev.coeff[i]);
-                }
-            }
-
-            if (lambda->length < k + 1 - l + lambda_prev.length) {
-                lambda->length = k + 1 - l + lambda_prev.length;
-            }
-
-            if (2 * l <= k) {
-                l = k + 1 - l;
-                lambda_prev = temp;
-                dm = d;
-            }
-        }
-    }
-}
-
-// Find error positions using Chien search
-static uint8_t rs_find_error_positions(const rs_poly_t *lambda, uint8_t codeword_len, uint8_t *error_pos) {
-    uint8_t num_errors = 0;
-
-    // Chien search: evaluate lambda at each alpha^i
-    for (uint8_t i = 0; i < codeword_len; i++) {
-        uint8_t sum = lambda->coeff[0];
-
-        for (uint8_t j = 1; j < lambda->length; j++) {
-            sum ^= GF_MUL(lambda->coeff[j], fx25_gf_exp[(j * i) % 255]);
-        }
-
-        if (sum == 0) {
-            // Error at position (codeword_len - 1 - i)
-            if (num_errors < 32) {  // Max correctable
-                error_pos[num_errors++] = codeword_len - 1 - i;
-            }
-        }
-    }
-
-    return num_errors;
-}
-
-// Calculate error magnitudes using Forney algorithm
-static void rs_calculate_error_magnitudes(const uint8_t *syndromes, const rs_poly_t *lambda, const uint8_t *error_pos, uint8_t num_errors, uint8_t *error_mag) {
-    for (uint8_t i = 0; i < num_errors; i++) {
-        uint8_t pos = error_pos[i];
-        uint8_t x_inv = fx25_gf_exp[255 - pos];  // alpha^(-pos)
-
-        // Calculate omega(x_inv) - numerator
-        uint8_t omega = syndromes[0];
-        for (uint8_t j = 1; j < lambda->length; j++) {
-            omega ^= GF_MUL(syndromes[j], GF_POW(x_inv, j));
-        }
-
-        // Calculate lambda'(x_inv) - denominator
-        uint8_t lambda_prime = lambda->coeff[1];
-        for (uint8_t j = 2; j < lambda->length; j += 2) {
-            lambda_prime ^= GF_MUL(lambda->coeff[j + 1], GF_POW(x_inv, j));
-        }
-
-        // Error magnitude = omega / lambda'
-        error_mag[i] = GF_DIV(omega, lambda_prime);
-    }
+    return distance;
 }
 
 const fx25_mode_t* fx25_get_mode(uint8_t mode_id) {
@@ -213,40 +118,6 @@ uint8_t fx25_select_mode(size_t ax25_len) {
     if (ax25_len <= 239)
         return FX25_MODE_239_16;
     return 0;  // Too large for FX.25 single block
-}
-
-// Generate RS generator polynomial for given number of parity symbols
-static void rs_generator_poly(uint8_t parity_bytes, uint8_t *g) {
-    // g(x) = (x - alpha^0)(x - alpha^1)...(x - alpha^(parity_bytes-1))
-    memset(g, 0, parity_bytes + 1);
-    g[0] = 1;  // Start with g(x) = 1
-
-    for (uint8_t i = 0; i < parity_bytes; i++) {
-        // Multiply by (x - alpha^i)
-        uint8_t alpha_i = fx25_gf_exp[i];
-        for (int j = parity_bytes; j > 0; j--) {
-            g[j] = g[j - 1] ^ GF_MUL(g[j], alpha_i);
-        }
-        g[0] = GF_MUL(g[0], alpha_i);
-    }
-}
-
-// Encode data using Reed-Solomon
-static void rs_encode(const uint8_t *data, uint8_t data_len, uint8_t parity_bytes, uint8_t *parity) {
-    uint8_t g[65];  // Max 64 parity bytes
-    rs_generator_poly(parity_bytes, g);
-
-    memset(parity, 0, parity_bytes);
-
-    for (uint8_t i = 0; i < data_len; i++) {
-        uint8_t feedback = data[i] ^ parity[0];
-
-        // Shift parity register
-        for (uint8_t j = 0; j < parity_bytes - 1; j++) {
-            parity[j] = parity[j + 1] ^ GF_MUL(g[parity_bytes - j], feedback);
-        }
-        parity[parity_bytes - 1] = GF_MUL(g[1], feedback);
-    }
 }
 
 uint8_t fx25_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mode_id, fx25_frame_t *fx25_frame) {
@@ -276,26 +147,20 @@ uint8_t fx25_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mode_id,
         memset(fx25_frame->rs_codeword + ax25_len, 0, mode->data_bytes - ax25_len);
     }
 
-    // Compute parity bytes
+    // Compute parity bytes using external RS library
+    // Initialize RS params based on parity length (16, 32, or 64)
+    rs_params_t params;
+    rs_init_params(&params, mode->parity_bytes);
+
     uint8_t *parity = fx25_frame->rs_codeword + mode->data_bytes;
-    rs_encode(fx25_frame->rs_codeword, mode->data_bytes, mode->parity_bytes, parity);
+
+    // Call rs_encode with the initialized params structure and correct pointer types
+    // Signature: void rs_encode(const rs_params_t *params, const uint8_t *data, uint8_t *parity);
+    rs_encode(&params, fx25_frame->rs_codeword, parity);
 
     return 0;
 }
 
-// Syndrome computation for decoding
-static void rs_compute_syndromes(const uint8_t *codeword, uint8_t len, uint8_t parity_bytes, uint8_t *syndromes) {
-    for (uint8_t i = 0; i < parity_bytes; i++) {
-        syndromes[i] = 0;
-        uint8_t alpha_i = fx25_gf_exp[i];  // alpha^i
-
-        for (uint8_t j = 0; j < len; j++) {
-            syndromes[i] = GF_MUL(syndromes[i], alpha_i) ^ codeword[j];
-        }
-    }
-}
-
-// Simplified decoder - returns number of errors corrected or 0xFF if uncorrectable
 uint8_t fx25_decode(const uint8_t *rx_data, size_t rx_len, fx25_frame_t *fx25_frame, uint8_t *corrected_errors) {
     if (!rx_data || !fx25_frame || !corrected_errors)
         return 1;
@@ -310,17 +175,19 @@ uint8_t fx25_decode(const uint8_t *rx_data, size_t rx_len, fx25_frame_t *fx25_fr
         rx_tag[i] = rx_data[i];
     }
 
-    // Find matching mode by comparing byte arrays instead of uint64_t
+    // Modified: Find matching mode with Hamming distance tolerance (up to 6 bit errors per FX.25 spec Section 2.2)
     const fx25_mode_t *mode = NULL;
+    int best_distance = 65;  // Impossible value (max is 64 bits)
     for (int i = 0; fx25_modes[i].tag_id != 0; i++) {
-        if (tag_matches(rx_tag, fx25_modes[i].correlation_tag)) {
+        int distance = hamming_distance_tags(rx_tag, fx25_modes[i].correlation_tag);
+        if (distance <= 6 && distance < best_distance) {  // FX.25 spec: tolerate up to 6 bit errors in correlation tag
+            best_distance = distance;
             mode = &fx25_modes[i];
-            break;
         }
     }
 
     if (!mode)
-        return 3;  // Invalid correlation tag
+        return 3;  // No matching tag found within tolerance
 
     size_t expected_len = 8 + mode->data_bytes + mode->parity_bytes;
     if (rx_len < expected_len)
@@ -340,47 +207,23 @@ uint8_t fx25_decode(const uint8_t *rx_data, size_t rx_len, fx25_frame_t *fx25_fr
     // Copy RS codeword (skip correlation tag)
     memcpy(fx25_frame->rs_codeword, rx_data + 8, fx25_frame->codeword_len);
 
-    // Compute syndromes
-    uint8_t syndromes[64];
-    rs_compute_syndromes(fx25_frame->rs_codeword, fx25_frame->codeword_len, mode->parity_bytes, syndromes);
+    // Decode using external RS library
+    // Initialize RS params based on parity length
+    rs_params_t params;
+    rs_init_params(&params, mode->parity_bytes);
 
-    // Check if all syndromes are zero (no errors)
-    bool all_zero = true;
-    for (uint8_t i = 0; i < mode->parity_bytes; i++) {
-        if (syndromes[i] != 0) {
-            all_zero = false;
-            break;
-        }
-    }
+    // Call rs_decode with initialized params and codeword buffer
+    // Signature: int rs_decode(const rs_params_t *params, uint8_t *codeword);
+    // Returns number of errors corrected or error code
+    int result = rs_decode(&params, fx25_frame->rs_codeword);
 
-    if (all_zero) {
-        *corrected_errors = 0;
-        return 0;  // Success, no errors
-    }
-
-    // Find error locator polynomial using Berlekamp-Massey
-    rs_poly_t lambda;
-    rs_find_error_locator(syndromes, mode->parity_bytes, &lambda);
-
-    // Find error positions using Chien search
-    uint8_t error_pos[32];
-    uint8_t num_errors = rs_find_error_positions(&lambda, fx25_frame->codeword_len, error_pos);
-
-    if (num_errors == 0 || num_errors > mode->correctable_bytes) {
+    if (result < 0) {
         *corrected_errors = 0xFF;  // Uncorrectable
         return 6;
     }
 
-    // Calculate error magnitudes using Forney algorithm
-    uint8_t error_mag[32];
-    rs_calculate_error_magnitudes(syndromes, &lambda, error_pos, num_errors, error_mag);
+    *corrected_errors = (uint8_t) result;
 
-    // Correct errors
-    for (uint8_t i = 0; i < num_errors; i++) {
-        fx25_frame->rs_codeword[error_pos[i]] ^= error_mag[i];
-    }
-
-    *corrected_errors = num_errors;
     return 0;
 }
 
