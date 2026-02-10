@@ -607,20 +607,6 @@ This checklist documents the implementation status of all features defined in:
 - ⚪ APRS encoding/decoding
 - ⚪ BBS protocols
 
----
-
-## NOTES
-
-1. **FRMR Handling**: Per AX.25 v2.2, FRMR is deprecated. This implementation correctly handles FRMR reception from v2.0 stations but generates link resets (SABM) instead of FRMR responses.
-
-2. **Digipeater Limitation**: v2.2 recommends limiting digipeating to 2 hops maximum. Full 8-repeater support exists but should be policy-limited.
-
-3. **FPU-Free**: All timing uses integer arithmetic (10ms ticks). All FEC calculations use lookup tables. Suitable for ARM Cortex-M0/M3/M4 without FPU.
-
-4. **Memory Footprint**: Core protocol ~20KB code, ~4KB RAM (single connection). Scales with number of connections and buffer sizes.
-
-5. **Standards Compliance**: Implementation follows SDL state machines from Appendix C of the v2.2 specification where practical for embedded systems.
-
 <div align="right">
   <a href="#readme-top">
     <img src="images/backtotop.png" alt="backtotop" width="30" height="30">
