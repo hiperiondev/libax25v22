@@ -96,7 +96,7 @@ typedef struct {
     uint8_t pending_pid;             // Original PID for segmented data
 
     // Receive reassembly state
-    uint8_t rx_buffer[2048];         // Static buffer for reassembly (no malloc)
+    uint8_t rx_buffer[4096];         // Static buffer for reassembly
     uint16_t rx_buffer_used;         // Bytes accumulated in rx_buffer
     uint8_t rx_expected_segment;     // Next expected segment sequence number
     uint8_t rx_segment_bitmap[8];    // Bitmap of received segments (up to 64)

@@ -29,7 +29,7 @@
 
 static uint32_t assert_count = 0;
 
-// est helper structures and globals
+// helper structures and globals
 typedef struct {
     uint8_t segments[64][260];
     uint16_t segment_lengths[64];
@@ -369,7 +369,7 @@ static int test_segmenter_buffer_overflow(void) {
     rx_seg.on_reassembly_error = test_on_reassembly_error;
     rx_seg.user_data = NULL;
 
-    // Create segments that would overflow the 2048-byte buffer
+    // Create segments that would overflow the 4096-byte buffer
     uint8_t large_segment[260];
 
     // First segment - header byte
@@ -381,13 +381,16 @@ static int test_segmenter_buffer_overflow(void) {
     ax25_segmenter_receive(&rx_seg, large_segment, 260, AX25_PID_SEGMENT_FRAGMENT, current_tick);
     TEST_ASSERT(rx_seg.state == SEG_STATE_REASSEMBLING, "Started reassembly", 0);
 
-    // Send segments until overflow (2048 / 258 ≈ 8 segments)
-    for (uint8_t i = 1; i < 10; i++) {
+    // Send segments until overflow (4096 / 258 ≈ 16 segments)
+    // Segment 0: 258 bytes (after PID extraction)
+    // Segments 1-14: 259 bytes each = 3626 bytes
+    // Segment 15: 259 bytes would overflow (258 + 3626 + 259 = 4143 > 4096)
+    for (uint8_t i = 1; i < 20; i++) {
         large_segment[0] = i;  // Sequence only
-        if (i == 9) {
+        if (i == 19) {
             large_segment[0] |= 0x40;  // Last segment flag
         }
-        large_segment[1] = 0xF0;
+        memset(&large_segment[1], 0xAA, 259);
 
         ax25_segmenter_receive(&rx_seg, large_segment, 260, AX25_PID_SEGMENT_FRAGMENT, current_tick);
 
@@ -514,8 +517,8 @@ static int test_segmenter_invalid_inputs(void) {
     err = ax25_segmenter_send(&seg, test_data, 0, 0xF0);
     TEST_ASSERT(err == 1, "Send with zero length returns error 1", err);
 
-    // Data too large (>2048 bytes)
-    err = ax25_segmenter_send(&seg, test_data, 2049, 0xF0);
+    // Data too large (>4096 bytes)
+    err = ax25_segmenter_send(&seg, test_data, 4097, 0xF0);
     TEST_ASSERT(err == 2, "Send with oversized data returns error 2", err);
 
     // NULL transmit callback
