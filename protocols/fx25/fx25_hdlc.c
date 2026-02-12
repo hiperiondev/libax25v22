@@ -102,6 +102,16 @@ uint8_t fx25_hdlc_decode(const uint8_t *rx_data, size_t rx_len, uint8_t *ax25_fr
     if (!rx_data || !ax25_frame || !ax25_len || !corrected_errors)
         return 1;
 
+    size_t preamble_bytes = FX25_PREAMBLE_BITS / 8;
+    size_t postamble_bytes = FX25_POSTAMBLE_BITS / 8;
+
+    if (rx_len < preamble_bytes + 8 + postamble_bytes) {
+        return 1;
+    }
+
+    rx_data += preamble_bytes;
+    rx_len -= preamble_bytes + postamble_bytes;
+
     // Step 1: FX.25 decode (find correlation tag, RS decode)
     fx25_frame_t fx25;
     uint8_t err = fx25_decode(rx_data, rx_len, &fx25, corrected_errors);

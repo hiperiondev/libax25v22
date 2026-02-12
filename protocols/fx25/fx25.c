@@ -120,113 +120,6 @@ uint8_t fx25_select_mode(size_t ax25_len) {
     return 0;  // Too large for FX.25 single block
 }
 
-uint8_t fx25_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mode_id, fx25_frame_t *fx25_frame) {
-    if (!ax25_frame || !fx25_frame || ax25_len == 0)
-        return 1;
-
-    const fx25_mode_t *mode = fx25_get_mode(mode_id);
-    if (!mode)
-        return 2;
-    if (ax25_len > mode->data_bytes)
-        return 3;  // Frame too large
-
-    fx25_frame->mode_id = mode_id;
-    // Copy correlation tag as byte array instead of uint64_t assignment
-    for (int i = 0; i < 8; i++) {
-        fx25_frame->correlation_tag[i] = mode->correlation_tag[i];
-    }
-    fx25_frame->codeword_len = mode->data_bytes + mode->parity_bytes;
-
-    fx25_frame->rs_codeword = malloc(fx25_frame->codeword_len);
-    if (!fx25_frame->rs_codeword)
-        return 4;
-
-    // Copy AX.25 frame to data portion (zero-padded)
-    memcpy(fx25_frame->rs_codeword, ax25_frame, ax25_len);
-    if (ax25_len < mode->data_bytes) {
-        memset(fx25_frame->rs_codeword + ax25_len, 0, mode->data_bytes - ax25_len);
-    }
-
-    // Compute parity bytes using external RS library
-    // Initialize RS params based on parity length (16, 32, or 64)
-    rs_params_t params;
-    rs_init_params(&params, mode->parity_bytes);
-
-    uint8_t *parity = fx25_frame->rs_codeword + mode->data_bytes;
-
-    // Call rs_encode with the initialized params structure and correct pointer types
-    // Signature: void rs_encode(const rs_params_t *params, const uint8_t *data, uint8_t *parity);
-    rs_encode(&params, fx25_frame->rs_codeword, parity);
-
-    return 0;
-}
-
-uint8_t fx25_decode(const uint8_t *rx_data, size_t rx_len, fx25_frame_t *fx25_frame, uint8_t *corrected_errors) {
-    if (!rx_data || !fx25_frame || !corrected_errors)
-        return 1;
-
-    // Minimum size: correlation tag (8) + at least some data + parity
-    if (rx_len < 8 + 32 + 16)
-        return 2;
-
-    // Extract correlation tag (first 8 bytes) - store as byte array
-    uint8_t rx_tag[8];
-    for (int i = 0; i < 8; i++) {
-        rx_tag[i] = rx_data[i];
-    }
-
-    // Modified: Find matching mode with Hamming distance tolerance (up to 6 bit errors per FX.25 spec Section 2.2)
-    const fx25_mode_t *mode = NULL;
-    int best_distance = 65;  // Impossible value (max is 64 bits)
-    for (int i = 0; fx25_modes[i].tag_id != 0; i++) {
-        int distance = hamming_distance_tags(rx_tag, fx25_modes[i].correlation_tag);
-        if (distance <= 6 && distance < best_distance) {  // FX.25 spec: tolerate up to 6 bit errors in correlation tag
-            best_distance = distance;
-            mode = &fx25_modes[i];
-        }
-    }
-
-    if (!mode)
-        return 3;  // No matching tag found within tolerance
-
-    size_t expected_len = 8 + mode->data_bytes + mode->parity_bytes;
-    if (rx_len < expected_len)
-        return 4;  // Too short
-
-    fx25_frame->mode_id = mode->tag_id;
-    // Copy correlation tag as byte array instead of uint64_t assignment
-    for (int i = 0; i < 8; i++) {
-        fx25_frame->correlation_tag[i] = rx_tag[i];
-    }
-    fx25_frame->codeword_len = mode->data_bytes + mode->parity_bytes;
-
-    fx25_frame->rs_codeword = malloc(fx25_frame->codeword_len);
-    if (!fx25_frame->rs_codeword)
-        return 5;
-
-    // Copy RS codeword (skip correlation tag)
-    memcpy(fx25_frame->rs_codeword, rx_data + 8, fx25_frame->codeword_len);
-
-    // Decode using external RS library
-    // Initialize RS params based on parity length
-    rs_params_t params;
-    rs_init_params(&params, mode->parity_bytes);
-
-    // Call rs_decode with initialized params and codeword buffer
-    // Signature: int rs_decode(const rs_params_t *params, uint8_t *codeword);
-    // Returns number of errors corrected or error code
-    int result = rs_decode(&params, fx25_frame->rs_codeword);
-
-    if (result < 0) {
-        *corrected_errors = 0xFF;  // Uncorrectable
-        return 6;
-    }
-
-    *corrected_errors = (uint8_t) result;
-
-    return 0;
-}
-
 void fx25_frame_free(fx25_frame_t *frame) {
     if (frame && frame->rs_codeword) {
         free(frame->rs_codeword);
@@ -283,3 +176,131 @@ uint8_t fx25_select_mode_for_conditions(size_t ax25_len, uint8_t channel_quality
         return FX25_MODE_239_16;
     }
 }
+
+uint8_t fx25_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mode_id, fx25_frame_t *fx25_frame) {
+    if (!ax25_frame || !fx25_frame || ax25_len == 0)
+        return 1;
+
+    const fx25_mode_t *mode = fx25_get_mode(mode_id);
+    if (!mode)
+        return 2;
+    if (ax25_len > mode->data_bytes)
+        return 3;  // Frame too large
+
+    fx25_frame->mode_id = mode_id;
+    // Copy correlation tag as byte array instead of uint64_t assignment
+    for (int i = 0; i < 8; i++) {
+        fx25_frame->correlation_tag[i] = mode->correlation_tag[i];
+    }
+    fx25_frame->codeword_len = mode->data_bytes + mode->parity_bytes;
+
+    fx25_frame->rs_codeword = malloc(fx25_frame->codeword_len);
+    if (!fx25_frame->rs_codeword)
+        return 4;
+
+    // Correct shortened RS encoding: compute parity over full message with leading zeros
+    int full_k = 255 - mode->parity_bytes;
+    int shorten = full_k - mode->data_bytes;
+
+    uint8_t *full_message = malloc(full_k);
+    if (!full_message) {
+        free(fx25_frame->rs_codeword);
+        fx25_frame->rs_codeword = NULL;
+        return 4;
+    }
+    memset(full_message, 0, shorten);
+    memcpy(full_message + shorten, ax25_frame, ax25_len);
+    if (ax25_len < mode->data_bytes) {
+        memset(full_message + shorten + ax25_len, 0, mode->data_bytes - ax25_len);
+    }
+
+    // Copy only the transmitted message portion (no leading zeros)
+    memcpy(fx25_frame->rs_codeword, full_message + shorten, mode->data_bytes);
+
+    uint8_t *parity = fx25_frame->rs_codeword + mode->data_bytes;
+
+    rs_params_t params;
+    rs_init_params(&params, mode->parity_bytes);
+    rs_encode(&params, full_message, parity);
+
+    free(full_message);
+
+    return 0;
+}
+
+uint8_t fx25_decode(const uint8_t *rx_data, size_t rx_len, fx25_frame_t *fx25_frame, uint8_t *corrected_errors) {
+    if (!rx_data || !fx25_frame || !corrected_errors)
+        return 1;
+
+    // Minimum size: correlation tag (8) + at least some data + parity
+    if (rx_len < 8 + 32 + 16)
+        return 2;
+
+    // Extract correlation tag (first 8 bytes) - store as byte array
+    uint8_t rx_tag[8];
+    for (int i = 0; i < 8; i++) {
+        rx_tag[i] = rx_data[i];
+    }
+
+    // Find matching mode with Hamming distance tolerance (up to 6 bit errors per FX.25 spec Section 2.2)
+    const fx25_mode_t *mode = NULL;
+    int best_distance = 65;  // Impossible value (max is 64 bits)
+    for (int i = 0; fx25_modes[i].tag_id != 0; i++) {
+        int distance = hamming_distance_tags(rx_tag, fx25_modes[i].correlation_tag);
+        if (distance <= 6 && distance < best_distance) {  // FX.25 spec: tolerate up to 6 bit errors in correlation tag
+            best_distance = distance;
+            mode = &fx25_modes[i];
+        }
+    }
+
+    if (!mode)
+        return 3;  // No matching tag found within tolerance
+
+    size_t expected_len = 8 + mode->data_bytes + mode->parity_bytes;
+    if (rx_len < expected_len)
+        return 4;  // Too short
+
+    fx25_frame->mode_id = mode->tag_id;
+    // Copy correlation tag as byte array instead of uint64_t assignment
+    for (int i = 0; i < 8; i++) {
+        fx25_frame->correlation_tag[i] = rx_tag[i];
+    }
+    fx25_frame->codeword_len = mode->data_bytes + mode->parity_bytes;
+
+    // Correct shortened RS decoding: insert leading zeros to form full 255-symbol codeword
+    int full_k = 255 - mode->parity_bytes;
+    int shorten = full_k - mode->data_bytes;
+
+    uint8_t *full_codeword = malloc(255);
+    if (!full_codeword)
+        return 5;
+
+    memset(full_codeword, 0, shorten);
+    memcpy(full_codeword + shorten, rx_data + 8, mode->data_bytes + mode->parity_bytes);
+
+    fx25_frame->rs_codeword = malloc(fx25_frame->codeword_len);
+    if (!fx25_frame->rs_codeword) {
+        free(full_codeword);
+        return 5;
+    }
+
+    rs_params_t params;
+    rs_init_params(&params, mode->parity_bytes);
+
+    int result = rs_decode(&params, full_codeword);
+
+    if (result < 0) {
+        free(full_codeword);
+        *corrected_errors = 0xFF;  // Uncorrectable
+        return 6;
+    }
+
+    *corrected_errors = (uint8_t) result;
+
+    // Copy corrected short codeword back (data + parity, no leading zeros)
+    memcpy(fx25_frame->rs_codeword, full_codeword + shorten, fx25_frame->codeword_len);
+    free(full_codeword);
+
+    return 0;
+}
+

@@ -18,464 +18,305 @@
  * Boston, MA 02110-1301, USA.
  */
 
+//#define RS_DEBUG
+
 #include <string.h>
+#include <stdio.h>
 
 #include "fx25_rs.h"
 #include "fx25_gf256.h"
+#include "fx25.h"
 
-#ifdef MCU_DEBUG
-extern uint8_t gf_error_flag;
+// debug macro
+#ifdef RS_DEBUG
+#define DEBUG_PRINT(...) printf(__VA_ARGS__)
+#else
+#define DEBUG_PRINT(...)
 #endif
 
 void rs_init_params(rs_params_t *params, uint8_t parity_bytes) {
-    if (!params)
-        return;
+    DEBUG_PRINT("[RS_DEBUG] rs_init_params: parity_bytes=%u\n", parity_bytes);
 
-    // Safe zero of all fields before switch
-    params->n = params->k = params->t = params->nroots = params->fcr = params->prim = 0;
+    params->nroots = parity_bytes;
+    params->t = parity_bytes / 2;
+    params->k = 255 - parity_bytes;
+    params->n = 255;  // Full field size for polynomial
+    params->fcr = 1;
+    params->prim = 1;
 
-    switch (parity_bytes) {
-        case 16:
-            params->n = 255;
-            params->k = 239;
-            params->t = 8;
-            params->nroots = 16;
-            params->fcr = 1;
-            params->prim = 1;
-        break;
-        case 32:
-            params->n = 255;
-            params->k = 223;
-            params->t = 16;
-            params->nroots = 32;
-            params->fcr = 1;
-            params->prim = 1;
-        break;
-        case 64:
-            params->n = 255;
-            params->k = 191;
-            params->t = 32;
-            params->nroots = 64;
-            params->fcr = 1;
-            params->prim = 1;
-        break;
-        default: /* invalid - struct stays zeroed, caller can detect */
-        break;
-    }
+    DEBUG_PRINT("[RS_DEBUG] RS params: n=%u, k=%u, t=%u, nroots=%u, fcr=%u, prim=%u\n", params->n, params->k, params->t, params->nroots, params->fcr,
+            params->prim);
 }
 
-// FX.25 tag to RS parameters mapping
-bool fx25_get_rs_params(fx25_tag_id_t tag, rs_params_t *params) {
-    if (!params)
-        return false;
-
-    switch (tag) {
-        case FX25_TAG_01:  // RS(255,239)
-            params->n = 255;
-            params->k = 239;
-            params->nroots = 16;
-            params->t = 8;
-            params->fcr = 1;
-            params->prim = 1;
-            return true;
-
-        case FX25_TAG_02:  // RS(144,128) shortened
-            params->n = 144;
-            params->k = 128;
-            params->nroots = 16;
-            params->t = 8;
-            params->fcr = 1;
-            params->prim = 1;
-            return true;
-
-        case FX25_TAG_03:  // RS(80,64) shortened
-            params->n = 80;
-            params->k = 64;
-            params->nroots = 16;
-            params->t = 8;
-            params->fcr = 1;
-            params->prim = 1;
-            return true;
-
-        case FX25_TAG_04:  // RS(48,32) shortened
-            params->n = 48;
-            params->k = 32;
-            params->nroots = 16;
-            params->t = 8;
-            params->fcr = 1;
-            params->prim = 1;
-            return true;
-
-        case FX25_TAG_05:  // RS(255,223)
-            params->n = 255;
-            params->k = 223;
-            params->nroots = 32;
-            params->t = 16;
-            params->fcr = 1;
-            params->prim = 1;
-            return true;
-
-        case FX25_TAG_06:  // RS(160,128) shortened
-            params->n = 160;
-            params->k = 128;
-            params->nroots = 32;
-            params->t = 16;
-            params->fcr = 1;
-            params->prim = 1;
-            return true;
-
-        case FX25_TAG_07:  // RS(96,64) shortened
-            params->n = 96;
-            params->k = 64;
-            params->nroots = 32;
-            params->t = 16;
-            params->fcr = 1;
-            params->prim = 1;
-            return true;
-
-        case FX25_TAG_08:  // RS(64,32) shortened
-            params->n = 64;
-            params->k = 32;
-            params->nroots = 32;
-            params->t = 16;
-            params->fcr = 1;
-            params->prim = 1;
-            return true;
-
-        case FX25_TAG_09:  // RS(255,191)
-            params->n = 255;
-            params->k = 191;
-            params->nroots = 64;
-            params->t = 32;
-            params->fcr = 1;
-            params->prim = 1;
-            return true;
-
-        case FX25_TAG_0A:  // RS(192,128) shortened
-            params->n = 192;
-            params->k = 128;
-            params->nroots = 64;
-            params->t = 32;
-            params->fcr = 1;
-            params->prim = 1;
-            return true;
-
-        case FX25_TAG_0B:  // RS(128,64) shortened
-            params->n = 128;
-            params->k = 64;
-            params->nroots = 64;
-            params->t = 32;
-            params->fcr = 1;
-            params->prim = 1;
-            return true;
-
-        default:
-            return false;
-    }
-}
-
-// Generate generator polynomial: g(x) = (x-alpha^fcr)(x-alpha^(fcr+1))...(x-alpha^(fcr+nroots-1))
 void rs_generate_genpoly(const rs_params_t *params, uint8_t *gen_poly) {
-    int i, j;
-    uint8_t root;
+    DEBUG_PRINT("[RS_DEBUG] Generating generator polynomial for nroots=%u, fcr=%u\n", params->nroots, params->fcr);
 
-    if (!params || !gen_poly)
-        return;
-
-    // Initialize to g(x) = 1
     memset(gen_poly, 0, params->nroots + 1);
     gen_poly[0] = 1;
 
-    // Multiply by each factor (x - alpha^(fcr+i))
-    for (i = 0; i < params->nroots; i++) {
-        // Get alpha^(fcr+i) directly from exponential table
-        // The primitive element alpha is at gf_exp[1], alpha^2 at gf_exp[2], etc.
-        root = gf_exp[params->fcr + i];
+    for (uint8_t i = 0; i < params->nroots; i++) {
+        uint8_t root = (params->fcr + i) % 255;
+        uint8_t alpha_root = fx25_gf_exp[root];
 
-        // Multiply current polynomial by (x - root)
-        // Working from high degree down to avoid temporary storage
-        // New degree is i+1, so start from degree i and work down to 0
-        for (j = i; j >= 0; j--) {
-            // Coefficient of x^(j+1) in product = coefficient of x^j in current
-            // Coefficient of x^j in product = coefficient of x^j * (-root)
-            uint8_t coeff = gen_poly[j];
-            gen_poly[j + 1] = gf_add(gen_poly[j + 1], coeff);  // Contribution to x^(j+1)
-            gen_poly[j] = gf_mul(coeff, root);  // Multiply by root (which is -root in char 2)
+        DEBUG_PRINT("[RS_DEBUG] Root %u: alpha^%u = 0x%02X\n", i, root, alpha_root);
+
+        for (int j = i; j >= 0; j--) {
+            gen_poly[j + 1] = gf_add(gen_poly[j + 1], gf_mul(gen_poly[j], alpha_root));
         }
     }
+
+    DEBUG_PRINT("[RS_DEBUG] Generator polynomial coefficients: ");
+    for (uint8_t i = 0; i <= params->nroots; i++) {
+        DEBUG_PRINT("%02X ", gen_poly[i]);
+    }DEBUG_PRINT("\n");
 }
 
-// Reed-Solomon systematic encoding using LFSR approach
-// This is optimized for microcontrollers (no dynamic allocation)
 void rs_encode(const rs_params_t *params, const uint8_t *data, uint8_t *parity) {
-    uint8_t gen_poly[65];  // Max nroots is 64
-    uint8_t feedback;
-    int i, j;
+    DEBUG_PRINT("\n[RS_DEBUG] === RS ENCODE START ===\n");
+    DEBUG_PRINT("[RS_DEBUG] Data length (k): %u bytes\n", params->k);
+    DEBUG_PRINT("[RS_DEBUG] Input data (%u bytes): ", params->k);
+    for (int i = 0; i < params->k && i < 239; i++) {
+        if ((i % 16 == 0) && (i > 0)) {
+            DEBUG_PRINT("\n                          ");DEBUG_PRINT("%02X ", data[i]);
+        }
+    }
+    DEBUG_PRINT("\n");
 
-    // Generate generator polynomial
+    uint8_t gen_poly[65];
     rs_generate_genpoly(params, gen_poly);
 
-    // Initialize parity to zero
-    memset(parity, 0, params->nroots);
+    uint8_t temp_parity[64];
+    memset(temp_parity, 0, params->nroots);
 
-    // Systematic encoding: compute remainder of data(x) * x^nroots / g(x)
-    // This is equivalent to LFSR with generator polynomial
-    for (i = 0; i < params->k; i++) {
-        feedback = gf_add(data[i], parity[params->nroots - 1]);
+    // For shortened codes: prepend virtual zeros
+    uint8_t pad = params->n - (params->k + params->nroots);
 
-        if (feedback != 0) {
-            // Shift and add feedback * gen_poly
-            for (j = params->nroots - 1; j > 0; j--) {
-                if (gen_poly[j] != 0) {
-                    parity[j] = gf_add(parity[j - 1], gf_mul(gen_poly[j], feedback));
-                } else {
-                    parity[j] = parity[j - 1];
-                }
+    DEBUG_PRINT("[RS_DEBUG] Virtual zero padding: %u bytes\n", pad);
+    DEBUG_PRINT("[RS_DEBUG] Starting LFSR division...\n");
+
+    // Process virtual zero padding first
+    for (int i = 0; i < pad; i++) {
+        uint8_t feedback = temp_parity[params->nroots - 1];
+
+        for (int j = params->nroots - 1; j > 0; j--) {
+            temp_parity[j] = gf_add(temp_parity[j - 1], gf_mul(gen_poly[params->nroots - j], feedback));
+        }
+        temp_parity[0] = gf_mul(gen_poly[params->nroots], feedback);
+    }
+
+    DEBUG_PRINT("[RS_DEBUG] After padding, starting actual data...\n");
+
+    // Now process actual data
+    for (int i = 0; i < params->k; i++) {
+        uint8_t feedback = gf_add(temp_parity[params->nroots - 1], data[i]);
+
+        if (i < 5) {
+            DEBUG_PRINT("[RS_DEBUG] Iteration %d: data=0x%02X, parity[%d]=0x%02X, feedback=0x%02X\n", i, data[i], params->nroots - 1,
+                    temp_parity[params->nroots - 1], feedback);
+        }
+
+        for (int j = params->nroots - 1; j > 0; j--) {
+            temp_parity[j] = gf_add(temp_parity[j - 1], gf_mul(gen_poly[params->nroots - j], feedback));
+        }
+        temp_parity[0] = gf_mul(gen_poly[params->nroots], feedback);
+
+        if (i < 5 || i == params->k - 1) {
+            DEBUG_PRINT("[RS_DEBUG] Parity after iteration %d: ", i);
+            for (int j = 0; j < params->nroots && j < 16; j++) {
+                DEBUG_PRINT("%02X ", temp_parity[j]);
             }
-            parity[0] = gf_mul(gen_poly[0], feedback);
-        } else {
-            // Just shift
-            for (j = params->nroots - 1; j > 0; j--) {
-                parity[j] = parity[j - 1];
+            if (params->nroots > 16) {
+                DEBUG_PRINT("...");DEBUG_PRINT("\n");
             }
-            parity[0] = 0;
         }
     }
+
+    // Reverse parity bytes for systematic codeword format
+    // LFSR produces: temp_parity[0] = highest degree parity term
+    // Systematic format needs: parity[0] = lowest degree parity term
+    for (int i = 0; i < params->nroots; i++) {
+        parity[i] = temp_parity[params->nroots - 1 - i];
+    }
+
+    DEBUG_PRINT("[RS_DEBUG] Final parity (%u bytes): ", params->nroots);
+    for (int i = 0; i < params->nroots; i++) {
+        if (i % 16 == 0 && i > 0) {
+            DEBUG_PRINT("\n                          ");DEBUG_PRINT("%02X ", parity[i]);
+
+        }
+    }
+    DEBUG_PRINT("\n[RS_DEBUG] === RS ENCODE END ===\n\n");
 }
 
-// Syndrome calculation for decoding
-static void rs_calc_syndromes(const rs_params_t *params, const uint8_t *codeword, uint8_t *syndromes) {
-    int i, j;
-    uint8_t alpha_root;
-
-    if (!params || !codeword || !syndromes)
-        return;
-
-    // Calculate syndromes: S_i = r(α^(fcr+i)) for i = 0 to nroots-1
-    for (i = 0; i < params->nroots; i++) {
-        syndromes[i] = 0;
-
-        // Use exponential table directly to get α^(fcr+i)
-        alpha_root = gf_exp[params->fcr + i];
-
-        // Evaluate polynomial at α^(fcr+i) using Horner's method
-        // Working backwards: codeword[n-1] + codeword[n-2]*α + ... + codeword[0]*x^(n-1)
-        for (j = params->n - 1; j >= 0; j--) {
-            syndromes[i] = gf_add(gf_mul(syndromes[i], alpha_root), codeword[j]);
-        }
-    }
-}
-
-// Berlekamp-Massey algorithm to find error locator polynomial
-static int rs_find_error_locator(const uint8_t *syndromes, int nroots, uint8_t *lambda, uint8_t *omega) {
-    uint8_t c[65];  // Connection polynomial
-    uint8_t b[65];  // Previous connection polynomial
-    uint8_t t[65];  // Temporary
-    int i, j, l, m, n;
-    uint8_t discr, d;
-    int old_l;      // Old l value for proper bounds
-
-    if (!syndromes || !lambda || !omega)
-        return -1;
-
-    // Initialize
-    memset(lambda, 0, nroots + 1);
-    lambda[0] = 1;
-    memset(c, 0, nroots + 1);
-    c[0] = 1;
-    memset(b, 0, nroots + 1);
-    b[0] = 1;
-    memset(t, 0, sizeof(t));
-
-    l = 0;  // Current length
-    m = 1;  // Stored length
-
-    for (n = 0; n < nroots; n++) {
-        // Compute discrepancy
-        discr = syndromes[n];
-        for (i = 1; i <= l && i <= n; i++) {
-            discr = gf_add(discr, gf_mul(lambda[i], syndromes[n - i]));
-        }
-
-        if (discr == 0) {
-            m++;
-        } else {
-            // Save current lambda before modifying
-            for (i = 0; i <= l; i++) {
-                t[i] = lambda[i];
-            }
-
-            d = discr;
-            old_l = l;
-
-            // Update lambda: λ(x) = λ(x) - d * x^m * b(x)
-            for (i = 0; i <= nroots - m; i++) {
-                if (b[i] != 0) {
-                    lambda[i + m] = gf_add(lambda[i + m], gf_mul(d, b[i]));
-                }
-            }
-
-            if (2 * l <= n) {
-                l = n + 1 - l;
-                // Update b(x) = λ_old(x) / d
-                for (i = 0; i <= nroots; i++) {
-                    b[i] = (i <= old_l && t[i] != 0) ? gf_div(t[i], d) : 0;
-                }
-                m = 1;
-            } else {
-                m++;
-            }
-        }
-    }
-
-    // Compute error evaluator polynomial omega(x) = S(x) * λ(x) mod x^nroots
-    memset(omega, 0, nroots);
-    for (i = 0; i <= l; i++) {
-        for (j = 0; j < nroots && i + j < nroots; j++) {
-            omega[i + j] = gf_add(omega[i + j], gf_mul(lambda[i], syndromes[j]));
-        }
-    }
-
-    return l;  // Number of errors
-}
-
-// Chien search to find error locations
-static int rs_find_errors(const rs_params_t *params, const uint8_t *lambda, int nerrs, uint8_t *error_loc) {
-    int i, j, count;
-    uint8_t sum;
-    // Use α^(-1) = α^254
-    // params->prim is 1 (field element), not primitive element α=2
-    // gf_inverse(1) = 1, which causes all evaluations to be at x=1
-    uint8_t alpha_inv = gf_exp[254];  // α^(-1) = α^254
-
-    count = 0;
-
-    // Test all possible locations
-    uint8_t alpha_eval = 1;  // α^0 = 1, evaluates to α^(-i) after i updates
-    for (i = 0; i < params->n; i++) {
-        // Evaluate lambda at α^(-i)
-        sum = 0;
-        uint8_t term = 1;  // (α^(-i))^0 = 1
-        for (j = 0; j <= nerrs; j++) {
-            if (lambda[j] != 0) {
-                sum = gf_add(sum, gf_mul(lambda[j], term));
-            }
-            term = gf_mul(term, alpha_eval);  // (α^(-i))^j
-        }
-
-        if (sum == 0) {
-            // Error found at position i
-            if (count < nerrs) {
-                error_loc[count] = i;
-                count++;
-            }
-        }
-
-        // Update for next position: α^(-(i+1)) = α^(-i) * α^(-1)
-        alpha_eval = gf_mul(alpha_eval, alpha_inv);
-    }
-
-    return count;
-}
-
-// Forney algorithm to find error magnitudes
-static void rs_find_error_values(const rs_params_t *params, const uint8_t *omega, const uint8_t *lambda, int nerrs, const uint8_t *error_loc,
-        uint8_t *error_val) {
-    int i, j;
-    uint8_t alpha_power, alpha_inv;
-    uint8_t num, denom;
-
-    alpha_inv = gf_inverse(params->prim);
-
-    for (i = 0; i < nerrs; i++) {
-        // Calculate α^(-error_loc[i])
-        alpha_power = gf_pow(alpha_inv, error_loc[i]);
-
-        // Numerator: omega(α^(-j))
-        num = 0;
-        uint8_t alpha_k = 1;
-        for (j = 0; j < params->nroots; j++) {
-            if (omega[j] != 0) {
-                num = gf_add(num, gf_mul(omega[j], alpha_k));
-            }
-            alpha_k = gf_mul(alpha_k, alpha_power);
-        }
-
-        // Denominator: lambda'(α^(-j)) - derivative of lambda
-        denom = 0;
-        alpha_k = 1;
-        for (j = 1; j <= nerrs; j += 2) {  // Odd terms only (derivative)
-            if (lambda[j] != 0) {
-                denom = gf_add(denom, gf_mul(lambda[j], alpha_k));
-            }
-            if (j + 1 <= nerrs) {
-                alpha_k = gf_mul(alpha_k, alpha_power);
-            }
-        }
-
-        error_val[i] = gf_div(num, denom);
-    }
-}
-
-// Complete Reed-Solomon decoder
 int rs_decode(const rs_params_t *params, uint8_t *codeword) {
-    uint8_t syndromes[64];  // Max nroots is 64
-    uint8_t lambda[65];
-    uint8_t omega[64];
-    uint8_t error_loc[64];
-    uint8_t error_val[64];
-    int i, nerrs, count;
-    bool all_zero;
+    DEBUG_PRINT("\n[RS_DEBUG] ========================================\n");
+    DEBUG_PRINT("[RS_DEBUG] === RS DECODE START ===\n");
+    DEBUG_PRINT("[RS_DEBUG] ========================================\n");
+    DEBUG_PRINT("[RS_DEBUG] Codeword length (n): %u bytes\n", params->n);
+    DEBUG_PRINT("[RS_DEBUG] Data length (k): %u bytes\n", params->k);
+    DEBUG_PRINT("[RS_DEBUG] Parity length: %u bytes\n", params->nroots);
+    DEBUG_PRINT("[RS_DEBUG] Error correction capability (t): %u symbols\n", params->t);
 
-#ifdef MCU_DEBUG
-    // Clear error flag at start of decoding
-    gf_error_flag = 0;
+    uint8_t actual_len = params->k + params->nroots;
+#ifdef RS_DEBUG
+    uint8_t pad = params->n - actual_len;
 #endif
+    DEBUG_PRINT("[RS_DEBUG] Actual codeword length: %u bytes\n", actual_len);
+    DEBUG_PRINT("[RS_DEBUG] Virtual zero padding: %u bytes\n", pad);
+    DEBUG_PRINT("[RS_DEBUG] Received codeword (%u bytes): ", actual_len);
+    for (int i = 0; i < actual_len; i++) {
+        if (i % 16 == 0 && i > 0) {
+            DEBUG_PRINT("\n                          ");DEBUG_PRINT("%02X ", codeword[i]);
+        }
+    }
+    DEBUG_PRINT("\n");
 
-    // Calculate syndromes
-    rs_calc_syndromes(params, codeword, syndromes);
+    // Syndromes
+    uint8_t S[64] = { 0 };
+    for (int s_idx = 0; s_idx < params->nroots; s_idx++) {
+        uint8_t root_exp = params->fcr + s_idx;
+        uint8_t s = 0;
+        uint32_t init_pow = ((uint32_t) (actual_len - 1) * root_exp) % 255;
+        uint8_t alpha_power = fx25_gf_exp[init_pow];
+        for (int j = 0; j < actual_len; j++) {
+            s = gf_add(s, gf_mul(codeword[j], alpha_power));
+            alpha_power = gf_mul(alpha_power, fx25_gf_exp[(255 - root_exp) % 255]);
+        }
+        S[s_idx] = s;
+        if (s_idx < 8)
+            DEBUG_PRINT("[RS_DEBUG] Syndrome[%d] at alpha^%u: 0x%02X\n", s_idx, root_exp, s);
+    }
 
-    // Check if all syndromes are zero (no errors)
-    all_zero = true;
-    for (i = 0; i < params->nroots; i++) {
-        if (syndromes[i] != 0) {
-            all_zero = false;
-            break;
+    int nonzero = 0;
+    for (int i = 0; i < params->nroots; i++)
+        if (S[i] != 0)
+            nonzero++;
+    DEBUG_PRINT("[RS_DEBUG] Syndromes: %d/%u non-zero\n", nonzero, params->nroots);
+
+    if (nonzero == 0) {
+        DEBUG_PRINT("[RS_DEBUG] No errors detected\n");
+        DEBUG_PRINT("[RS_DEBUG] === RS DECODE END (Success - no errors) ===\n\n");
+        return 0;
+    }
+
+    DEBUG_PRINT("[RS_DEBUG] Errors detected - starting Berlekamp-Massey\n");
+
+    // Berlekamp-Massey
+    uint8_t C[65] = { 0 }, B[65] = { 0 };
+    C[0] = 1;
+    B[0] = 1;
+    int L = 0, m = 1;
+    uint8_t b = 1;
+
+    for (int n = 0; n < params->nroots; n++) {
+        uint8_t d = 0;
+        for (int i = 0; i <= L; i++)
+            d = gf_add(d, gf_mul(C[i], S[n - i]));
+        if (d == 0) {
+            m++;
+        } else if (2 * L <= n) {
+            uint8_t temp[65];
+            memcpy(temp, C, sizeof(temp));
+            uint8_t q = gf_div(d, b);
+            for (int i = 0; i < params->nroots - m + 1; i++)
+                if (B[i])
+                    C[i + m] = gf_add(C[i + m], gf_mul(q, B[i]));
+            L = n + 1 - L;
+            memcpy(B, temp, sizeof(B));
+            b = d;
+            m = 1;
+        } else {
+            uint8_t q = gf_div(d, b);
+            for (int i = 0; i < params->nroots - m + 1; i++)
+                if (B[i])
+                    C[i + m] = gf_add(C[i + m], gf_mul(q, B[i]));
+            m++;
         }
     }
 
-    if (all_zero) {
-        return 0;  // No errors
-    }
-
-    // Find error locator polynomial using Berlekamp-Massey
-    nerrs = rs_find_error_locator(syndromes, params->nroots, lambda, omega);
+    int nerrs = L;
+    DEBUG_PRINT("[RS_DEBUG] Error locator degree (nerrs): %d\n", nerrs);
 
     if (nerrs > params->t) {
-        return -1;  // Too many errors, uncorrectable
+        DEBUG_PRINT("[RS_DEBUG] === RS DECODE END (Failed: too many errors) ===\n\n");
+        return -1;
+    }
+    if (nerrs == 0) {
+        DEBUG_PRINT("[RS_DEBUG] === RS DECODE END (Success - no errors) ===\n\n");
+        return 0;
     }
 
-    // Find error locations using Chien search
-    count = rs_find_errors(params, lambda, nerrs, error_loc);
+    // Normalise to monic
+    uint8_t lead = C[nerrs];
+    uint8_t inv = gf_inverse(lead);
+    uint8_t Lambda[65] = { 0 };
+    for (int i = 0; i <= nerrs; i++)
+        Lambda[i] = gf_mul(C[i], inv);
 
-    if (count != nerrs) {
-        return -1;  // Could not find all error locations
+    // Omega(x) = S(x) * Lambda(x) mod x^{2t}
+    uint8_t Omega[65] = { 0 };
+    for (int i = 0; i < params->nroots; i++) {
+        for (int j = 0; j <= nerrs; j++) {
+            if (i - j >= 0)
+                Omega[i] = gf_add(Omega[i], gf_mul(S[i - j], Lambda[j]));
+        }
     }
 
-    // Find error magnitudes using Forney algorithm
-    rs_find_error_values(params, omega, lambda, nerrs, error_loc, error_val);
+    // Chien search
+    uint8_t err_pos[64];
+    int err_count = 0;
+    DEBUG_PRINT("[RS_DEBUG] === Chien Search ===\n");
+    for (int j = 0; j < actual_len && err_count < nerrs; j++) {
+        int full_pos = actual_len - 1 - j; /* <-- THIS IS THE FIX */
+        uint8_t X = (full_pos == 0) ? 1 : fx25_gf_exp[255 - full_pos];
 
-#ifdef MCU_DEBUG
-    // Check if division by zero occurred during error value calculation
-    if (gf_error_flag) {
-        return -2;  // Math error occurred during decoding
+        uint8_t eval = Lambda[0];
+        uint8_t xp = X;
+        for (int i = 1; i <= nerrs; i++) {
+            if (Lambda[i])
+                eval = gf_add(eval, gf_mul(Lambda[i], xp));
+            xp = gf_mul(xp, X);
+        }
+        if (eval == 0)
+            err_pos[err_count++] = (uint8_t) j;
     }
-#endif
 
-    // Correct errors
-    for (i = 0; i < nerrs; i++) {
-        codeword[error_loc[i]] = gf_add(codeword[error_loc[i]], error_val[i]);
+    if (err_count != nerrs) {
+        DEBUG_PRINT("[RS_DEBUG] ERROR: Found %d locations but expected %d\n", err_count, nerrs);
+        DEBUG_PRINT("[RS_DEBUG] === RS DECODE END (Failed: location mismatch) ===\n\n");
+        return -1;
     }
 
-    return nerrs;
+    // Forney
+    for (int i = 0; i < err_count; i++) {
+        uint8_t pos = err_pos[i];
+        int full_pos = actual_len - 1 - pos;
+        uint8_t X = (full_pos == 0) ? 1 : fx25_gf_exp[255 - full_pos]; /* root of Lambda */
+
+        uint8_t omega_val = 0;
+        uint8_t xp = 1;
+        for (int j = 0; j < params->nroots; j++) {
+            if (Omega[j])
+                omega_val = gf_add(omega_val, gf_mul(Omega[j], xp));
+            xp = gf_mul(xp, X);
+        }
+
+        uint8_t lambda_der = 0;
+        uint8_t xp_der = 1;
+        uint8_t X2 = gf_mul(X, X);
+        for (int j = 1; j <= nerrs; j += 2) {
+            if (Lambda[j])
+                lambda_der = gf_add(lambda_der, gf_mul(Lambda[j], xp_der));
+            xp_der = gf_mul(xp_der, X2);
+        }
+
+        if (lambda_der == 0)
+            return -1;
+
+        uint8_t mag = gf_div(omega_val, lambda_der);
+        codeword[pos] = gf_add(codeword[pos], mag);
+    }
+
+    DEBUG_PRINT("[RS_DEBUG] === RS DECODE END (Success - corrected %d errors) ===\n\n", err_count);
+    return err_count;
 }
