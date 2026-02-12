@@ -389,14 +389,14 @@ This checklist documents the implementation status of all features defined in:
 - ✅ Segment header encoding (First/Last flags, sequence)
 - ✅ PID preservation across segments
 - ✅ Segment transmission sequencing
-- ❌ Next segment timer TR210
+- ✅ Next segment timer TR210
 
 ### 8.2 Reassembler State Machine
 - ✅ Segment reception and buffering
 - ✅ In-order reassembly
 - ✅ Segment timeout detection
 - ✅ Delivery of complete payload to Layer 3
-- ⚠️ Out-of-order segment handling (basic only)
+- ✅ Out-of-order segment handling
 
 ---
 
