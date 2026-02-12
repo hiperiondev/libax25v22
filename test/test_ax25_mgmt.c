@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #include "test_common.h"
 #include "ax25_mgmt.h"
@@ -87,6 +88,9 @@ static int test_start_negotiation(void) {
     TEST_ASSERT(captured_len > 20, "XID command frame transmitted (reasonable length)", 0);
     TEST_ASSERT(ctx.retry_count == 0, "Initial retry_count = 0", 0);
 
+    free(dest);
+    free(src);
+
     return 0;
 }
 
@@ -128,6 +132,9 @@ static int test_negotiation_timeout(void) {
     current_tick += 4000;
     ax25_mgmt_tick(&ctx, current_tick);
     TEST_ASSERT(ctx.state == AX25_MGMT_IDLE, "State returned to IDLE after max retries", 0);
+
+    free(dest);
+    free(src);
 
     return 0;
 }

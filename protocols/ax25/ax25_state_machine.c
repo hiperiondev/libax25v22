@@ -275,8 +275,6 @@ static void send_sabm(ax25_connection_t *conn, bool extended) {
             conn->stats.uframe_sent = 1;  // Prevent overflow
         }
     }
-
-    free(encoded);
 }
 
 static void handle_t1_timeout(ax25_connection_t *conn, uint32_t current_tick_10ms) {

@@ -42,6 +42,8 @@ static void capture_transmit(void *user_data, uint8_t *data, size_t len) {
         memcpy(captured_buffer, data, len);
         captured_len = len;
     }
+
+    free(data);
 }
 
 // Hardcoded callsign bytes (shifted left by 1, space padded)
