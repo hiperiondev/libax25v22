@@ -365,15 +365,15 @@ This checklist documents the implementation status of all features defined in:
 - ✅ T1 - Acknowledgment timer (default 3000 ms)
 - ✅ T2 - Response delay timer (default 500 ms) - v2.2 addition
 - ✅ T3 - Inactive link timer (idle channel polling)
-- ❌ T100 - Repeater hang timer (AXHANG) - digipeater function
-- ❌ T101 - Priority window timer (PRIACK)
-- ❌ T102 - Slot time timer (p-persistence)
-- ❌ T103 - Transmitter startup timer (TXDELAY)
-- ❌ T104 - Repeater startup timer (AXDELAY)
-- ❌ T105 - Remote receiver sync timer
-- ❌ T106 - Ten minute transmission limit timer
-- ❌ T107 - Anti-hogging limit timer
-- ❌ T108 - Receiver startup timer
+- ✅ T100 - Repeater hang timer (AXHANG) - digipeater function
+- ✅ T101 - Priority window timer (PRIACK)
+- ✅ T102 - Slot time timer (p-persistence)
+- ✅ T103 - Transmitter startup timer (TXDELAY)
+- ✅ T104 - Repeater startup timer (AXDELAY)
+- ✅ T105 - Remote receiver sync timer
+- ✅ T106 - Ten minute transmission limit timer
+- ✅ T107 - Anti-hogging limit timer
+- ✅ T108 - Receiver startup timer
 
 ### 7.2 Parameters
 - ✅ N1 - Maximum I-field octets (default 256, negotiable)
