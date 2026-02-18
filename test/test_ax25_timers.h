@@ -16,23 +16,11 @@
  * along with this software; see the file COPYING.  If not, write to
  * the Free Software Foundation, Inc., 51 Franklin Street,
  * Boston, MA 02110-1301, USA.
- *
  */
 
-#include "test_ax25.h"
-#include "test_hdlc.h"
-#include "test_ax25_mgmt.h"
-#include "test_ax25_state_machine.h"
-#include "test_fx25.h"
-#include "test_ax25_segmenter.h"
-#include "test_ax25_timers.h"
+#ifndef TEST_AX25_TIMERS_H_
+#define TEST_AX25_TIMERS_H_
 
-int main() {
-    test_hdlc_main();
-    test_ax25_main();
-    test_ax25_mgmt_main();
-    test_ax25_state_machine_main();
-    test_fx25_main();
-    test_ax25_segmenter_main();
-    test_ax25_timers_main();
-}
+int test_ax25_timers_main(void);
+
+#endif /* TEST_AX25_TIMERS_H_ */

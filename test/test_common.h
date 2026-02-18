@@ -46,5 +46,25 @@
             printf("\033[0;32m[%04d]    PASS: %s\033[0m\n", ++assert_count, msg); \
         } \
     } while (0)
+#ifdef DEBUG_ENABLE
+    #define DEBUG_PRINT(fmt, ...) printf("\033[0;36m[DEBUG] " fmt "\033[0m\n", ##__VA_ARGS__)
+    #define DEBUG_FRAME(label, data, len) \
+        do { \
+            printf("\033[0;36m[DEBUG] %s (%zu bytes): ", label, len); \
+            for (size_t i = 0; i < len; i++) printf("%02X ", data[i]); \
+            printf("\033[0m\n"); \
+        } while (0)
+    #define DEBUG_STATE(label, state) printf("\033[0;36m[DEBUG] %s: %d\033[0m\n", label, state)
+    #define DEBUG_VAR(label, var) printf("\033[0;36m[DEBUG] %s: %u\033[0m\n", label, (unsigned int)var)
+    #define DEBUG_VAR64(label, var) printf("\033[0;36m[DEBUG] %s: %lu\033[0m\n", label, (unsigned long)var)
+    #define DEBUG_BOOL(label, var) printf("\033[0;36m[DEBUG] %s: %s\033[0m\n", label, var ? "true" : "false")
+#else
+    #define DEBUG_PRINT(fmt, ...)
+    #define DEBUG_FRAME(label, data, len)
+    #define DEBUG_STATE(label, state)
+    #define DEBUG_VAR(label, var)
+    #define DEBUG_VAR64(label, var)
+    #define DEBUG_BOOL(label, var)
+#endif
 
 #endif /* TEST_COMMON_H_ */

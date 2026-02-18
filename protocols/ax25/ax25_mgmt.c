@@ -134,7 +134,11 @@ uint8_t ax25_mgmt_start_negotiation(ax25_mgmt_context_t *ctx, ax25_address_t *de
     uint8_t *encoded = ax25_exchange_identification_frame_encode(&xid, &len, &err);
     if (encoded) {
         transmit(encoded, len);
-        free(encoded);
+
+        if (encoded != NULL) {
+            free(encoded);
+            encoded = NULL;
+        }
     }
 
     // Free parameter structures
@@ -321,7 +325,11 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
         uint8_t *encoded = ax25_exchange_identification_frame_encode(&response, &len, &err);
         if (encoded) {
             transmit(encoded, len);
-            free(encoded);
+
+            if (encoded != NULL) {
+                free(encoded);
+                encoded = NULL;
+            }
         }
 
         // Free parameter structures

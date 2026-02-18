@@ -262,7 +262,11 @@ ax25_address_t* ax25_address_from_string(const char *str, uint8_t *err) {
     return addr;
 
     cleanup:
-    free(addr);
+    if (addr != NULL) {
+        free(addr);
+        addr = NULL;
+    }
+
     return NULL;
 }
 

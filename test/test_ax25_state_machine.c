@@ -42,8 +42,6 @@ static void capture_transmit(void *user_data, uint8_t *data, size_t len) {
         memcpy(captured_buffer, data, len);
         captured_len = len;
     }
-
-    free(data);
 }
 
 // Hardcoded callsign bytes (shifted left by 1, space padded)
@@ -114,9 +112,9 @@ static int test_connection_establishment(void) {
 static int test_data_transfer(void) {
     printf("\n--- test_data_transfer ---\n");
 
-    ax25_connection_t conn;
+    ax25_connection_t *conn = malloc(sizeof(ax25_connection_t));
     ax25_callbacks_t cb = { .transmit = capture_transmit };
-    uint8_t err = ax25_connection_init(&conn, &cb, NULL);
+    uint8_t err = ax25_connection_init(conn, &cb, NULL);
     TEST_ASSERT(err == 0, "Connection init succeeded", err);
 
     uint8_t parse_err = 0;
@@ -125,7 +123,7 @@ static int test_data_transfer(void) {
     ax25_address_t *src = ax25_address_from_string("TEST1-0", &parse_err);
     TEST_ASSERT(src != NULL && parse_err == 0, "Source address parsed", parse_err);
 
-    establish_connection(&conn, dest, src);
+    establish_connection(conn, dest, src);
 
     // Send data
     const uint8_t payload[] = { 'T', 'E', 'S', 'T' };
@@ -144,13 +142,15 @@ static int test_data_transfer(void) {
     memcpy(expected_i + 16, payload, payload_len);  // payload
 
     reset_capture();
-    err = ax25_send_data(&conn, (uint8_t*) payload, payload_len, pid);
+    err = ax25_send_data(conn, (uint8_t*) payload, payload_len, pid);
     TEST_ASSERT(err == 0, "ax25_send_data succeeded", err);
 
     COMPARE_FRAME(captured_buffer, captured_len, expected_i, sizeof(expected_i), "Transmitted I-frame matches expected (modulo 8)");
 
     free(dest);
     free(src);
+    free(conn);
+
     return 0;
 }
 

@@ -18,32 +18,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-/*
- * Physical layer module for AX.25 v2.2 - handles radio-specific timing, CSMA,
- * PTT control, delays, preamble, inter-frame flags, hang time, and transmission limits.
- *
- * This module is designed for microcontrollers (no malloc, no float, no 64-bit math).
- * All timing is in milliseconds using uint32_t ticks (assume caller provides monotonic
- * 1 ms tick, or adjust for 10 ms by scaling configs).
- *
- * Key features implemented:
- * - T103 (TXDELAY): Transmitter startup delay
- * - T104 (AXDELAY): Longer delay for digipeated/repeated frames
- * - T100 (AXHANG): Repeater hang time after transmission
- * - T102 (SLOTTIME) + p-persistence CSMA for channel access
- * - T106: 10-minute continuous transmission limit (abort + dekey)
- * - Preamble flags (0x7E) and inter-frame flags for multi-frame bursts
- * - Supports bursting multiple frames in one key-up (full window support)
- * - Simple LCG RNG for persistence (no external entropy needed)
- *
- * Integration:
- * - Higher-layer transmit calls ax25_physical_queue_frame() instead of direct send.
- * - Call ax25_physical_tick() from main loop (ideally every 1-10 ms).
- * - One physical context per radio (shared channel).
- *
- * Copyright 2026 - Licensed under same GPL as the rest of libax25v22.
- */
-
 #ifndef AX25_PHYSICAL_H_
 #define AX25_PHYSICAL_H_
 
@@ -129,5 +103,8 @@ bool ax25_physical_queue_frame(ax25_physical_t *phys, const uint8_t *frame, size
 // API to add entropy from external sources (radio noise, ADC, timer jitter, etc.)
 // This prevents the LCG sequence from being predictable and improves randomness
 void ax25_physical_add_entropy(ax25_physical_t *phys, uint8_t noise_sample);
+
+/* Tick handler - call periodically (every 10ms recommended) */
+void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms);
 
 #endif /* AX25_PHYSICAL_H_ */

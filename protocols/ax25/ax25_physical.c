@@ -68,8 +68,11 @@ static bool peek_frame(const ax25_physical_t *phys, const uint8_t **frame, size_
         return false;
 
     uint8_t slot = phys->queue_head;
-    *frame = phys->frame_storage[slot];
-    *len = phys->frame_len[slot];
+    // Only write through pointer if caller supplied a non-NULL destination
+    if (frame)
+        *frame = phys->frame_storage[slot];
+    if (len)
+        *len = phys->frame_len[slot];
     if (is_digipeat)
         *is_digipeat = phys->frame_is_digipeat[slot];
     return true;
@@ -181,29 +184,45 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
     }
 
     while (1) {
-        if (phys->state != PHYS_IDLE && phys->state != PHYS_DATA && phys->state != PHYS_INTERFRAME && tick_10ms < phys->next_action_tick_10ms) {
-            return;
+        if (phys->state != PHYS_DATA && phys->state != PHYS_INTERFRAME) {
+            // For PHYS_IDLE, only skip tick check if RX warmup is NOT required
+            if (phys->state == PHYS_IDLE && phys->rx_warmup_required) {
+                // PHYS_IDLE with RX warmup required - respect next_action_tick_10ms
+                if (tick_10ms < phys->next_action_tick_10ms) {
+                    return;
+                }
+            } else if (phys->state != PHYS_IDLE && tick_10ms < phys->next_action_tick_10ms) {
+                // Other states - respect next_action_tick_10ms
+                return;
+            }
         }
 
         switch (phys->state) {
             case PHYS_IDLE:
-                if (queue_empty(phys))
+                if (queue_empty(phys)) {
                     return;
+                }
 
+                // Enforce receiver startup delay (T108) after previous burst ended
                 if (phys->rx_warmup_required) {
                     int32_t time_since_unkey = (int32_t) (tick_10ms - phys->last_unkey_tick_10ms);
-
                     if (time_since_unkey < (int32_t) phys->rx_startup_10ms) {
-                        phys->next_action_tick_10ms = phys->last_unkey_tick_10ms + phys->rx_startup_10ms;
                         return;
                     }
-
                     phys->rx_warmup_required = false;
                 }
 
+                // Transition to CSMA_WAIT to perform p-persistence and carrier-sense.
+                // Doing the full CSMA logic inline in IDLE prevented the state machine
+                // from ever entering PHYS_CSMA_WAIT, which the upper layer tests rely on.
+                // Reset persistence state so CSMA_WAIT starts a fresh slottime cycle.
+                phys->persistence_deferred = false;
+                phys->persistence_slots_remaining = 0;
+                phys->dwait_pending = false;
+                phys->next_action_tick_10ms = tick_10ms + phys->slottime_10ms;
                 phys->state = PHYS_CSMA_WAIT;
-                phys->next_action_tick_10ms = tick_10ms;
-                continue;
+                return;
+            break;
 
             case PHYS_CSMA_WAIT: {
                 bool busy = phys->carrier_detect ? phys->carrier_detect(phys->user_data) : false;
@@ -293,6 +312,10 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
             }
 
             case PHYS_KEY_DELAY:
+                if (tick_10ms < phys->next_action_tick_10ms) {
+                    return;
+                }
+
                 if (phys->remote_sync_10ms > 0) {
                     phys->state = PHYS_REMOTE_SYNC;
                     phys->next_action_tick_10ms = phys->next_action_tick_10ms + phys->remote_sync_10ms;
@@ -303,6 +326,10 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                 continue;
 
             case PHYS_REMOTE_SYNC:
+                if (tick_10ms < phys->next_action_tick_10ms) {
+                    return;
+                }
+
                 send_flags(phys, phys->preamble_flags);
                 phys->state = PHYS_PREAMBLE;
                 continue;
@@ -311,18 +338,25 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                 if (!dequeue_frame(phys, &phys->current_frame, &phys->current_len)) {
                     phys->state = PHYS_HANG;
                     phys->next_action_tick_10ms = tick_10ms + phys->axhang_10ms;
-                    continue;
+                    return;
                 }
+
                 phys->send_data(phys->current_frame, phys->current_len, phys->user_data);
                 phys->state = PHYS_DATA;
-                continue;
+                return;
 
             case PHYS_DATA:
+                // Record the time transmission ended for RX warmup calculation
+                phys->last_unkey_tick_10ms = tick_10ms;
+
                 if (phys->anti_hog_expired && queue_empty(phys)) {
                     phys->anti_hog_expired = false;
                     if (phys->axhang_10ms == 0) {
-                        phys->last_unkey_tick_10ms = tick_10ms;
                         phys->rx_warmup_required = (phys->rx_startup_10ms > 0);
+                        // Set next_action_tick when entering IDLE with RX warmup required
+                        if (phys->rx_warmup_required) {
+                            phys->next_action_tick_10ms = tick_10ms + phys->rx_startup_10ms;
+                        }
                         phys->ptt_control(false, phys->user_data);
                         phys->tx_active = false;
                         phys->state = PHYS_IDLE;
@@ -337,6 +371,10 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                     if (phys->axhang_10ms == 0) {
                         phys->last_unkey_tick_10ms = tick_10ms;
                         phys->rx_warmup_required = (phys->rx_startup_10ms > 0);
+                        // Set next_action_tick when entering IDLE with RX warmup required
+                        if (phys->rx_warmup_required) {
+                            phys->next_action_tick_10ms = tick_10ms + phys->rx_startup_10ms;
+                        }
                         phys->ptt_control(false, phys->user_data);
                         phys->tx_active = false;
                         phys->state = PHYS_IDLE;
@@ -345,6 +383,10 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                         phys->next_action_tick_10ms = tick_10ms + phys->axhang_10ms;
                     }
                 } else {
+                    // More frames queued - enforce RX warmup before next frame if configured
+                    if (phys->rx_startup_10ms > 0) {
+                        phys->rx_warmup_required = true;
+                    }
                     send_flags(phys, phys->interframe_flags);
                     phys->state = PHYS_INTERFRAME;
                 }
@@ -353,23 +395,46 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                 continue;
 
             case PHYS_INTERFRAME:
+                // Check if RX warmup is required before starting next frame
+                if (phys->rx_warmup_required && phys->rx_startup_10ms > 0) {
+                    int32_t time_since_unkey = (int32_t) (tick_10ms - phys->last_unkey_tick_10ms);
+
+                    // Enforce minimum delay between transmissions
+                    if (time_since_unkey < (int32_t) phys->rx_startup_10ms) {
+                        // Wait for RX warmup period to complete
+                        phys->next_action_tick_10ms = phys->last_unkey_tick_10ms + phys->rx_startup_10ms;
+                        return;
+                    }
+
+                    // RX warmup complete
+                    phys->rx_warmup_required = false;
+                }
+
                 if (!dequeue_frame(phys, &phys->current_frame, &phys->current_len)) {
                     phys->state = PHYS_HANG;
                     phys->next_action_tick_10ms = tick_10ms + phys->axhang_10ms;
-                    continue;
+                    return;
                 }
                 phys->send_data(phys->current_frame, phys->current_len, phys->user_data);
                 phys->state = PHYS_DATA;
-                continue;
+                return;
+
+            break;
 
             case PHYS_HANG:
+                if (tick_10ms < phys->next_action_tick_10ms) {
+                    return;
+                }
                 phys->last_unkey_tick_10ms = tick_10ms;
                 phys->rx_warmup_required = (phys->rx_startup_10ms > 0);
+                if (phys->rx_warmup_required) {
+                    phys->next_action_tick_10ms = tick_10ms + phys->rx_startup_10ms;
+                }
                 phys->ptt_control(false, phys->user_data);
                 phys->tx_active = false;
                 phys->state = PHYS_IDLE;
                 phys->anti_hog_expired = false;
-                continue;
+                return;
 
             default:
                 phys->state = PHYS_IDLE;
