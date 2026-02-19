@@ -91,6 +91,8 @@ typedef struct {
     bool rx_warmup_required;
     bool anti_hog_expired;
     uint32_t current_session_start_10ms;  // Now in 10ms units
+    bool axdelay_pending;               // T104 pre-PTT wait active
+    uint32_t last_tick_10ms;            // Last tick value processed, used internally by ax25_physical_queue_frame kickstart
 } ax25_physical_t;
 
 /* Initialize context with sensible defaults */
