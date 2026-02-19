@@ -558,8 +558,11 @@ ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, 
             frame = (ax25_frame_t*) raw;
         } else {
             bool is_16bit;
-            if (modulo128 == MODULO128_AUTO) {
-                // Automatic detection based on source address res1 bit
+            // MODULO128_FALSE(0) uses res1 auto-detection like MODULO128_AUTO
+            // This allows callers passing 0 to correctly decode both 8-bit and 16-bit numbered frames
+            // The encoder sets res1=false for 16-bit and res1=true for 8-bit numbered frames
+            if (modulo128 == MODULO128_AUTO || modulo128 == MODULO128_FALSE) {
+                // Auto-detect: res1=false in source address signals modulo-128 (16-bit control)
                 is_16bit = !hdr_result.header->source.res1;
             } else {
                 is_16bit = (modulo128 == MODULO128_TRUE);
@@ -598,10 +601,20 @@ uint8_t* ax25_frame_encode(const ax25_frame_t *frame, size_t *len, uint8_t *err)
             || frame->type == AX25_FRAME_SUPERVISORY_RNR_16BIT || frame->type == AX25_FRAME_SUPERVISORY_REJ_16BIT
             || frame->type == AX25_FRAME_SUPERVISORY_SREJ_16BIT || frame->type == AX25_FRAME_UNNUMBERED_SABME);
 
+    // identify modulo-8 numbered frames to set res1=true for correct auto-detection
+    bool is_modulo8_numbered = (frame->type == AX25_FRAME_INFORMATION_8BIT || frame->type == AX25_FRAME_SUPERVISORY_RR_8BIT
+            || frame->type == AX25_FRAME_SUPERVISORY_RNR_8BIT || frame->type == AX25_FRAME_SUPERVISORY_REJ_8BIT
+            || frame->type == AX25_FRAME_SUPERVISORY_SREJ_8BIT);
+
     // Create a copy of the header
     ax25_frame_header_t header_copy = frame->header;
     if (is_modulo128) {
+        // Clear res1 to signal modulo-128 mode per AX.25 v2.2 Section 3.12
         header_copy.source.res1 = false;
+        // set res1=true for modulo-8 numbered frames so MODULO128_AUTO decode works correctly
+    } else if (is_modulo8_numbered) {
+        // Set res1=true to signal modulo-8 mode; decoder uses this bit for MODULO128_AUTO detection
+        header_copy.source.res1 = true;
     }
 
     size_t header_len;

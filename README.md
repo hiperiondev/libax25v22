@@ -470,7 +470,7 @@ This checklist documents the implementation status of all features defined in:
 - ✅ Out-of-sequence frame buffering
 - ✅ SREJ bitmap for multiple outstanding frames
 - ✅ SREJ/REJ combined mode (per v2.2 default)
-- ⚠️ Multiple simultaneous SREJ conditions (partial)
+- ✅ Multiple simultaneous SREJ conditions
 
 ### 13.2 Extended Sequence Numbers
 - ✅ 7-bit sequence numbers (modulo 128)
