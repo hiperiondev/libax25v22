@@ -173,7 +173,8 @@ static void send_rr(ax25_connection_t *conn, bool pf) {
 
     size_t len;
     uint8_t err;
-    uint8_t *encoded = ax25_supervisory_frame_encode(&rr, &len, &err);
+    // use ax25_frame_encode to include address header in transmitted frame
+    uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &rr, &len, &err);
     if (encoded && conn->callbacks.transmit) {
         conn->callbacks.transmit(conn->user_data, encoded, len);
 
@@ -300,7 +301,8 @@ static void send_rej(ax25_connection_t *conn, bool pf) {
 
     size_t len;
     uint8_t err;
-    uint8_t *encoded = ax25_supervisory_frame_encode(&rej, &len, &err);
+    // use ax25_frame_encode to include address header in transmitted frame
+    uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &rej, &len, &err);
     if (encoded && conn->callbacks.transmit) {
         conn->callbacks.transmit(conn->user_data, encoded, len);
 
@@ -328,7 +330,8 @@ static void send_srej(ax25_connection_t *conn, uint8_t missing_ns, bool pf) {
 
     size_t len;
     uint8_t err;
-    uint8_t *encoded = ax25_supervisory_frame_encode(&srej, &len, &err);
+    // use ax25_frame_encode to include address header in transmitted frame
+    uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &srej, &len, &err);
     if (encoded && conn->callbacks.transmit) {
         conn->callbacks.transmit(conn->user_data, encoded, len);
 
@@ -377,6 +380,7 @@ static void handle_out_of_sequence_iframe(ax25_connection_t *conn, ax25_informat
     uint8_t ns = iframe->ns;
     uint8_t expected = conn->vars.vr;
     uint8_t missing_count = count_missing_frames(conn, ns);
+    uint8_t mask = (conn->vars.mod == 8) ? 0x07 : 0x7F;
 
     // Section 6.4.4.3: If REJ exception already pending, don't send SREJ
     if (conn->rej_exception) {
@@ -384,24 +388,12 @@ static void handle_out_of_sequence_iframe(ax25_connection_t *conn, ax25_informat
         return;
     }
 
-    // Section 6.4.4: Check if we should use SREJ or REJ
-    bool use_srej = false;
-
+    // Three distinct cases replace the original two-flag approach:
+    //   (a) !srej_exception && single gap       -> start SREJ
+    //   (b) srej_exception && consecutive frame -> buffer only, keep SREJ state
+    //   (c) srej_exception && new gap           -> send SREJ for new missing or fall to REJ
     if (can_use_srej(conn) && !conn->srej_exception && missing_count == 1) {
-        // Single missing frame and no SREJ pending - use SREJ
-        use_srej = true;
-    } else if (can_use_srej(conn) && conn->srej_exception && conn->srej_count < conn->srej_max) {
-        // Already in SREJ exception, can send another SREJ if limit not reached
-        // Check if we haven't already sent SREJ for this missing frame
-        if (!is_srej_pending(conn, expected)) {
-            use_srej = true;
-        }
-    }
-
-    if (use_srej) {
-        // Section 6.4.4.2: SREJ recovery
-
-        // Buffer this out-of-sequence frame
+        // Case (a): Single missing frame, no prior SREJ - start SREJ mode
         if (conn->srej_buffer_count < AX25_MAX_QUEUE_SIZE) {
             uint8_t buf_idx = conn->srej_buffer_count;
             size_t copy_len = iframe->payload_len;
@@ -415,32 +407,84 @@ static void handle_out_of_sequence_iframe(ax25_connection_t *conn, ax25_informat
             conn->srej_buffer_count++;
         }
 
-        // Set SREJ exception state
-        if (!conn->srej_exception) {
-            conn->srej_exception = true;
-            conn->srej_first_missing = expected;
-        }
-        conn->srej_count++;
+        conn->srej_exception = true;
+        conn->srej_first_missing = expected;
+        conn->srej_count = 1;
+        // P=1 for first SREJ per Section 6.4.4.2
+        send_srej(conn, expected, true);
 
-        // Send SREJ - P=1 if first SREJ, P=0 if additional SREJ per Section 6.4.4.2
-        bool pf = (conn->srej_count == 1) ? true : false;
-        send_srej(conn, expected, pf);
+    } else if (can_use_srej(conn) && conn->srej_exception) {
+        // Cases (b) and (c): already in SREJ exception
+
+        // Compute highest N(S) seen so far: last in-order received plus buffered frames
+        uint8_t max_ns_seen = (conn->vars.vr == 0) ? ((conn->vars.mod - 1) & mask) : ((conn->vars.vr - 1) & mask);
+        for (uint8_t bi = 0; bi < conn->srej_buffer_count; bi++) {
+            uint8_t diff = (conn->srej_buffer_ns[bi] - max_ns_seen) & mask;
+            if (diff > 0 && diff < ((conn->vars.mod == 8) ? 4 : 64)) {
+                max_ns_seen = conn->srej_buffer_ns[bi];
+            }
+        }
+        // Next sequence number we expect after everything seen so far
+        uint8_t expected_next = (max_ns_seen + 1) & mask;
+
+        // Silently discard duplicates already in the buffer
+        for (uint8_t bi = 0; bi < conn->srej_buffer_count; bi++) {
+            if (conn->srej_buffer_ns[bi] == ns) {
+                return;
+            }
+        }
+
+        if (ns == expected_next) {
+            // Case (b): consecutive frame after the highest seen - just buffer it.
+            // No new gap exists; the pending SREJ for the original missing frame
+            // is still valid - do NOT touch the bitmap or srej_exception.
+            if (conn->srej_buffer_count < AX25_MAX_QUEUE_SIZE) {
+                uint8_t buf_idx = conn->srej_buffer_count;
+                size_t copy_len = iframe->payload_len;
+                if (copy_len > 255)
+                    copy_len = 255;
+                if (copy_len > 0 && iframe->payload) {
+                    memcpy(conn->srej_buffer[buf_idx], iframe->payload, copy_len);
+                }
+                conn->srej_buffer_len[buf_idx] = (uint8_t) copy_len;
+                conn->srej_buffer_ns[buf_idx] = ns;
+                conn->srej_buffer_count++;
+            }
+            // SREJ bitmap unchanged - existing SREJ for missing frame stays pending
+        } else {
+            // Case (c): new gap at expected_next - decide SREJ or REJ
+            uint8_t new_missing = expected_next;
+            if (conn->srej_count < conn->srej_max && !is_srej_pending(conn, new_missing)) {
+                // SREJ capacity available: send SREJ for the newly missing frame
+                if (conn->srej_buffer_count < AX25_MAX_QUEUE_SIZE) {
+                    uint8_t buf_idx = conn->srej_buffer_count;
+                    size_t copy_len = iframe->payload_len;
+                    if (copy_len > 255)
+                        copy_len = 255;
+                    if (copy_len > 0 && iframe->payload) {
+                        memcpy(conn->srej_buffer[buf_idx], iframe->payload, copy_len);
+                    }
+                    conn->srej_buffer_len[buf_idx] = (uint8_t) copy_len;
+                    conn->srej_buffer_ns[buf_idx] = ns;
+                    conn->srej_buffer_count++;
+                }
+                conn->srej_count++;
+                // P=0 for additional SREJs per Section 6.4.4.2
+                send_srej(conn, new_missing, false);
+            } else {
+                // SREJ capacity exhausted: fall back to REJ per Section 6.4.4.3
+                clear_srej_state(conn);
+                conn->rej_exception = true;
+                send_rej(conn, iframe->pf);
+                conn->srej_buffer_count = 0;
+            }
+        }
 
     } else if (can_use_rej(conn) && !conn->rej_exception) {
-        // Section 6.4.4.1 or 6.4.4.3: Use REJ (multiple missing frames or SREJ limit reached)
-
-        // If we were in SREJ mode, clear it and fall back to REJ per Section 6.4.4.3
-        if (conn->srej_exception) {
-            clear_srej_state(conn);
-        }
-
+        // Section 6.4.4.1 or 6.4.4.3: no SREJ support or initial multi-frame gap
         conn->rej_exception = true;
         send_rej(conn, iframe->pf);
-
-        // Discard all buffered SREJ frames - will be retransmitted
-        conn->srej_buffer_count = 0;
     }
-    // If neither SREJ nor REJ can be used, just discard the frame
 }
 
 // Process expected I-frame (N(S) == V(R)) - modified to use protocol dispatch
@@ -523,7 +567,7 @@ static void handle_received_rej(ax25_connection_t *conn, ax25_supervisory_frame_
     // Section 6.4.7: Retransmit from N(R) onwards
     uint8_t idx = conn->tx_queue.head;
     for (uint8_t i = 0; i < conn->tx_queue.count; i++) {
-        if (MOD_LT(nr, conn->tx_queue.ns[idx], conn->vars.mod) || nr == conn->tx_queue.ns[idx]) {
+        if (MOD_LT(conn->tx_queue.ns[idx], nr, conn->vars.mod) || nr == conn->tx_queue.ns[idx]) {
             if (conn->callbacks.transmit) {
                 conn->callbacks.transmit(conn->user_data, conn->tx_queue.frames[idx], conn->tx_queue.lengths[idx]);
 
@@ -552,7 +596,8 @@ static void send_rnr(ax25_connection_t *conn, bool pf) {
 
     size_t len;
     uint8_t err;
-    uint8_t *encoded = ax25_supervisory_frame_encode(&rnr, &len, &err);
+    // use ax25_frame_encode to include address header in transmitted frame
+    uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &rnr, &len, &err);
     if (encoded && conn->callbacks.transmit) {
         conn->callbacks.transmit(conn->user_data, encoded, len);
 
@@ -780,9 +825,9 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
     }
 
     // Check if this acknowledges our sent frames
-    if (MOD_LT(conn->vars.va, nr, conn->vars.mod) || nr == conn->vars.va) {
+    if (MOD_LT(nr, conn->vars.va, conn->vars.mod) || nr == conn->vars.va) {
         // Valid acknowledgment - remove acknowledged frames from queue
-        while (conn->tx_queue.count > 0 && MOD_LT(conn->tx_queue.ns[conn->tx_queue.head], nr, conn->vars.mod)) {
+        while (conn->tx_queue.count > 0 && MOD_LT(nr, conn->tx_queue.ns[conn->tx_queue.head], conn->vars.mod)) {
             free(conn->tx_queue.frames[conn->tx_queue.head]);
             conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
             conn->tx_queue.count--;
@@ -810,7 +855,7 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
         // Expected frame - process normally
         process_expected_iframe(conn, iframe);
 
-    } else if (MOD_LT(conn->vars.vr, ns, conn->vars.mod)) {
+    } else if (MOD_LT(ns, conn->vars.vr, conn->vars.mod)) {
         // Future frame - out of sequence, handle per Section 6.4.4
         handle_out_of_sequence_iframe(conn, iframe);
 
