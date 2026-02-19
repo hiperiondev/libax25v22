@@ -19,22 +19,9 @@
  *
  */
 
-#include "test_ax25.h"
-#include "test_hdlc.h"
-#include "test_ax25_mgmt.h"
-#include "test_ax25_state_machine.h"
-#include "test_fx25.h"
-#include "test_ax25_segmenter.h"
-#include "test_ax25_timers.h"
-#include "test_ax25_srej.h"
+#ifndef TEST_AX25_SREJ_H_
+#define TEST_AX25_SREJ_H_
 
-int main() {
-    test_hdlc_main();
-    test_ax25_main();
-    test_ax25_mgmt_main();
-    test_ax25_state_machine_main();
-    test_fx25_main();
-    test_ax25_segmenter_main();
-    test_ax25_timers_main();
-    test_ax25_srej_main();
-}
+int test_ax25_srej_main(void);
+
+#endif /* TEST_AX25_SREJ_H_ */

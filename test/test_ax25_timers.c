@@ -18,8 +18,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#define DEBUG_ENABLE
-
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
