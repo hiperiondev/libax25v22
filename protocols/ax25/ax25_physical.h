@@ -29,6 +29,13 @@
 #define AX25_PHYS_QUEUE_SIZE          8    // Supports full window + some margin
 #define AX25_PHYS_MAX_FLAGS           64   // Buffer for preamble/interframe
 
+// TICK_REACHED(now, target): returns nonzero when monotonic 10ms tick 'now' has
+// reached or passed 'target'. Uses signed two's-complement subtraction so it
+// is correct across a 32-bit wraparound for any interval up to ~248 days.
+#define TICK_REACHED(now, target)  ((int32_t)((uint32_t)(now) - (uint32_t)(target)) >= 0)
+// TICK_ELAPSED(now, start): signed elapsed ticks since 'start', wraparound-safe.
+#define TICK_ELAPSED(now, start)   ((int32_t)((uint32_t)(now) - (uint32_t)(start)))
+
 typedef enum {
     PHYS_IDLE,         //
     PHYS_CSMA_WAIT,    //

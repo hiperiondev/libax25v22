@@ -171,6 +171,9 @@ void ax25_physical_set_duplex(ax25_physical_t *phys, bool fd) {
         // code path that reads persist or slottime_10ms directly.
         phys->persist = 255;         // Maximum probability = transmit immediately
         phys->slottime_10ms = 0;     // Zero slot time = no CSMA back-off delay
+        // axdelay is meaningless on a dedicated TX frequency
+        phys->axdelay_10ms = 0;
+        phys->axdelay_pending = false;
     }
 }
 
@@ -188,21 +191,15 @@ bool ax25_physical_queue_frame(ax25_physical_t *phys, const uint8_t *frame, size
     phys->frame_is_digipeat[slot] = is_digipeat;
 
     phys->queue_tail = next_tail;
-    // When a digipeated frame is queued while IDLE and no axdelay is pending,
-    // reset axdelay_pending so the IDLE handler re-evaluates on next tick
-    if (is_digipeat && phys->state == PHYS_IDLE && !phys->axdelay_pending) {
-        phys->axdelay_pending = false;  // Will be set by tick handler on next evaluation
-    }
 
-    // Kickstart the state machine immediately when IDLE with no pending delays.
-    // This is required because some callers check phys.tx_active immediately
-    // after queue_frame returns, before calling ax25_physical_tick themselves.
-    // Calling tick here with the last known tick value drives IDLE -> CSMA_WAIT
-    // -> PTT on (and beyond) within a single quantum when conditions allow
-    // (persist=255, no carrier, slottime=0). When conditions require waiting
-    // (e.g. slottime>0, carrier busy, axdelay pending), tick returns early and
-    // tx_active remains false so the caller's own tick loop handles it normally.
-    if (phys->state == PHYS_IDLE && !phys->axdelay_pending && !phys->rx_warmup_required && phys->ptt_control && phys->carrier_detect && phys->send_data) {
+    // Kickstart the state machine when transitioning from empty-queue IDLE.
+    // This ensures tx_active is set before the caller's while(tx_active) loop
+    // evaluates its condition for the first time (T100/T104 tests).
+    // Only kickstart for non-digipeat frames: digipeat frames require AXDELAY
+    // (T104) that must be measured from the caller's next tick, not last_tick.
+    // Kickstarting a digipeat here would base the AXDELAY on last_tick_10ms
+    // instead of the first caller-driven tick, making the delay one tick short.
+    if (phys->state == PHYS_IDLE && !is_digipeat) {
         ax25_physical_tick(phys, phys->last_tick_10ms);
     }
 
@@ -231,20 +228,25 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
         // Use signed arithmetic for proper wraparound handling with 10ms units
         int32_t elapsed = (int32_t) (tick_10ms - phys->tx_start_tick_10ms);
 
-        if (elapsed > (int32_t) phys->max_tx_duration_10ms) {
-            memset(phys->flag_buf, 0xFF, 20);
-            phys->send_data(phys->flag_buf, 20, phys->user_data);
+        if (elapsed >= (int32_t) phys->max_tx_duration_10ms) {
+            // Send two closing HDLC flags to terminate the current frame cleanly.
+            // 0xFF bytes are not a valid HDLC abort in a byte-stream model.
+            send_flags(phys, 2);
 
             phys->ptt_control(false, phys->user_data);
             phys->tx_active = false;
-            phys->state = PHYS_IDLE;
-            phys->queue_head = phys->queue_tail;
             phys->current_frame = NULL;
             phys->current_len = 0;
             phys->anti_hog_expired = false;
-
-            // Clear axdelay state on forced session end
             phys->axdelay_pending = false;
+
+            if (!phys->full_duplex) {
+                // Half-duplex shared channel: flush queue to yield medium to others
+                phys->queue_head = phys->queue_tail;
+            }
+            // Full-duplex: retain queued frames; DLL retransmits via T1 expiry
+            phys->state = PHYS_IDLE;
+
             return;
         }
 
@@ -258,7 +260,7 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
         if (!phys->full_duplex && phys->anti_hog_10ms > 0) {
             int32_t session_elapsed = (int32_t) (tick_10ms - phys->current_session_start_10ms);
 
-            if (session_elapsed > (int32_t) phys->anti_hog_10ms) {
+            if (session_elapsed >= (int32_t) phys->anti_hog_10ms) {
                 phys->anti_hog_expired = true;
             }
         }
@@ -268,17 +270,17 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
         if (phys->state != PHYS_DATA && phys->state != PHYS_INTERFRAME) {
             // For PHYS_IDLE with axdelay_pending: enforce next_action_tick_10ms for T104
             if (phys->state == PHYS_IDLE && phys->axdelay_pending) {
-                if (tick_10ms < phys->next_action_tick_10ms) {
+                if (!TICK_REACHED(tick_10ms, phys->next_action_tick_10ms)) {
                     return;
                 }
                 // Axdelay wait elapsed, clear the flag and fall through to normal IDLE processing
                 phys->axdelay_pending = false;
             } else if (phys->state == PHYS_IDLE && phys->rx_warmup_required) {
                 // PHYS_IDLE with RX warmup required - respect next_action_tick_10ms
-                if (tick_10ms < phys->next_action_tick_10ms) {
+                if (!TICK_REACHED(tick_10ms, phys->next_action_tick_10ms)) {
                     return;
                 }
-            } else if (phys->state != PHYS_IDLE && tick_10ms < phys->next_action_tick_10ms) {
+            } else if (phys->state != PHYS_IDLE && !TICK_REACHED(tick_10ms, phys->next_action_tick_10ms)) {
                 // Other states - respect next_action_tick_10ms
                 return;
             }
@@ -294,7 +296,9 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                 // enforce a pre-PTT wait of axdelay_10ms ticks from now.
                 // Uses a dedicated axdelay_pending flag to avoid interference
                 // with the rx_warmup_required (T108) mechanism.
-                if (!phys->axdelay_pending) {
+                // T104 is a half-duplex shared-channel digipeater mechanism only.
+                // In full-duplex TX and RX use separate frequencies; no deferral needed.
+                if (!phys->full_duplex && !phys->axdelay_pending) {
                     bool next_is_digipeat = false;
                     if (peek_frame(phys, NULL, NULL, &next_is_digipeat) && next_is_digipeat && phys->axdelay_10ms > 0) {
                         phys->axdelay_pending = true;
@@ -428,7 +432,6 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                 size_t peek_len;
                 bool is_digipeat;
                 if (!peek_frame(phys, &peek_frame_ptr, &peek_len, &is_digipeat)) {
-                    phys->ptt_control(false, phys->user_data);
                     phys->tx_active = false;
                     phys->state = PHYS_IDLE;
                     return;
@@ -460,7 +463,7 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
             }
 
             case PHYS_KEY_DELAY:
-                if (tick_10ms < phys->next_action_tick_10ms) {
+                if (!TICK_REACHED(tick_10ms, phys->next_action_tick_10ms)) {
                     return;
                 }
 
@@ -482,7 +485,7 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                 continue;
 
             case PHYS_REMOTE_SYNC:
-                if (tick_10ms < phys->next_action_tick_10ms) {
+                if (!TICK_REACHED(tick_10ms, phys->next_action_tick_10ms)) {
                     return;
                 }
 
@@ -560,10 +563,6 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                         phys->next_action_tick_10ms = tick_10ms + hang;
                     }
                 } else {
-                    // More frames queued - enforce RX warmup before next frame if configured
-                    if (phys->rx_startup_10ms > 0) {
-                        phys->rx_warmup_required = true;
-                    }
                     send_flags(phys, phys->interframe_flags);
                     phys->state = PHYS_INTERFRAME;
                 }
@@ -588,8 +587,22 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                 }
 
                 if (!dequeue_frame(phys, &phys->current_frame, &phys->current_len)) {
-                    phys->state = PHYS_HANG;
-                    phys->next_action_tick_10ms = tick_10ms + phys->axhang_10ms;
+                    if (phys->full_duplex || phys->axhang_10ms == 0) {
+                        phys->last_unkey_tick_10ms = tick_10ms;
+                        phys->rx_warmup_required = (phys->rx_startup_10ms > 0);
+                        if (phys->rx_warmup_required) {
+                            phys->next_action_tick_10ms = tick_10ms + phys->rx_startup_10ms;
+                        }
+                        phys->ptt_control(false, phys->user_data);
+                        phys->tx_active = false;
+                        phys->anti_hog_expired = false;
+                        phys->state = PHYS_IDLE;
+                    } else {
+                        // Half-duplex T100 hang: keep PTT on until timer expires
+                        phys->tx_active = false;
+                        phys->state = PHYS_HANG;
+                        phys->next_action_tick_10ms = tick_10ms + phys->axhang_10ms;
+                    }
                     return;
                 }
                 phys->send_data(phys->current_frame, phys->current_len, phys->user_data);
@@ -599,7 +612,7 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
             break;
 
             case PHYS_HANG:
-                if (tick_10ms < phys->next_action_tick_10ms) {
+                if (!TICK_REACHED(tick_10ms, phys->next_action_tick_10ms)) {
                     return;
                 }
                 phys->last_unkey_tick_10ms = tick_10ms;

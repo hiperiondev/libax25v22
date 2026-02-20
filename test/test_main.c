@@ -29,6 +29,7 @@
 #include "test_ax25_segmenter.h"
 #include "test_ax25_timers.h"
 #include "test_ax25_srej.h"
+#include "test_ax25_fullduplex.h"
 
 int errors = 0;
 
@@ -41,6 +42,7 @@ int main() {
     errors += test_ax25_segmenter_main();
     errors += test_ax25_timers_main();
     errors += test_ax25_srej_main();
+    errors += test_ax25_fullduplex_main();
 
     printf("\n----------------------------------------------------------------------------------\n");
     printf("All tests Completed. %s\n", errors == 0 ? "All tests passed" : "Some tests failed");
