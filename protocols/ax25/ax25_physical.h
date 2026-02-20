@@ -41,8 +41,7 @@ typedef enum {
 } ax25_phys_state_t;
 
 typedef struct {
-    // Configuration (user-settable, defaults in init)
-    // All timers now in 10ms units for consistency with state machine layer
+    bool full_duplex;               // Full-duplex mode flag; disables CSMA when true
     uint16_t txdely_10ms;           // T103 - normal TX startup delay (default 30 = 300ms)
     uint16_t axdelay_10ms;          // T104 - delay for digipeated frames (default 60 = 600ms)
     uint16_t axhang_10ms;           // T100 - repeater hang time (default 40 = 400ms)
@@ -108,5 +107,9 @@ void ax25_physical_add_entropy(ax25_physical_t *phys, uint8_t noise_sample);
 
 /* Tick handler - call periodically (every 10ms recommended) */
 void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms);
+
+// Configure full-duplex mode after XID negotiation
+// In full-duplex mode CSMA is bypassed and all half-duplex-only timers are cleared
+void ax25_physical_set_duplex(ax25_physical_t *phys, bool fd);
 
 #endif /* AX25_PHYSICAL_H_ */

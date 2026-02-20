@@ -558,14 +558,33 @@ ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, 
             frame = (ax25_frame_t*) raw;
         } else {
             bool is_16bit;
-            // MODULO128_FALSE(0) uses res1 auto-detection like MODULO128_AUTO
-            // This allows callers passing 0 to correctly decode both 8-bit and 16-bit numbered frames
-            // The encoder sets res1=false for 16-bit and res1=true for 8-bit numbered frames
-            if (modulo128 == MODULO128_AUTO || modulo128 == MODULO128_FALSE) {
-                // Auto-detect: res1=false in source address signals modulo-128 (16-bit control)
+            // MODULO128_AUTO (2): auto-detect via res1 bit in source SSID byte
+            //   (res1=false signals modulo-128 / 16-bit control field)
+            // MODULO128_FALSE (0): explicitly force 8-bit (modulo-8) control field
+            //   Real-world packets may have res1=0 even for modulo-8 frames so
+            //   auto-detection cannot be relied upon when the caller already
+            //   knows the frame uses 8-bit sequence numbering.
+            // MODULO128_TRUE (1): explicitly force modulo-128 (16-bit control)
+            if (modulo128 == MODULO128_AUTO) {
+                // Auto-detect only when caller requests it: res1=false means 16-bit
                 is_16bit = !hdr_result.header->source.res1;
             } else {
+                // MODULO128_TRUE forces 16-bit
                 is_16bit = (modulo128 == MODULO128_TRUE);
+                // When MODULO128_FALSE (0) is used, supervisory frames can still be
+                // identified as 16-bit by frame length: S-frames have no info field,
+                // so exactly 2 remaining bytes after the address field unambiguously
+                // means 2 control bytes (16-bit supervisory). This allows callers that
+                // pass 0 (e.g. count_sframes_of_type in tests) to correctly detect
+                // SREJ_16BIT and other 16-bit S-frame types without affecting I-frame
+                // decoding, which always has more than 2 bytes remaining (ctrl+PID+data).
+                if (!is_16bit && hdr_result.remaining_len == 2) {
+                    uint8_t first_ctrl = hdr_result.remaining[0];
+                    if ((first_ctrl & CONTROL_US_MASK) == CONTROL_S_VAL) {
+                        // Exactly 2 bytes remaining with S-frame indicator: 16-bit S-frame
+                        is_16bit = true;
+                    }
+                }
             }
             size_t control_size = is_16bit ? 2 : 1;
             if (hdr_result.remaining_len < control_size) {
@@ -601,20 +620,17 @@ uint8_t* ax25_frame_encode(const ax25_frame_t *frame, size_t *len, uint8_t *err)
             || frame->type == AX25_FRAME_SUPERVISORY_RNR_16BIT || frame->type == AX25_FRAME_SUPERVISORY_REJ_16BIT
             || frame->type == AX25_FRAME_SUPERVISORY_SREJ_16BIT || frame->type == AX25_FRAME_UNNUMBERED_SABME);
 
-    // identify modulo-8 numbered frames to set res1=true for correct auto-detection
-    bool is_modulo8_numbered = (frame->type == AX25_FRAME_INFORMATION_8BIT || frame->type == AX25_FRAME_SUPERVISORY_RR_8BIT
-            || frame->type == AX25_FRAME_SUPERVISORY_RNR_8BIT || frame->type == AX25_FRAME_SUPERVISORY_REJ_8BIT
-            || frame->type == AX25_FRAME_SUPERVISORY_SREJ_8BIT);
-
     // Create a copy of the header
     ax25_frame_header_t header_copy = frame->header;
+    // For modulo-128 frames: clear res1 to signal 16-bit mode per AX.25 v2.2 Section 3.12.
+    // For modulo-8 frames: preserve the original res1 value from the header so that
+    // round-trip decode->encode is faithful. Real-world AX.25 packets (e.g. from TNC or
+    // radio) may carry res1=0 even for modulo-8 frames; overriding res1 to 1 would corrupt
+    // such frames on re-encoding. Callers that construct addresses themselves (e.g. ax25_connect)
+    // already set res1=true on the peer address when appropriate.
     if (is_modulo128) {
         // Clear res1 to signal modulo-128 mode per AX.25 v2.2 Section 3.12
         header_copy.source.res1 = false;
-        // set res1=true for modulo-8 numbered frames so MODULO128_AUTO decode works correctly
-    } else if (is_modulo8_numbered) {
-        // Set res1=true to signal modulo-8 mode; decoder uses this bit for MODULO128_AUTO detection
-        header_copy.source.res1 = true;
     }
 
     size_t header_len;

@@ -28,8 +28,6 @@
 //   - Section 6.4.7:   Handling received REJ (retransmitting from N(R) forward)
 //   - Section 6.4.4 bitmap tracking and SREJ state machine transitions
 
-#define DEBUG_ENABLE
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

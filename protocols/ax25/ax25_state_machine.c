@@ -46,9 +46,46 @@ static void restart_t3_on_activity(ax25_connection_t *conn, uint32_t current_tic
     }
 }
 
+// Internal: Send RR supervisory frame
+static void send_rr(ax25_connection_t *conn, bool pf) {
+    ax25_supervisory_frame_t rr;
+    rr.base.header = conn->peer_addr;
+    rr.base.type = (conn->vars.mod == 128) ? AX25_FRAME_SUPERVISORY_RR_16BIT : AX25_FRAME_SUPERVISORY_RR_8BIT;
+    rr.nr = conn->vars.vr;
+    rr.pf = pf;
+    rr.code = 0;  // RR
+
+    size_t len;
+    uint8_t err;
+    // use ax25_frame_encode to include address header in transmitted frame
+    uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &rr, &len, &err);
+    if (encoded && conn->callbacks.transmit) {
+        conn->callbacks.transmit(conn->user_data, encoded, len);
+
+        // Update statistics - S-frame sent
+        conn->stats.sframe_sent++;
+        if (conn->stats.sframe_sent == 0) {
+            conn->stats.sframe_sent = 1;  // Prevent overflow
+        }
+    }
+
+    if (encoded != NULL) {
+        free(encoded);
+        encoded = NULL;
+    }
+}
+
 // Start T2 timer instead of sending immediate RR response - AX.25 v2.2 Section 6.7.1.2
 // This allows piggybacking acknowledgments on outgoing I-frames
 static void start_t2_response(ax25_connection_t *conn, uint32_t current_tick) {
+    // In full-duplex mode both stations can transmit simultaneously so there is no
+    // benefit in delaying the acknowledgment to piggyback it on an outgoing I-frame.
+    // Send RR immediately and return without starting the T2 timer.
+    if (conn->full_duplex) {
+        send_rr(conn, false);
+        return;
+    }
+
     conn->t2_start_tick = current_tick;
     conn->t2_running = true;
     conn->t2_ack_pending = true;
@@ -159,35 +196,6 @@ static void deliver_buffered_srej_frames(ax25_connection_t *conn) {
         conn->srej_exception = false;
         conn->srej_count = 0;
         memset(conn->srej_bitmap, 0, sizeof(conn->srej_bitmap));
-    }
-}
-
-// Internal: Send RR supervisory frame
-static void send_rr(ax25_connection_t *conn, bool pf) {
-    ax25_supervisory_frame_t rr;
-    rr.base.header = conn->peer_addr;
-    rr.base.type = (conn->vars.mod == 128) ? AX25_FRAME_SUPERVISORY_RR_16BIT : AX25_FRAME_SUPERVISORY_RR_8BIT;
-    rr.nr = conn->vars.vr;
-    rr.pf = pf;
-    rr.code = 0;  // RR
-
-    size_t len;
-    uint8_t err;
-    // use ax25_frame_encode to include address header in transmitted frame
-    uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &rr, &len, &err);
-    if (encoded && conn->callbacks.transmit) {
-        conn->callbacks.transmit(conn->user_data, encoded, len);
-
-        // Update statistics - S-frame sent
-        conn->stats.sframe_sent++;
-        if (conn->stats.sframe_sent == 0) {
-            conn->stats.sframe_sent = 1;  // Prevent overflow
-        }
-    }
-
-    if (encoded != NULL) {
-        free(encoded);
-        encoded = NULL;
     }
 }
 
@@ -550,8 +558,14 @@ static void handle_received_srej(ax25_connection_t *conn, ax25_supervisory_frame
         idx = (idx + 1) % AX25_MAX_QUEUE_SIZE;
     }
 
-    // Reset T1 to prevent timeout while waiting for acknowledgment
-    conn->t1_start_tick = 0;
+    // In full-duplex mode restart T1 immediately using the sentinel value so the
+    // tick handler arms it on the very next call.  In half-duplex mode clear T1
+    // and let the tick handler restart it once the channel is free.
+    if (conn->full_duplex) {
+        conn->t1_start_tick = 1;  // sentinel: tick handler sets real value
+    } else {
+        conn->t1_start_tick = 0;
+    }
 }
 
 // Handle received REJ frame - AX.25 v2.2 Section 6.4.7
@@ -564,12 +578,24 @@ static void handle_received_rej(ax25_connection_t *conn, ax25_supervisory_frame_
         conn->stats.sframe_received = 1;  // Prevent overflow
     }
 
-    // Section 6.4.7: Retransmit from N(R) onwards
-    uint8_t idx = conn->tx_queue.head;
-    for (uint8_t i = 0; i < conn->tx_queue.count; i++) {
-        if (MOD_LT(conn->tx_queue.ns[idx], nr, conn->vars.mod) || nr == conn->tx_queue.ns[idx]) {
+    // AX.25 v2.2 Section 6.4.7: roll back V(S) to V(A) before retransmission.
+    // This ensures the sequence space is consistent before any frames are sent.
+    // Required in both half-duplex and full-duplex paths.
+    conn->vars.vs = conn->vars.va;
+
+    // AX.25 v2.2 Section 6.4.5.3: in full-duplex mode the device MAY abort the
+    // frame it was currently sending and start retransmission immediately.
+    // TX and RX use separate frequencies so there is no channel contention;
+    // waiting for the next TX opportunity would delay recovery unnecessarily.
+    // Retransmit every unacknowledged frame in the queue right now using only
+    // uint8_t arithmetic and % AX25_MAX_QUEUE_SIZE - no 64-bit types needed.
+    if (conn->full_duplex && conn->tx_queue.count > 0) {
+        uint8_t idx = conn->tx_queue.head;
+        uint8_t n = conn->tx_queue.count;
+        for (uint8_t i = 0; i < n; i++) {
+            uint8_t s = (uint8_t) ((idx + i) % AX25_MAX_QUEUE_SIZE);
             if (conn->callbacks.transmit) {
-                conn->callbacks.transmit(conn->user_data, conn->tx_queue.frames[idx], conn->tx_queue.lengths[idx]);
+                conn->callbacks.transmit(conn->user_data, conn->tx_queue.frames[s], conn->tx_queue.lengths[s]);
 
                 // Update statistics - I-frame retransmitted
                 conn->stats.iframe_retransmitted++;
@@ -578,10 +604,37 @@ static void handle_received_rej(ax25_connection_t *conn, ax25_supervisory_frame_
                 }
             }
         }
-        idx = (idx + 1) % AX25_MAX_QUEUE_SIZE;
+    } else {
+        // Half-duplex path: Section 6.4.7 retransmit from N(R) onwards.
+        // V(S) has already been rolled back to V(A) above; the normal send
+        // loop in ax25_send_data / ax25_tick will re-send queued frames.
+        // Retransmit here only the frames the remote explicitly rejected.
+        uint8_t idx = conn->tx_queue.head;
+        for (uint8_t i = 0; i < conn->tx_queue.count; i++) {
+            if (MOD_LT(conn->tx_queue.ns[idx], nr, conn->vars.mod) || nr == conn->tx_queue.ns[idx]) {
+                if (conn->callbacks.transmit) {
+                    conn->callbacks.transmit(conn->user_data, conn->tx_queue.frames[idx], conn->tx_queue.lengths[idx]);
+
+                    // Update statistics - I-frame retransmitted
+                    conn->stats.iframe_retransmitted++;
+                    if (conn->stats.iframe_retransmitted == 0) {
+                        conn->stats.iframe_retransmitted = 1;
+                    }
+                }
+            }
+            idx = (idx + 1) % AX25_MAX_QUEUE_SIZE;
+        }
     }
 
-    conn->t1_start_tick = 0;
+    // In full-duplex mode restart T1 immediately using the sentinel value so the
+    // tick handler arms it on the very next call.  In half-duplex mode clear T1
+    // and let the tick handler restart it once the channel is free.
+    if (conn->full_duplex) {
+        conn->t1_start_tick = 1;  // sentinel: tick handler sets real value
+    } else {
+        conn->t1_start_tick = 0;
+    }
+
     conn->retry_count = 0;
 }
 
@@ -1698,7 +1751,7 @@ uint32_t ax25_get_average_rtt_ms(ax25_connection_t *conn) {
 }
 
 // Apply negotiated parameters to connection - AX.25 v2.2 Section 6.7.2
-uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connection_t *conn) {
+uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connection_t *conn, ax25_physical_t *phys) {
     if (!mgmt_ctx || !conn) {
         return 1;  // Invalid parameters
     }
@@ -1711,6 +1764,12 @@ uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connect
     // Apply full-duplex setting
     // Per AX.25 v2.2 Section 6.7.2: both stations must agree to full-duplex
     conn->full_duplex = mgmt_ctx->agreed_params.full_duplex;
+
+    // Propagate full-duplex flag to physical layer so CSMA is bypassed (C2b path).
+    // phys may be NULL in unit-test environments that have no physical layer instance.
+    if (phys) {
+        ax25_physical_set_duplex(phys, conn->full_duplex);
+    }
 
     // Apply modulo (affects sequence number range)
     if (mgmt_ctx->agreed_params.modulo128) {
@@ -1824,10 +1883,15 @@ void ax25_adjust_t1_adaptive(ax25_connection_t *conn) {
         // Calculate average RTT (already in 10ms ticks from test_stats)
         uint32_t avg_rtt = conn->test_stats.rtt_sum / conn->test_stats.rtt_count;
 
-        // Set T1 to 2 * RTT + safety margin (avoid float, use integer math)
-        // Add 30 ticks (300ms) safety margin per AX.25 recommendation
-        uint32_t new_t1 = avg_rtt * 2;
-        new_t1 += 30;  // 300ms safety margin
+        // Safety margin accounts for uncertainty between measured RTT and worst-case
+        // retransmission scenario.  In half-duplex the remote station must win CSMA
+        // contention (potentially multiple slottimes) plus T103 key-up delay before
+        // the ACK can be sent, so a 300ms margin is appropriate.
+        // In full-duplex the ACK channel is permanently open with no CSMA delay and
+        // no key-up wait; a 100ms margin is sufficient and reduces recovery latency.
+        // All arithmetic is 32-bit integer - no 64-bit types or floating point used.
+        uint32_t margin = conn->full_duplex ? 10 : 30;  // FD: 100ms, HD: 300ms
+        uint32_t new_t1 = avg_rtt * 2 + margin;
 
         // Clamp to reasonable range per AX.25 v2.2
         // Minimum: 100ms (10 ticks), Maximum: 30s (3000 ticks)

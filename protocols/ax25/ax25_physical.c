@@ -140,6 +140,38 @@ void ax25_physical_init(ax25_physical_t *phys) {
     phys->axdelay_pending = false;
     // Initialize last tick tracker used by ax25_physical_queue_frame internal kickstart
     phys->last_tick_10ms = 0;
+    phys->full_duplex = false;
+}
+
+// Configure full-duplex mode for the physical layer
+// When fd is true, CSMA carrier sense is bypassed and all half-duplex-only
+// timing parameters (DWAIT, axhang, anti-hog, remote_sync, rx_warmup) are
+// cleared because they are meaningless in simultaneous TX/RX operation
+void ax25_physical_set_duplex(ax25_physical_t *phys, bool fd) {
+    if (!phys)
+        return;
+    phys->full_duplex = fd;
+    if (fd) {
+        // These timers only apply to shared-medium (half-duplex) operation
+        phys->dwait_10ms = 0;
+        phys->axhang_10ms = 0;
+        phys->anti_hog_10ms = 0;
+        phys->remote_sync_10ms = 0;
+        phys->rx_startup_10ms = 0;
+        phys->rx_warmup_required = false;
+        phys->dwait_pending = false;
+
+        // p-persistence and slottime (T102) are CSMA/CA mechanisms for shared
+        // half-duplex channels only.  The TX frequency is private in full-duplex
+        // so there is no channel contention and these values are irrelevant.
+        // The PHYS_IDLE full-duplex branch and the PHYS_CSMA_WAIT defensive guard
+        // (Issues 2 and 6) already bypass the CSMA path entirely, so setting
+        // these here is purely documentary - making the full-duplex semantics
+        // explicit and providing a belt-and-suspenders defence for any future
+        // code path that reads persist or slottime_10ms directly.
+        phys->persist = 255;         // Maximum probability = transmit immediately
+        phys->slottime_10ms = 0;     // Zero slot time = no CSMA back-off delay
+    }
 }
 
 bool ax25_physical_queue_frame(ax25_physical_t *phys, const uint8_t *frame, size_t len, bool is_digipeat) {
@@ -216,7 +248,14 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
             return;
         }
 
-        if (phys->anti_hog_10ms > 0) {
+        // T107 (anti_hog) is a shared half-duplex channel courtesy limit that
+        // caps how long a station may hold TX in a single burst to prevent
+        // monopolising the medium.  In full-duplex the TX channel is
+        // point-to-point; there is no shared medium and no burst limit applies.
+        // ax25_physical_set_duplex() already zeros anti_hog_10ms in full-duplex,
+        // but this in-path guard provides a second layer of protection against
+        // anti_hog_expired being set and cutting a burst mid-stream.
+        if (!phys->full_duplex && phys->anti_hog_10ms > 0) {
             int32_t session_elapsed = (int32_t) (tick_10ms - phys->current_session_start_10ms);
 
             if (session_elapsed > (int32_t) phys->anti_hog_10ms) {
@@ -272,6 +311,32 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                     phys->rx_warmup_required = false;
                 }
 
+                // In full-duplex mode skip CSMA entirely: no carrier-detect, no p-persistence,
+                // no slottime, no DWAIT. Assert PTT and proceed directly to KEY_DELAY/PREAMBLE.
+                // ax25_physical_set_duplex() already cleared remote_sync and rx_startup, so
+                // those timers are zero and will not be entered from KEY_DELAY either.
+                if (phys->full_duplex) {
+                    uint16_t dly = phys->txdely_10ms;
+                    phys->ptt_control(true, phys->user_data);
+                    phys->tx_active = true;
+                    phys->tx_start_tick_10ms = tick_10ms;
+                    phys->current_session_start_10ms = tick_10ms;
+                    phys->anti_hog_expired = false;
+                    if (dly == 0) {
+                        // No key delay: go straight to preamble flags (C2b path)
+                        send_flags(phys, phys->preamble_flags);
+                        phys->state = PHYS_PREAMBLE;
+                        // Use continue so PHYS_PREAMBLE is processed in the same tick
+                        continue;
+                    } else {
+                        // Key delay required: wait before sending preamble
+                        phys->next_action_tick_10ms = tick_10ms + dly;
+                        phys->state = PHYS_KEY_DELAY;
+                        // Use continue so PHYS_KEY_DELAY timer guard is checked immediately
+                        continue;
+                    }
+                }
+
                 // Transition to CSMA_WAIT to perform p-persistence and carrier-sense.
                 // Reset persistence state so CSMA_WAIT starts a fresh slottime cycle.
                 phys->persistence_deferred = false;
@@ -293,7 +358,20 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
             break;
 
             case PHYS_CSMA_WAIT: {
-                bool busy = phys->carrier_detect ? phys->carrier_detect(phys->user_data) : false;
+                // Defensive recovery: PHYS_CSMA_WAIT must never be reached in full-duplex mode.
+                // In FD mode TX and RX use separate frequencies; the remote station transmits
+                // continuously so carrier_detect() would always return true and permanently
+                // suppress all outgoing frames. Issue 2 (PHYS_IDLE full-duplex branch) prevents
+                // this state from being entered normally; this guard handles any state-corruption
+                // edge case by resetting to PHYS_IDLE and re-evaluating immediately.
+                if (phys->full_duplex) {
+                    phys->state = PHYS_IDLE;
+                    continue;
+                }
+
+                // Half-duplex: perform p-persistence carrier-sense (Appendix C2a)
+                // carrier_detect is only called here; full_duplex path exits above
+                bool busy = (phys->carrier_detect ? phys->carrier_detect(phys->user_data) : false);
 
                 if (busy) {
                     // Foreign carrier detected - record time and set DWAIT flag
@@ -386,7 +464,15 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                     return;
                 }
 
-                if (phys->remote_sync_10ms > 0) {
+                // T105 (remote_sync) is a half-duplex pause after PTT that lets
+                // the remote station's RX AGC and PLL lock onto the signal before
+                // data arrives.  In full-duplex the remote RX is already active on
+                // the dedicated receive frequency so no sync pause is needed.
+                // ax25_physical_set_duplex() already zeros remote_sync_10ms in
+                // full-duplex mode; this guard provides a second layer of
+                // protection so PHYS_REMOTE_SYNC is never entered in FD regardless
+                // of how remote_sync_10ms was configured by the caller.
+                if (!phys->full_duplex && phys->remote_sync_10ms > 0) {
                     phys->state = PHYS_REMOTE_SYNC;
                     phys->next_action_tick_10ms = phys->next_action_tick_10ms + phys->remote_sync_10ms;
                 } else {
@@ -421,7 +507,16 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
 
                 if (phys->anti_hog_expired && queue_empty(phys)) {
                     phys->anti_hog_expired = false;
-                    if (phys->axhang_10ms == 0) {
+                    // T100 (axhang) is a half-duplex courtesy timer that keeps the
+                    // transmitter keyed after the last frame so other stations can
+                    // detect the channel is still in use.  In full-duplex the TX
+                    // frequency is dedicated; hanging adds latency before PHYS_IDLE
+                    // is re-entered and the next burst can begin.
+                    // ax25_physical_set_duplex() already zeros axhang_10ms, but this
+                    // local guard defends against any future caller that forgets to
+                    // call set_duplex before queuing frames in full-duplex mode.
+                    uint16_t hang = phys->full_duplex ? 0 : phys->axhang_10ms;
+                    if (hang == 0) {
                         phys->rx_warmup_required = (phys->rx_startup_10ms > 0);
                         // Set next_action_tick when entering IDLE with RX warmup required
                         if (phys->rx_warmup_required) {
@@ -436,13 +531,17 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                         // PTT will be released only when PHYS_HANG timer expires below.
                         phys->tx_active = false;
                         phys->state = PHYS_HANG;
-                        phys->next_action_tick_10ms = tick_10ms + phys->axhang_10ms;
+                        phys->next_action_tick_10ms = tick_10ms + hang;
                     }
                     continue;
                 }
 
                 if (queue_empty(phys)) {
-                    if (phys->axhang_10ms == 0) {
+                    // Same full-duplex guard as the anti_hog branch above:
+                    // treat axhang as zero when operating on a dedicated TX frequency.
+                    uint16_t hang = phys->full_duplex ? 0 : phys->axhang_10ms;
+
+                    if (hang == 0) {
                         phys->last_unkey_tick_10ms = tick_10ms;
                         phys->rx_warmup_required = (phys->rx_startup_10ms > 0);
                         // Set next_action_tick when entering IDLE with RX warmup required
@@ -458,7 +557,7 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                         // PTT will be released only when PHYS_HANG timer expires below.
                         phys->tx_active = false;
                         phys->state = PHYS_HANG;
-                        phys->next_action_tick_10ms = tick_10ms + phys->axhang_10ms;
+                        phys->next_action_tick_10ms = tick_10ms + hang;
                     }
                 } else {
                     // More frames queued - enforce RX warmup before next frame if configured

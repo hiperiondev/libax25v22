@@ -26,6 +26,7 @@
 
 #include "ax25.h"
 #include "ax25_mgmt.h"
+#include "ax25_physical.h"
 
 // FRMR reason codes per AX.25 v2.2 Section 4.3.3.6
 #define FRMR_W  0x01  // Invalid control field or not implemented
@@ -255,8 +256,9 @@ uint32_t ax25_get_average_rtt_ms(ax25_connection_t *conn);
 // the connection with the agreed parameters from the management context
 // mgmt_ctx: Management context containing negotiated parameters
 // conn: Connection to apply parameters to
+// phys parameter: propagate full-duplex to physical layer
 // Returns: 0 on success, 1 on error
-uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connection_t *conn);
+uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connection_t *conn, ax25_physical_t *phys);
 
 // Check if full-duplex operation is enabled for this connection
 // Returns: true if full-duplex, false if half-duplex
