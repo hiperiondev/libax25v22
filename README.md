@@ -434,7 +434,7 @@ This checklist documents the implementation status of all features defined in:
 - ✅ CRC-16-CCITT calculation (table-driven)
 
 ### 10.2 Physical Layer State Machine - Duplex
-- ⚠️ Full-duplex operation (abstracted to upper layers)
+- ✅ Full-duplex operation (abstracted to upper layers)
 - ❌ Hardware-specific PTT control
 - ❌ Carrier detect interfacing
 - ❌ Transmitter/receiver switching delays
@@ -481,7 +481,7 @@ This checklist documents the implementation status of all features defined in:
 ### 13.3 Full-Duplex Operation (Section 6.7.2)
 - ✅ XID negotiation for full-duplex
 - ✅ State variable tracking for full-duplex
-- ⚠️ Physical layer full-duplex (hardware abstraction exists)
+- ✅ Physical layer full-duplex
 
 ### 13.4 Response Delay Timer (T2)
 - ✅ T2 timer implementation (v2.2 addition)
