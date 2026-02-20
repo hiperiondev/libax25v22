@@ -184,7 +184,7 @@ This checklist documents the implementation status of all features defined in:
 
 **Legend:**
 - ✅ **COMPLETED** - Fully implemented and tested
-- ⚠️ **INCOMPLETED** - Partially implemented, needs work
+- ⚠️ **INCOMPLETED** - Partially implemented, needs work or has limitations
 - ❌ **MISSING** - Not yet implemented
 - ⚪ **N/A** - Out of scope (deprecated or hardware-specific)
 
@@ -246,7 +246,7 @@ This checklist documents the implementation status of all features defined in:
 - ✅ UI (Unnumbered Information) frame
 - ✅ XID (Exchange Identification) frame
 - ✅ TEST frame (command/response)
-- ⚠️ FRMR (Frame Reject) response - deprecated in v2.2
+- ✅ FRMR (Frame Reject) response - Implemented for backward compatibility despite v2.2 deprecation
 
 ---
 
@@ -261,8 +261,8 @@ This checklist documents the implementation status of all features defined in:
 
 ### 3.2 Modulo 128 Operation (PE1CHL Extension)
 - ✅ 7-bit sequence numbers (0-127)
-- ✅ Maximum 127 outstanding I-frames
-- ✅ Extended control field encoding
+- ⚠️ Maximum 127 outstanding I-frames - Framework exists, enforcement validation incomplete
+- ✅ Extended control field encoding/decoding
 - ✅ Negotiation via SABME command
 - ✅ XID parameter negotiation for modulo 128
 
@@ -289,12 +289,12 @@ This checklist documents the implementation status of all features defined in:
 - ✅ Modulo 128 capability indication
 - ✅ Extended address encoding support
 - ✅ 16-bit FCS support
-- ❌ 32-bit FCS option (not implemented: Version 2.2 Revision: July 1998 defines only 16-bit FCS)
+- ❌ 32-bit FCS option (Version 2.2 Revision: July 1998 defines only 16-bit FCS)
 - ✅ TEST command/response support
 - ✅ XID command/response support
 
 ### 4.4 Other XID Parameters
-- ✅ I-field Length Receive (PI=6) - N1 parameter
+- ✅ I-field Length Receive (PI=6) - N1 parameter (max 256 octets, not "or more")
 - ✅ Window Size Receive (PI=8) - k parameter
 - ✅ Acknowledge Timer (PI=9) - T1 parameter
 - ✅ Retries (PI=10) - N2 parameter
@@ -328,7 +328,7 @@ This checklist documents the implementation status of all features defined in:
 - ✅ Awaiting release state
 - ✅ Connected/Information transfer state
 - ✅ Timer recovery state
-- ⚠️ Frame reject state (minimal - FRMR deprecated)
+- ✅ Frame reject state - Full FRMR state tracking implemented
 
 ### 6.2 Link Setup & Disconnection (Section 6.3)
 - ✅ AX.25 link connection establishment (SABM/SABME)
@@ -351,7 +351,7 @@ This checklist documents the implementation status of all features defined in:
 - ✅ Priority acknowledge (T2 response delay)
 
 ### 6.4 Advanced Flow Control
-- ✅ Sliding window protocol (modulo 8 & 128)
+- ✅ Sliding window protocol (modulo 8 & 128) - Framework present
 - ✅ Window size negotiation (k parameter)
 - ✅ I-field length negotiation (N1 parameter)
 - ✅ Adaptive T1 timer adjustment (based on RTT)
@@ -376,7 +376,7 @@ This checklist documents the implementation status of all features defined in:
 - ✅ T108 - Receiver startup timer
 
 ### 7.2 Parameters
-- ✅ N1 - Maximum I-field octets (default 256, negotiable)
+- ✅ N1 - Maximum I-field octets (default 256, negotiable, hard limit 256 - NOT "or more")
 - ✅ N2 - Maximum retries (default 10, negotiable)
 - ✅ k - Window size (default 7 for modulo 8, 32 for modulo 128)
 
@@ -390,6 +390,7 @@ This checklist documents the implementation status of all features defined in:
 - ✅ PID preservation across segments
 - ✅ Segment transmission sequencing
 - ✅ Next segment timer TR210
+- ⚠️ **LIMITATION:** Segmentation is NOT automatically applied by state machine; application layer responsible for calling segmentation functions
 
 ### 8.2 Reassembler State Machine
 - ✅ Segment reception and buffering
@@ -397,6 +398,7 @@ This checklist documents the implementation status of all features defined in:
 - ✅ Segment timeout detection
 - ✅ Delivery of complete payload to Layer 3
 - ✅ Out-of-order segment handling
+- ⚠️ **LIMITATION:** Reassembly functions exist but integration with state machine not automatic; application layer must call reassembly functions
 
 ---
 
@@ -435,16 +437,16 @@ This checklist documents the implementation status of all features defined in:
 
 ### 10.2 Physical Layer State Machine - Duplex
 - ✅ Full-duplex operation (abstracted to upper layers)
-- ❌ Hardware-specific PTT control
-- ❌ Carrier detect interfacing
-- ❌ Transmitter/receiver switching delays
+- ✅ Hardware-specific PTT control
+- ✅ Carrier detect interfacing
+- ✅ Transmitter/receiver switching delays (timer support: T103, T104, T105, T108)
 
 ---
 
 ## 11. LINK MULTIPLEXER (Section 2.7, Appendix C3)
 
 ### 11.1 Multiple Link Support
-- ⚠️ Multiple data-link connections (structure exists, needs testing)
+- ❌ Multiple data-link connections
 - ❌ Link rotation algorithm
 - ❌ Per-link scheduling
 - ❌ Priority-based transmission
@@ -473,15 +475,15 @@ This checklist documents the implementation status of all features defined in:
 - ✅ Multiple simultaneous SREJ conditions
 
 ### 13.2 Extended Sequence Numbers
-- ✅ 7-bit sequence numbers (modulo 128)
-- ✅ 127-frame window support
+- ✅ 7-bit sequence numbers (modulo 128) - Framework present
+- ⚠️ 127-frame window support
 - ✅ SABME negotiation
 - ✅ 16-bit control field encoding/decoding
 
 ### 13.3 Full-Duplex Operation (Section 6.7.2)
 - ✅ XID negotiation for full-duplex
-- ✅ State variable tracking for full-duplex
-- ✅ Physical layer full-duplex
+- ⚠️ State variable tracking for full-duplex
+- ⚠️ Physical layer full-duplex
 
 ### 13.4 Response Delay Timer (T2)
 - ✅ T2 timer implementation (v2.2 addition)
@@ -556,7 +558,7 @@ This checklist documents the implementation status of all features defined in:
 ### 16.2 Memory Management
 - ✅ Static buffer allocation where possible
 - ✅ Configurable frame queue sizes
-- ✅ No dynamic allocation in critical paths (mostly)
+- ⚠️ Mostly no dynamic allocation in critical paths (some allocation in management/negotiation)
 - ✅ Minimal stack usage
 
 ### 16.3 Platform Abstraction
@@ -574,31 +576,31 @@ This checklist documents the implementation status of all features defined in:
 - ⚠️ DL-DISCONNECT request/indication/confirm
 - ⚠️ DL-DATA request/indication
 - ⚠️ DL-UNIT-DATA request/indication
-- ⚠️ DL-ERROR indication
-- ⚠️ DL-FLOW-OFF/ON request
+- ❌ DL-ERROR indication
+- ❌ DL-FLOW-OFF/ON request
 
 ### 17.2 Management Data Link Primitives
 - ✅ MDL-NEGOTIATE request/confirm
-- ✅ MDL-ERROR indication
+- ⚠️ MDL-ERROR indication
 
 ---
 
 ## 18. NOT IMPLEMENTED (Out of Scope)
 
 ### 18.1 Deprecated Features
-- ⚪ FRMR generation (v2.2 replaces with link reset)
+- ⚪ FRMR generation (v2.2 replaces with link reset) - **NOTE:** FRMR IS implemented despite deprecation for backward compatibility
 - ⚪ Unbalanced operation modes (NRM, ARM)
 - ⚪ SIM/RIM commands (removed in v2.2)
 - ⚪ UP command (removed in v2.2)
 - ⚪ RSET command (removed in v2.2)
 - ⚪ RD response (removed in v2.2)
 
-### 18.2 Hardware-Specific Features
-- ⚪ Modem modulation/demodulation (AFSK, G3RUH, etc.)
-- ⚪ Audio DSP processing
-- ⚪ Radio PTT control circuits
-- ⚪ Carrier detect (DCD) processing
-- ⚪ Audio tone generation/detection
+### 18.2 Hardware-Specific Features (Abstracted via Callbacks)
+- ⚪ Modem modulation/demodulation (AFSK, G3RUH, etc.) - Application responsibility
+- ⚪ Audio DSP processing - Application responsibility
+- ⚪ Radio PTT control circuits - Callback: `ptt_control(bool)`
+- ⚪ Carrier detect (DCD) processing - Callback: `carrier_detect()`
+- ⚪ Audio tone generation/detection - Application responsibility
 
 ### 18.3 Network Layer (Layer 3)
 - ⚪ NET/ROM routing protocol
