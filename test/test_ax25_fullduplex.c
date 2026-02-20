@@ -22,7 +22,7 @@
 // Covers:
 //   Section 3 + Appendix C2  : HDLC physical layer state machine - C2b (FD) path
 //   Section 6.7.2            : Link-layer full-duplex operation and XID negotiation
-
+#define DEBUG_ENABLE
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
