@@ -140,7 +140,7 @@ static int fd_establish_connection(ax25_connection_t *conn, ax25_address_t *dest
         return -1;
 
     fd_reset_capture();
-    ax25_process_frame(conn, ua_frame);
+    ax25_process_frame(conn, ua_frame, 1);
     ax25_frame_free(ua_frame, &decode_err);
 
     return (conn->state == AX25_STATE_CONNECTED) ? 0 : -1;
@@ -965,7 +965,7 @@ static int test_fd_link_t2_rr_immediate(void) {
     uint32_t transmit_before = fd_transmit_count;
     DEBUG_VAR("Transmit count before process_frame", transmit_before);
 
-    ax25_process_frame(&conn, iframe);
+    ax25_process_frame(&conn, iframe, 1);
     ax25_frame_free(iframe, &decode_err);
 
     uint32_t transmit_after = fd_transmit_count;

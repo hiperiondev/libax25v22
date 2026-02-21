@@ -28,6 +28,13 @@
 #include "ax25_mgmt.h"
 #include "ax25_physical.h"
 
+// Sentinel used by event handlers to request "arm T1 on the next ax25_tick()".
+// UINT32_MAX is safe: it is resolved to the real tick before the T1 expiry
+// check runs inside ax25_tick(), so it can never cause a spurious expiry.
+// Value 1 was previously used but conflicts with tick==1 on MCUs that boot
+// near zero, causing an off-by-one expiry when T1 < 2 ticks (< 20 ms).
+#define AX25_T1_PENDING  UINT32_MAX
+
 // FRMR reason codes per AX.25 v2.2 Section 4.3.3.6
 #define FRMR_W  0x01  // Invalid control field or not implemented
 #define FRMR_X  0x02  // Frame with info field not permitted (U/S frame with wrong length)
@@ -127,6 +134,7 @@ typedef struct {
     void (*on_data)(void *user_data, uint8_t *data, size_t len);    // I-frame received
     void (*on_busy)(void *user_data, bool busy);                    // Remote busy state
     void (*transmit)(void *user_data, uint8_t *frame, size_t len);  // Send to HDLC
+    void (*abort_tx)(void *user_data);                              // Abort mid-frame TX in full-duplex; NULL if not supported
 } ax25_callbacks_t;
 
 // SREJ mode configuration - AX.25 v2.2 Section 6.4.4
@@ -222,7 +230,7 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
 uint8_t ax25_connect(ax25_connection_t *conn, ax25_address_t *dest, ax25_address_t *src);
 uint8_t ax25_disconnect(ax25_connection_t *conn);
 uint8_t ax25_send_data(ax25_connection_t *conn, uint8_t *data, size_t len, uint8_t pid);
-void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame);
+void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t current_tick_10ms);
 void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms);  // Call every 10ms
 // Send RNR when local buffers full - AX.25 v2.2 Section 6.4.10
 uint8_t ax25_send_rnr(ax25_connection_t *conn);

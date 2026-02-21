@@ -668,7 +668,9 @@ static void handle_received_srej(ax25_connection_t *conn, ax25_supervisory_frame
     // tick handler arms it on the very next call.  In half-duplex mode clear T1
     // and let the tick handler restart it once the channel is free.
     if (conn->full_duplex) {
-        conn->t1_start_tick = 1;  // sentinel: tick handler sets real value
+        // Use AX25_T1_PENDING (UINT32_MAX) not 1; value 1 collides with tick==1
+        // on MCUs booting near zero and causes an off-by-one T1 expiry at T1<20ms.
+        conn->t1_start_tick = AX25_T1_PENDING;
     } else {
         conn->t1_start_tick = 0;
     }
@@ -707,6 +709,14 @@ static void handle_received_rej(ax25_connection_t *conn, ax25_supervisory_frame_
     // Retransmit every unacknowledged frame in the queue right now using only
     // uint8_t arithmetic and % AX25_MAX_QUEUE_SIZE - no 64-bit types needed.
     if (conn->full_duplex && conn->tx_queue.count > 0) {
+        // Abort the in-progress frame before re-queuing retransmits.
+        // Without this, retransmits queue behind a frame that may take up to
+        // 1.7 s to finish at 1200 bps, delaying recovery unnecessarily.
+        // If abort_tx is NULL the behaviour is identical to before this fix.
+        if (conn->callbacks.abort_tx) {
+            conn->callbacks.abort_tx(conn->user_data);
+        }
+
         uint8_t idx = conn->tx_queue.head;
         uint8_t n = conn->tx_queue.count;
         for (uint8_t i = 0; i < n; i++) {
@@ -752,7 +762,8 @@ static void handle_received_rej(ax25_connection_t *conn, ax25_supervisory_frame_
     // tick handler arms it on the very next call.  In half-duplex mode clear T1
     // and let the tick handler restart it once the channel is free.
     if (conn->full_duplex) {
-        conn->t1_start_tick = 1;  // sentinel: tick handler sets real value
+        // Use AX25_T1_PENDING (UINT32_MAX) not 1; same rationale as SREJ handler.
+        conn->t1_start_tick = AX25_T1_PENDING;
     } else {
         conn->t1_start_tick = 0;
     }
@@ -951,7 +962,7 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
 }
 
 // Process received I-frame - AX.25 v2.2 Section 6.4.4
-void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *iframe) {
+void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *iframe, uint32_t current_tick_10ms) {
     if (conn->state != AX25_STATE_CONNECTED && conn->state != AX25_STATE_TIMER_RECOVERY) {
         return;  // Ignore I-frames when not connected
     }
@@ -960,8 +971,8 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
     uint8_t nr = iframe->nr;
     bool pf = iframe->pf;
 
-    // Restart T3 on received activity (link is not idle)
-    restart_t3_on_activity(conn, conn->t3_start_tick ? conn->t3_start_tick : 0);
+    // Restart T3 using the authoritative tick supplied by the caller
+    restart_t3_on_activity(conn, current_tick_10ms);
 
     // Update statistics - I-frame received
     conn->stats.iframe_received++;
@@ -982,13 +993,13 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
     if (!ax25_process_nr(conn, nr, (uint8_t) iframe->base.type)) {
         return;  // FRMR Z sent; do not continue
     }
-    // Restart T1 for remaining unacknowledged frames (if any left after dequeue)
+    // Restart T1 for remaining unacknowledged frames using authoritative tick
     if (conn->tx_queue.count > 0 && conn->t1_start_tick == 0) {
-        conn->t1_start_tick = conn->t3_start_tick ? conn->t3_start_tick : 1;
+        conn->t1_start_tick = current_tick_10ms ? current_tick_10ms : 1;
     }
-    // Restart T3 if T1 was just stopped (no outstanding frames)
+    // Restart T3 if T1 was just stopped (no outstanding frames) using authoritative tick
     if (conn->tx_queue.count == 0 && conn->t3_start_tick == 0) {
-        conn->t3_start_tick = 1;  // Will be set to real tick in tick handler
+        conn->t3_start_tick = current_tick_10ms ? current_tick_10ms : 1;
     }
 
     // Process received N(S): classify as in-order, out-of-order, or duplicate
@@ -1011,8 +1022,9 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
 
     // Start T2 timer if not already running and ACK not pending
     // This is called after processing the I-frame to start the response delay
+    // Pass the authoritative tick instead of the stale t3_start_tick proxy
     if (!conn->t2_running && !conn->t2_ack_pending && !iframe->pf) {
-        start_t2_response(conn, conn->t3_start_tick ? conn->t3_start_tick : 0);  // Use available tick reference
+        start_t2_response(conn, current_tick_10ms);
     }
 }
 
@@ -1023,8 +1035,11 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
 
     // Initialize T1 timer with actual tick value if using sentinel
     // Never set to 0 since 0 means "timer not active"
-    if (conn->t1_start_tick == 1) {
-        conn->t1_start_tick = (current_tick_10ms > 0) ? current_tick_10ms : 1;
+    // Sentinel is now AX25_T1_PENDING (UINT32_MAX) instead of 1.
+    // Resolution runs before the T1 expiry check, so UINT32_MAX is never
+    // evaluated as a start time and cannot cause a spurious expiry.
+    if (conn->t1_start_tick == AX25_T1_PENDING) {
+        conn->t1_start_tick = (current_tick_10ms != 0u) ? current_tick_10ms : 1u;
     }
 
     // Start T3 if connected, no outstanding frames (T1 not running), and T3 not active
@@ -1079,7 +1094,10 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
     }
 
     // T2: Response delay timer expiration
-    if (conn->t2_running && (current_tick_10ms - conn->t2_start_tick) >= conn->timers.t2) {
+    // Full-duplex never arms T2; skip evaluation if flag is set
+    // to prevent a stale t2_running (from a prior half-duplex phase) from
+    // firing a spurious RR after mode transition. Ref: Section 6.7.1.2.
+    if (conn->t2_running && !conn->full_duplex && (current_tick_10ms - conn->t2_start_tick) >= conn->timers.t2) {
         conn->t2_running = false;
         if (conn->t2_ack_pending) {
             send_rr(conn, false);  // Send delayed ACK
@@ -1097,15 +1115,15 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
 }
 
 // Main entry point for received frames
-void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
+void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t current_tick_10ms) {
     if (!conn || !frame)
         return;
 
-    // Restart T3 on any received frame activity (link is alive)
-    // Use t3_start_tick as a proxy for current time in this context
-    // In production, current_tick should be passed as parameter
-    uint32_t current_tick = conn->t3_start_tick ? conn->t3_start_tick : (conn->t1_start_tick ? conn->t1_start_tick : 1);
-    restart_t3_on_activity(conn, current_tick);
+    // Restart T3 using the authoritative tick supplied by the caller.
+    // Previously a stale proxy (t3_start_tick or t1_start_tick) was computed
+    // here; that caused T3 to appear already-expired on first use and T2 to
+    // fire immediately when t3_start_tick was many ticks old.
+    restart_t3_on_activity(conn, current_tick_10ms);
 
     switch (frame->type) {
         case AX25_FRAME_UNNUMBERED_UA: {
@@ -1137,8 +1155,8 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
                 conn->t1_start_tick = 0;
                 conn->retry_count = 0;
 
-                // Start T3 for idle link monitoring
-                conn->t3_start_tick = current_tick;
+                // Start T3 using the authoritative current tick
+                conn->t3_start_tick = current_tick_10ms;
 
                 // Notify upper layer of connection establishment
                 if (conn->callbacks.on_connect) {
@@ -1252,8 +1270,8 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
                 encoded = NULL;
             }
 
-            // Start T3 for idle link monitoring in connected state
-            conn->t3_start_tick = current_tick;
+            // Start T3 for idle link monitoring using the authoritative current tick
+            conn->t3_start_tick = current_tick_10ms;
 
             if (conn->callbacks.on_connect) {
                 conn->callbacks.on_connect(conn->user_data);
@@ -1265,7 +1283,9 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
         case AX25_FRAME_INFORMATION_16BIT:
             // In frame reject state, discard I frames per Section 4.4.5
             if (conn->state != AX25_STATE_FRAME_REJECT) {
-                ax25_process_iframe(conn, (ax25_information_frame_t*) frame);
+                // Pass authoritative tick through to ax25_process_iframe
+                ax25_process_iframe(conn, (ax25_information_frame_t*) frame, current_tick_10ms);
+
             }
             // Note: P/F bit is still examined in frame reject state
         break;
@@ -1360,7 +1380,7 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
 
             // Continue T3 during peer busy (T3 keeps running to detect stuck links)
             // Per Section 6.4.9: T3 expiry causes poll with RR/RNR P=1
-            conn->t3_start_tick = current_tick;
+            conn->t3_start_tick = current_tick_10ms;
             break;
         }
 
@@ -1412,8 +1432,8 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
                 }
             }
 
-            // Restart T3 on activity
-            conn->t3_start_tick = current_tick;
+            // Restart T3 on activity using the authoritative current tick
+            conn->t3_start_tick = current_tick_10ms;
             break;
         }
 
@@ -1456,8 +1476,9 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
             }
             handle_received_srej(conn, sframe);
 
-            // Restart T3 on activity
-            conn->t3_start_tick = current_tick;
+            // Restart T3 on activity using the authoritative current tick
+            conn->t3_start_tick = current_tick_10ms;
+
             break;
         }
 
@@ -1524,11 +1545,10 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
             }
 
             // Handle TEST frame - works in any state per AX.25 v2.2 Section 6.4.13
-            // Need to get current tick for RTT calculation - use a local variable
-            // In real implementation, current_tick should be passed to ax25_process_frame
-            // For now, we'll use 0 as a placeholder - caller should track tick count
             ax25_test_frame_t *test = (ax25_test_frame_t*) frame;
-            handle_test_frame(conn, test, current_tick);
+            // Pass the authoritative tick for accurate RTT measurement
+            handle_test_frame(conn, test, current_tick_10ms);
+
             break;
         }
 
@@ -1697,7 +1717,9 @@ uint8_t ax25_send_data(ax25_connection_t *conn, uint8_t *data, size_t len, uint8
 
     // Start T1 timer for acknowledgment (use sentinel value 1 to start on next tick)
     if (conn->t1_start_tick == 0) {
-        conn->t1_start_tick = 1;  // Sentinel: will be set to actual tick in tick handler
+        // Use AX25_T1_PENDING (UINT32_MAX) not 1; avoids off-by-one on MCUs
+        // that boot with tick counter near zero (see fix 1.3).
+        conn->t1_start_tick = AX25_T1_PENDING;
     }
     conn->retry_count = 0;
 
@@ -1877,6 +1899,17 @@ uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connect
         ax25_physical_set_duplex(phys, conn->full_duplex);
     }
 
+    // If switching to full-duplex, cancel any T2 ACK timer that may have been
+    // armed during a prior half-duplex exchange.  In full-duplex mode,
+    // start_t2_response() sends RR immediately and never sets t2_running, so a
+    // leftover armed T2 would fire a spurious RR on the next ax25_tick() call,
+    // violating AX.25 v2.2 Section 6.7.1.2.
+    if (conn->full_duplex) {
+        conn->t2_running = false;
+        conn->t2_ack_pending = false;
+        // t2_pending_nr is irrelevant when t2_running is false — leave unchanged
+    }
+
     // Apply modulo (affects sequence number range)
     if (mgmt_ctx->agreed_params.modulo128) {
         conn->vars.mod = 128;
@@ -1897,6 +1930,24 @@ uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connect
 
     // Apply timer values (convert from milliseconds to 10ms ticks)
     conn->timers.t1 = mgmt_ctx->agreed_params.ack_timer / 10;
+
+    // Full-duplex T1 reduction.
+    // The negotiated ack_timer was derived with "take the max" logic, which is
+    // conservative for half-duplex (CSMA backoff + peer key-up + TX/RX contention).
+    // In full-duplex both transmitters are permanently keyed; there is no CSMA,
+    // no peer key-up delay and no channel contention.  Using 50% of the negotiated
+    // value is a safe initial estimate consistent with AX.25 v2.2 Section 6.7.1.1
+    // ("T1 should be at least 2x the measured round-trip time").
+    // ax25_adjust_t1_adaptive() will refine T1 further once TEST-frame RTT
+    // samples are available.  Minimum floor: 10 ticks (100 ms).
+    // All arithmetic is 32-bit integer only -- no floating point.
+    if (conn->full_duplex && conn->timers.t1 > 0u) {
+        uint16_t fd_t1 = (uint16_t) (conn->timers.t1 / 2u);
+        if (fd_t1 < 10u) {
+            fd_t1 = 10u;   // floor: 100 ms
+        }
+        conn->timers.t1 = fd_t1;
+    }
 
     // Apply retry count
     conn->timers.n2 = mgmt_ctx->agreed_params.retries;
@@ -2001,14 +2052,12 @@ void ax25_adjust_t1_adaptive(ax25_connection_t *conn) {
         // Calculate average RTT (already in 10ms ticks from test_stats)
         uint32_t avg_rtt = conn->test_stats.rtt_sum / conn->test_stats.rtt_count;
 
-        // Safety margin accounts for uncertainty between measured RTT and worst-case
-        // retransmission scenario.  In half-duplex the remote station must win CSMA
-        // contention (potentially multiple slottimes) plus T103 key-up delay before
-        // the ACK can be sent, so a 300ms margin is appropriate.
-        // In full-duplex the ACK channel is permanently open with no CSMA delay and
-        // no key-up wait; a 100ms margin is sufficient and reduces recovery latency.
-        // All arithmetic is 32-bit integer - no 64-bit types or floating point used.
-        uint32_t margin = conn->full_duplex ? 10 : 30;  // FD: 100ms, HD: 300ms
+        // Safety margin: FD has no CSMA/key-up delay so 100 ms is sufficient;
+        // HD requires 300 ms to cover worst-case CSMA backoff + T103 key-up.
+        // NOTE: call ax25_adjust_t1_adaptive() after each received TEST response
+        // to progressively refine T1 based on actual link RTT.
+        uint32_t margin = conn->full_duplex ? 10u : 30u;  // FD: 100ms, HD: 300ms
+
         uint32_t new_t1 = avg_rtt * 2 + margin;
 
         // Clamp to reasonable range per AX.25 v2.2
@@ -2124,7 +2173,9 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
 
     // Start T1 acknowledgment timer if not already running
     if (conn->t1_start_tick == 0) {
-        conn->t1_start_tick = 1;  // Sentinel: resolved to real tick in ax25_tick()
+        // Use AX25_T1_PENDING (UINT32_MAX) not 1; avoids off-by-one on MCUs
+        // that boot with tick counter near zero (see fix 1.3).
+        conn->t1_start_tick = AX25_T1_PENDING;
     }
     // T3 only runs when there are no outstanding frames
     conn->t3_start_tick = 0;

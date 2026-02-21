@@ -79,7 +79,7 @@ static int establish_connection(ax25_connection_t *conn, ax25_address_t *dest, a
     TEST_ASSERT(ua_frame != NULL && decode_err == 0, "Hardcoded UA frame decoded successfully", decode_err);
 
     reset_capture();
-    ax25_process_frame(conn, ua_frame);
+    ax25_process_frame(conn, ua_frame, 1);
     TEST_ASSERT(conn->state == AX25_STATE_CONNECTED, "State changed to CONNECTED after receiving UA", 0);
     TEST_ASSERT(captured_len == 0, "No frame transmitted when receiving UA", 0);
 

@@ -116,7 +116,7 @@ static int establish_connection(ax25_connection_t *conn, ax25_address_t *dest, a
         return -1;
 
     reset_capture();
-    ax25_process_frame(conn, ua_frame);
+    ax25_process_frame(conn, ua_frame, 1);
     ax25_frame_free(ua_frame, &decode_err);
 
     return (conn->state == AX25_STATE_CONNECTED) ? 0 : -1;
@@ -216,7 +216,7 @@ static int test_t1_timer_expiration(void) {
         rr_ack_raw[14] = 0x21;  // RR with N(R)=1, acknowledges frame N(S)=0
         ax25_frame_t *rr_drain = ax25_frame_decode(rr_ack_raw, sizeof(rr_ack_raw), MODULO128_FALSE, &decode_err_drain);
         if (rr_drain) {
-            ax25_process_frame(&conn, rr_drain);
+            ax25_process_frame(&conn, rr_drain, 1);
             ax25_frame_free(rr_drain, &decode_err_drain);
         }
     }
@@ -290,7 +290,7 @@ static int test_t1_timer_reset_on_ack(void) {
     }
 
     reset_capture();
-    ax25_process_frame(&conn, rr_frame);
+    ax25_process_frame(&conn, rr_frame, 1);
     ax25_frame_free(rr_frame, &decode_err);
     DEBUG_STATE("Connection state after RR", conn.state);
 
@@ -312,7 +312,7 @@ static int test_t1_timer_reset_on_ack(void) {
         rr_ack_raw[14] = 0x21;  // RR with N(R)=1, acknowledges frame N(S)=0
         ax25_frame_t *rr_drain = ax25_frame_decode(rr_ack_raw, sizeof(rr_ack_raw), MODULO128_FALSE, &decode_err_drain);
         if (rr_drain) {
-            ax25_process_frame(&conn, rr_drain);
+            ax25_process_frame(&conn, rr_drain, 1);
             ax25_frame_free(rr_drain, &decode_err_drain);
         }
     }
@@ -369,7 +369,7 @@ static int test_t2_response_delay(void) {
     }
 
     reset_capture();
-    ax25_process_frame(&conn, iframe);
+    ax25_process_frame(&conn, iframe, 1);
     ax25_frame_free(iframe, &decode_err);
     DEBUG_STATE("Connection state after I-frame", conn.state);DEBUG_BOOL("T2 running", conn.t2_running);DEBUG_VAR("Transmit count immediately", transmit_count);
 

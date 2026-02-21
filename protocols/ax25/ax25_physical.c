@@ -141,6 +141,10 @@ void ax25_physical_init(ax25_physical_t *phys) {
     // Initialize last tick tracker used by ax25_physical_queue_frame internal kickstart
     phys->last_tick_10ms = 0;
     phys->full_duplex = false;
+    // Initialize T106 full-duplex inter-burst pause flag
+    phys->t106_inter_burst_pending = false;
+    // Initialize independent receiver state machine to READY per AX.25 v2.2 spec
+    phys->rx_state = PHYS_RX_READY;
 }
 
 // Configure full-duplex mode for the physical layer
@@ -175,6 +179,27 @@ void ax25_physical_set_duplex(ax25_physical_t *phys, bool fd) {
         phys->axdelay_10ms = 0;
         phys->axdelay_pending = false;
     }
+}
+
+// Abort the currently-transmitting frame (full-duplex REJ recovery).
+// See Issue 1.5: without this, retransmits queue behind the in-progress frame
+// causing up to 1.7 s delay at 1200 bps before recovery frames reach the peer.
+void ax25_physical_abort_current_frame(ax25_physical_t *phys) {
+    if (!phys)
+        return;
+    if (phys->state != PHYS_DATA && phys->state != PHYS_INTERFRAME)
+        return;
+    // Invoke hardware-level abort if the application wired one
+    if (phys->abort_tx) {
+        phys->abort_tx(phys->user_data);
+    }
+    // Flush all queued frames so DLL retransmits can be re-queued immediately
+    phys->queue_head = phys->queue_tail;
+    // Clear in-progress frame pointer; state stays PHYS_DATA so PTT remains ON
+    // and the next tick picks up the re-queued retransmit frames without a
+    // CSMA re-evaluation cycle
+    phys->current_frame = NULL;
+    phys->current_len = 0;
 }
 
 bool ax25_physical_queue_frame(ax25_physical_t *phys, const uint8_t *frame, size_t len, bool is_digipeat) {
@@ -228,8 +253,7 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
         int32_t elapsed = (int32_t) (tick_10ms - phys->tx_start_tick_10ms);
 
         if (elapsed >= (int32_t) phys->max_tx_duration_10ms) {
-            // Send two closing HDLC flags to terminate the current frame cleanly.
-            // 0xFF bytes are not a valid HDLC abort in a byte-stream model.
+            // T106 fired: terminate current frame cleanly with two closing flags
             send_flags(phys, 2);
 
             phys->ptt_control(false, phys->user_data);
@@ -242,10 +266,24 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
             if (!phys->full_duplex) {
                 // Half-duplex shared channel: flush queue to yield medium to others
                 phys->queue_head = phys->queue_tail;
+            } else {
+                // Full-duplex: retain queued frames; DLL retransmits via T1 expiry.
+                // Enforce a mandatory inter-burst pause equal to txdely_10ms before
+                // re-keying so TX hardware can settle between bursts.
+                if (phys->txdely_10ms > 0u) {
+                    phys->t106_inter_burst_pending = true;
+                    phys->next_action_tick_10ms = tick_10ms + phys->txdely_10ms;
+                }
             }
-            // Full-duplex: retain queued frames; DLL retransmits via T1 expiry
             phys->state = PHYS_IDLE;
 
+            // Return immediately after T106 fires to prevent the while(1) loop below
+            // from re-processing PHYS_IDLE on the same tick and draining the retained
+            // queue. In FD mode the retained frames must stay in the queue until the
+            // next tick (after the optional inter-burst pause) so the DLL can observe
+            // them and trigger T1-based retransmission.
+            // In HD mode the queue was already flushed above so returning early is
+            // also safe (no frames to retain, no state to re-evaluate this tick).
             return;
         }
 
@@ -319,6 +357,15 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                 // ax25_physical_set_duplex() already cleared remote_sync and rx_startup, so
                 // those timers are zero and will not be entered from KEY_DELAY either.
                 if (phys->full_duplex) {
+                    // After T106 fires, wait txdely_10ms before asserting PTT again.
+                    // next_action_tick_10ms was set by the T106 handler in this case.
+                    if (phys->t106_inter_burst_pending) {
+                        if (!TICK_REACHED(tick_10ms, phys->next_action_tick_10ms)) {
+                            return;    // inter-burst pause not yet elapsed
+                        }
+                        phys->t106_inter_burst_pending = false;   // pause expired, proceed
+                    }
+
                     uint16_t dly = phys->txdely_10ms;
                     phys->ptt_control(true, phys->user_data);
                     phys->tx_active = true;
@@ -505,6 +552,23 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                 if (!dequeue_frame(phys, &phys->current_frame, &phys->current_len)) {
                     phys->state = PHYS_HANG;
                     phys->next_action_tick_10ms = tick_10ms + phys->axhang_10ms;
+
+                    // In full-duplex, TX and RX use separate frequencies so there is
+                    // no shared channel to protect; skip T100 hang and release PTT now.
+                    if (phys->full_duplex || phys->axhang_10ms == 0) {
+                        phys->last_unkey_tick_10ms = tick_10ms;
+                        phys->rx_warmup_required = (phys->rx_startup_10ms > 0);
+                        if (phys->rx_warmup_required) {
+                            phys->next_action_tick_10ms = tick_10ms + phys->rx_startup_10ms;
+                        }
+                        phys->ptt_control(false, phys->user_data);
+                        phys->tx_active = false;
+                        phys->state = PHYS_IDLE;
+                    } else {
+                        phys->state = PHYS_HANG;
+                        phys->next_action_tick_10ms = tick_10ms + phys->axhang_10ms;
+                    }
+
                     return;
                 }
 
@@ -642,14 +706,33 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
             break;
 
             case PHYS_HANG:
+                // Full-duplex guard: PHYS_HANG must never block in FD mode.
+                // In full-duplex the TX frequency is dedicated; T100 hang time is
+                // meaningless. Release PTT immediately and re-enter PHYS_IDLE.
+                // continue (not return) re-evaluates PHYS_IDLE in the same tick,
+                // preventing a one-tick latency stall on the dedicated TX path.
+                // axhang_10ms zeroed as belt-and-suspenders in case set_duplex
+                // was bypassed or full_duplex was set after the state transition.
+                if (phys->full_duplex) {
+                    phys->ptt_control(false, phys->user_data);
+                    phys->tx_active = false;
+                    phys->anti_hog_expired = false;
+                    phys->axhang_10ms = 0;    // belt-and-suspenders: ensure hang is 0
+                    phys->state = PHYS_IDLE;
+                    continue;
+                }
+
                 if (!TICK_REACHED(tick_10ms, phys->next_action_tick_10ms)) {
                     return;
                 }
+
                 phys->last_unkey_tick_10ms = tick_10ms;
                 phys->rx_warmup_required = (phys->rx_startup_10ms > 0);
+
                 if (phys->rx_warmup_required) {
                     phys->next_action_tick_10ms = tick_10ms + phys->rx_startup_10ms;
                 }
+
                 phys->ptt_control(false, phys->user_data);
                 phys->tx_active = false;
                 phys->state = PHYS_IDLE;
@@ -661,4 +744,23 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                 return;
         }
     }
+}
+
+// Receiver State Machine - State 0 -> State 1 transition.
+// Called by the application's hardware HDLC decoder when flag sync is acquired.
+// The TX state machine (ax25_physical_tick) runs independently and is unaffected.
+void ax25_physical_rx_frame_start(ax25_physical_t *phys) {
+    if (!phys)
+        return;
+    phys->rx_state = PHYS_RX_RECEIVING;
+}
+
+// Receiver State Machine - State 1 -> State 0 transition.
+// Called by the application's hardware HDLC decoder when a complete frame has
+// been received (regardless of FCS validity). After this call the application
+// should invoke ax25_process_frame() with the decoded frame if FCS was valid.
+void ax25_physical_rx_frame_end(ax25_physical_t *phys) {
+    if (!phys)
+        return;
+    phys->rx_state = PHYS_RX_READY;
 }

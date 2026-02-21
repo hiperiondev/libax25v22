@@ -47,6 +47,14 @@ typedef enum {
     PHYS_HANG          //
 } ax25_phys_state_t;
 
+// AX.25 v2.2 spec defines two independent state machines for the duplex physical layer.
+// This enum covers the Duplex Physical Receiver State Machine (spec states 0 and 1).
+// The existing ax25_phys_state_t drives the transmitter (TX) path unchanged.
+typedef enum {
+    PHYS_RX_READY = 0,   // Receiver idle, ready to decode (spec State 0)
+    PHYS_RX_RECEIVING    // Frame synchronization acquired, decoding in progress (spec State 1)
+} ax25_phys_rx_state_t;
+
 typedef struct {
     bool full_duplex;               // Full-duplex mode flag; disables CSMA when true
     uint16_t txdely_10ms;           // T103 - normal TX startup delay (default 30 = 300ms)
@@ -66,6 +74,7 @@ typedef struct {
     void (*ptt_control)(bool on, void *user_data);
     bool (*carrier_detect)(void *user_data);
     void (*send_data)(const uint8_t *data, size_t len, void *user_data);
+    void (*abort_tx)(void *user_data);                              // Optional: hardware TX abort; NULL if not supported
 
     void *user_data;
 
@@ -83,6 +92,10 @@ typedef struct {
     uint32_t rng_state;
 
     ax25_phys_state_t state;
+    // Independent receiver state per AX.25 v2.2 Duplex Physical Receiver State Machine.
+    // Updated via ax25_physical_rx_frame_start() and ax25_physical_rx_frame_end().
+    // TX state machine (ax25_phys_state_t state above) is unaffected by this field.
+    ax25_phys_rx_state_t rx_state;
     uint32_t next_action_tick_10ms;     // Now in 10ms units
     uint32_t tx_start_tick_10ms;        // Now in 10ms units
     bool tx_active;
@@ -99,6 +112,7 @@ typedef struct {
     uint32_t current_session_start_10ms;  // Now in 10ms units
     bool axdelay_pending;               // T104 pre-PTT wait active
     uint32_t last_tick_10ms;            // Last tick value processed, used internally by ax25_physical_queue_frame kickstart
+    bool t106_inter_burst_pending;      // T106 fired in FD; waiting txdely_10ms before re-keying
 } ax25_physical_t;
 
 /* Initialize context with sensible defaults */
@@ -118,5 +132,17 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms);
 // Configure full-duplex mode after XID negotiation
 // In full-duplex mode CSMA is bypassed and all half-duplex-only timers are cleared
 void ax25_physical_set_duplex(ax25_physical_t *phys, bool fd);
+
+// Abort the currently-transmitting frame for full-duplex REJ recovery.
+// Calls the optional abort_tx hardware callback, flushes the physical TX queue,
+// and clears the in-progress frame pointer. PTT remains ON so DLL-re-queued
+// retransmits are picked up immediately on the next tick. No-op when state is
+// not PHYS_DATA or PHYS_INTERFRAME.
+void ax25_physical_abort_current_frame(ax25_physical_t *phys);
+
+// Call from the hardware HDLC decoder when flag synchronization is acquired.
+// Transitions the independent receiver state machine to PHYS_RX_RECEIVING.
+// Safe to call from interrupt context; touches only rx_state.
+void ax25_physical_rx_frame_start(ax25_physical_t *phys);
 
 #endif /* AX25_PHYSICAL_H_ */
