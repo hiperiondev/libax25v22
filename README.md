@@ -261,7 +261,7 @@ This checklist documents the implementation status of all features defined in:
 
 ### 3.2 Modulo 128 Operation (PE1CHL Extension)
 - ✅ 7-bit sequence numbers (0-127)
-- ⚠️ Maximum 127 outstanding I-frames - Framework exists, enforcement validation incomplete
+- ✅ Maximum 127 outstanding I-frames
 - ✅ Extended control field encoding/decoding
 - ✅ Negotiation via SABME command
 - ✅ XID parameter negotiation for modulo 128

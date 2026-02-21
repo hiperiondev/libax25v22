@@ -26,14 +26,18 @@
 
 // EST frame handler - AX.25 v2.2 Section 4.3.3.8 and 6.4.13
 #define TEST_FRAME_MAX_PAYLOAD 256  // Maximum test payload for static buffer
-
 // Modulo arithmetic macros - avoid 64-bit, use 32-bit for safety
-#define INC_MOD8(x) (((x) + 1) & 0x07)
-#define INC_MOD128(x) (((x) + 1) & 0x7F)
-#define INC_MOD(x, m) ((m) == 8 ? INC_MOD8(x) : INC_MOD128(x))
+#define AX25_MASK(mod)         ((uint8_t)(((mod) == 128) ? 0x7Fu : 0x07u))
+#define INC_MOD(x, mod)        ((uint8_t)(((uint8_t)(x) + 1u) & AX25_MASK(mod)))
+#define MOD_DIFF(a, b, mod)    ((uint8_t)(((uint8_t)(a) - (uint8_t)(b)) & AX25_MASK(mod)))
+// AX25_OUTSTANDING: outstanding unacknowledged frames = (V(S)-V(A)) mod modulo
+#define AX25_OUTSTANDING(vs, va, mod) \
+    ((uint8_t)(((uint8_t)(vs) - (uint8_t)(va)) & AX25_MASK(mod)))
 
-#define MOD_DIFF(a, b, m) (((a) - (b)) & ((m) == 8 ? 0x07 : 0x7F))
-#define MOD_LT(a, b, m) (MOD_DIFF(a, b, m) > 0 && MOD_DIFF(a, b, m) < ((m) == 8 ? 4 : 64))
+static inline bool ax25_in_window(uint8_t ns, uint8_t vr, uint8_t k, uint8_t mod) {
+    uint8_t diff = (uint8_t) (((uint8_t) ns - (uint8_t) vr) & AX25_MASK(mod));
+    return (diff > 0u) && (diff <= k);
+}
 
 // Restart T3 timer on link activity (frames sent or received)
 // Per AX.25 v2.2 Section 6.7.1.3: T3 maintains link integrity during idle periods
@@ -378,8 +382,13 @@ static uint8_t count_missing_frames(ax25_connection_t *conn, uint8_t received_ns
     uint8_t mod = conn->vars.mod;
     uint8_t mask = (mod == 8) ? 0x07 : 0x7F;
 
-    // Calculate (received_ns - vr) modulo mod
-    uint8_t diff = (received_ns - vr) & mask;
+    uint8_t diff = (uint8_t) ((received_ns - vr) & mask);
+    // Clamp diff to window k: frames beyond window are not in-window gaps.
+    // Return 0 as sentinel so handle_out_of_sequence_iframe discards the frame.
+    if (diff > conn->timers.k) {
+        diff = 0u;
+    }
+
     return diff;
 }
 
@@ -389,6 +398,14 @@ static void handle_out_of_sequence_iframe(ax25_connection_t *conn, ax25_informat
     uint8_t expected = conn->vars.vr;
     uint8_t missing_count = count_missing_frames(conn, ns);
     uint8_t mask = (conn->vars.mod == 8) ? 0x07 : 0x7F;
+
+    // If count_missing_frames returned 0 for ns != vr the frame is outside
+    // the receive window - treat identically to the duplicate/discard path.
+    if (missing_count == 0u) {
+        if (iframe->pf)
+            send_rr(conn, false);
+        return;
+    }
 
     // Section 6.4.4.3: If REJ exception already pending, don't send SREJ
     if (conn->rej_exception) {
@@ -530,6 +547,95 @@ static void process_expected_iframe(ax25_connection_t *conn, ax25_information_fr
     // For non-P/F frames, T2 timer will send RR after delay (started in tick handler)
 }
 
+// ax25_nr_is_valid: check N(R) is in [V(A)..V(S)] per AX.25 v2.2 Section 4.2.2
+static bool ax25_nr_is_valid(ax25_connection_t *conn, uint8_t nr) {
+    uint8_t mask = AX25_MASK(conn->vars.mod);
+    uint8_t dist_nr = (uint8_t) ((nr - conn->vars.va) & mask);
+    uint8_t dist_vs = (uint8_t) ((conn->vars.vs - conn->vars.va) & mask);
+    // N(R)==V(A): no new ack (valid); N(R)==V(S): all frames acked (valid)
+    return dist_nr <= dist_vs;
+}
+
+// send_frmr_z: send FRMR with Z-bit set (invalid N(R) received)
+// Per AX.25 v2.2 Section 4.3.3.6 - transitions link to AX25_STATE_FRAME_REJECT
+static void send_frmr_z(ax25_connection_t *conn, uint8_t bad_ctrl) {
+    ax25_frame_reject_frame_t frmr;
+    frmr.base.base.header = conn->peer_addr;
+    frmr.base.base.type = AX25_FRAME_UNNUMBERED_FRMR;
+    frmr.base.pf = true;
+    frmr.base.modifier = 0x87;
+    frmr.is_modulo128 = (conn->vars.mod == 128);
+    frmr.frmr_control = bad_ctrl;
+    frmr.w = false;
+    frmr.x = false;
+    frmr.y = false;
+    frmr.z = true;  // Z-bit: invalid N(R)
+    // Store FRMR info for retransmission
+    conn->frmr_info_len = (conn->vars.mod == 128) ? 5 : 3;
+    conn->frmr_info[0] = bad_ctrl;
+    conn->frmr_info[1] = (uint8_t) (conn->vars.vs << 1);
+    conn->frmr_info[conn->frmr_info_len - 1] = FRMR_Z;
+    conn->frmr_pending = true;
+    conn->frmr_retry_count = 0;
+    size_t len;
+    uint8_t err;
+    uint8_t *encoded = ax25_frame_reject_frame_encode(&frmr, &len, &err);
+    if (encoded && conn->callbacks.transmit) {
+        conn->callbacks.transmit(conn->user_data, encoded, len);
+        conn->stats.frmr_sent++;
+        if (conn->stats.frmr_sent == 0)
+            conn->stats.frmr_sent = 1;
+    }
+    if (encoded != NULL) {
+        free(encoded);
+        encoded = NULL;
+    }
+    conn->state = AX25_STATE_FRAME_REJECT;
+}
+
+// validate N(R), dequeue acked frames, advance V(A)
+// Returns false if N(R) invalid (FRMR Z sent); true on success
+// Dequeue loop stops when head_ns==N(R) - correct for all k and modulo values
+static bool ax25_process_nr(ax25_connection_t *conn, uint8_t nr, uint8_t raw_ctrl) {
+    // When the tx queue is empty (V(A)==V(S), no outstanding unacknowledged frames),
+    // the remote may piggyback a stale or zero-initialized N(R) in their I-frame.
+    // Per AX.25 v2.2 Section 4.4.5, the FRMR Z condition is only meaningful when
+    // there are outstanding frames whose acknowledgment range can be violated.
+    // With an empty queue there is nothing to dequeue and nothing to validate;
+    // attempting to advance V(A) to a stale N(R) would corrupt the send state.
+    // Return true immediately so frame processing (e.g., I-frame receive path)
+    // continues normally without touching V(A).
+    if (conn->tx_queue.count == 0) {
+        return true;
+    }
+
+    // Validate N(R) in [V(A)..V(S)]
+    if (!ax25_nr_is_valid(conn, nr)) {
+        send_frmr_z(conn, raw_ctrl);
+        return false;
+    }
+    // Dequeue all frames with N(S) in [V(A), N(R))
+    // N(R) is exclusive: acknowledges up to but NOT including N(R)
+    while (conn->tx_queue.count > 0) {
+        uint8_t head_ns = conn->tx_queue.ns[conn->tx_queue.head];
+        if (head_ns == nr) {
+            break;  // This frame not yet acknowledged
+        }
+        free(conn->tx_queue.frames[conn->tx_queue.head]);
+        conn->tx_queue.frames[conn->tx_queue.head] = NULL;
+        conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
+        conn->tx_queue.count--;
+    }
+    // Advance V(A) to N(R)
+    conn->vars.va = nr;
+    // Stop T1 if all frames acknowledged
+    if (conn->tx_queue.count == 0) {
+        conn->t1_start_tick = 0;
+        conn->retry_count = 0;
+    }
+    return true;
+}
+
 // Handle received SREJ frame - AX.25 v2.2 Section 6.4.8
 static void handle_received_srej(ax25_connection_t *conn, ax25_supervisory_frame_t *sframe) {
     uint8_t nr = sframe->nr;
@@ -578,6 +684,17 @@ static void handle_received_rej(ax25_connection_t *conn, ax25_supervisory_frame_
         conn->stats.sframe_received = 1;  // Prevent overflow
     }
 
+    // Validate N(R) before using it - must lie in [V(A)..V(S)] per AX.25 v2.2 Section 4.2.2
+    if (!ax25_nr_is_valid(conn, nr)) {
+        send_frmr_z(conn, (uint8_t) sframe->base.type);
+        return;
+    }
+
+    // range [N(R), old_V(S)) can be computed correctly without any half-window limit;
+    // the MOD_LT macro that was used here had an unsafe threshold of modulo/2 which
+    // fails for modulo-128 when the window k exceeds 64 frames
+    uint8_t old_vs = conn->vars.vs;
+
     // AX.25 v2.2 Section 6.4.7: roll back V(S) to V(A) before retransmission.
     // This ensures the sequence space is consistent before any frames are sent.
     // Required in both half-duplex and full-duplex paths.
@@ -609,9 +726,14 @@ static void handle_received_rej(ax25_connection_t *conn, ax25_supervisory_frame_
         // V(S) has already been rolled back to V(A) above; the normal send
         // loop in ax25_send_data / ax25_tick will re-send queued frames.
         // Retransmit here only the frames the remote explicitly rejected.
+        // Compute the total span [N(R), old_V(S)) once, then test each frame's
+        // offset from N(R) against it; this is correct for any window size and any
+        // modulo value including modulo-128 with k > 64 where MOD_LT would fail
+        uint8_t total_range = AX25_OUTSTANDING(old_vs, nr, conn->vars.mod);
         uint8_t idx = conn->tx_queue.head;
         for (uint8_t i = 0; i < conn->tx_queue.count; i++) {
-            if (MOD_LT(conn->tx_queue.ns[idx], nr, conn->vars.mod) || nr == conn->tx_queue.ns[idx]) {
+            uint8_t ns_offset = (uint8_t) ((conn->tx_queue.ns[idx] - nr) & AX25_MASK(conn->vars.mod));
+            if (ns_offset < total_range) {
                 if (conn->callbacks.transmit) {
                     conn->callbacks.transmit(conn->user_data, conn->tx_queue.frames[idx], conn->tx_queue.lengths[idx]);
 
@@ -677,23 +799,10 @@ static void handle_received_rnr(ax25_connection_t *conn, ax25_supervisory_frame_
         conn->stats.sframe_received = 1;  // Prevent overflow
     }
 
-    // Acknowledge frames up to N(R)-1 (same as RR processing)
-    // Per AX.25 v2.2 Section 6.4.9: frames up to N(R)-1 are acknowledged
-    while (conn->tx_queue.count > 0) {
-        uint8_t head_ns = conn->tx_queue.ns[conn->tx_queue.head];
-        // Check if this frame is acknowledged (N(S) < N(R) modulo arithmetic)
-        uint8_t diff = (nr - head_ns) & (conn->vars.mod == 8 ? 0x07 : 0x7F);
-        if (diff > 0 && diff < (conn->vars.mod == 8 ? 4 : 64)) {
-            free(conn->tx_queue.frames[conn->tx_queue.head]);
-            conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
-            conn->tx_queue.count--;
-        } else {
-            break;
-        }
+    // Validate N(R) and dequeue acknowledged frames using spec-correct loop
+    if (!ax25_process_nr(conn, nr, (uint8_t) rnr->base.type)) {
+        return;  // FRMR Z sent; do not continue
     }
-
-    // Update V(A) to N(R)
-    conn->vars.va = nr;
 
     // Enter peer busy state per Section 6.4.9
     conn->peer_busy = true;
@@ -730,20 +839,10 @@ static void handle_received_rr(ax25_connection_t *conn, ax25_supervisory_frame_t
         conn->stats.sframe_received = 1;  // Prevent overflow
     }
 
-    // Acknowledge frames up to N(R)-1
-    while (conn->tx_queue.count > 0) {
-        uint8_t head_ns = conn->tx_queue.ns[conn->tx_queue.head];
-        uint8_t diff = (nr - head_ns) & (conn->vars.mod == 8 ? 0x07 : 0x7F);
-        if (diff > 0 && diff < (conn->vars.mod == 8 ? 4 : 64)) {
-            free(conn->tx_queue.frames[conn->tx_queue.head]);
-            conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
-            conn->tx_queue.count--;
-        } else {
-            break;
-        }
+    // Validate N(R) and dequeue acknowledged frames using spec-correct loop
+    if (!ax25_process_nr(conn, nr, (uint8_t) rr->base.type)) {
+        return;  // FRMR Z sent; do not continue
     }
-
-    conn->vars.va = nr;
 
     if (conn->peer_busy) {
         conn->peer_busy = false;
@@ -877,44 +976,33 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
         conn->stats.bytes_received = iframe->payload_len;
     }
 
-    // Check if this acknowledges our sent frames
-    if (MOD_LT(nr, conn->vars.va, conn->vars.mod) || nr == conn->vars.va) {
-        // Valid acknowledgment - remove acknowledged frames from queue
-        while (conn->tx_queue.count > 0 && MOD_LT(nr, conn->tx_queue.ns[conn->tx_queue.head], conn->vars.mod)) {
-            free(conn->tx_queue.frames[conn->tx_queue.head]);
-            conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
-            conn->tx_queue.count--;
-        }
-        conn->vars.va = nr;
-
-        // Cancel T1 if all frames acknowledged
-        if (conn->tx_queue.count == 0) {
-            conn->t1_start_tick = 0;
-            // Restart T3 now that T1 is stopped
-            conn->t3_start_tick = conn->t3_start_tick ? conn->t3_start_tick : 0;
-            if (conn->t3_start_tick == 0) {
-                // Use current tick from frame processing context
-                // In real implementation, pass current_tick as parameter
-                conn->t3_start_tick = 1;  // Will be set properly in tick handler
-            }
-        } else {
-            // Restart T1 for remaining frames
-            conn->t1_start_tick = conn->t3_start_tick;
-        }
+    // Validate N(R) and dequeue acknowledged frames using spec-correct loop
+    // ax25_process_nr validates [V(A)..V(S)] range, dequeues by head_ns==N(R),
+    // advances V(A), and stops T1 if queue drained
+    if (!ax25_process_nr(conn, nr, (uint8_t) iframe->base.type)) {
+        return;  // FRMR Z sent; do not continue
+    }
+    // Restart T1 for remaining unacknowledged frames (if any left after dequeue)
+    if (conn->tx_queue.count > 0 && conn->t1_start_tick == 0) {
+        conn->t1_start_tick = conn->t3_start_tick ? conn->t3_start_tick : 1;
+    }
+    // Restart T3 if T1 was just stopped (no outstanding frames)
+    if (conn->tx_queue.count == 0 && conn->t3_start_tick == 0) {
+        conn->t3_start_tick = 1;  // Will be set to real tick in tick handler
     }
 
-    // Process received sequence number
+    // Process received N(S): classify as in-order, out-of-order, or duplicate
     if (ns == conn->vars.vr) {
-        // Expected frame - process normally
+        // In-order: expected sequence number - process normally
         process_expected_iframe(conn, iframe);
 
-    } else if (MOD_LT(ns, conn->vars.vr, conn->vars.mod)) {
-        // Future frame - out of sequence, handle per Section 6.4.4
+    } else if (ax25_in_window(ns, conn->vars.vr, conn->timers.k, conn->vars.mod)) {
+        // Out-of-order: N(S) is ahead of V(R) and within receive window k.
         handle_out_of_sequence_iframe(conn, iframe);
 
     } else {
-        // Duplicate or old frame - ignore but acknowledge per Section 6.4.4
-        // Use T2 delay for duplicate frame ACK unless P/F set
+        // Outside the window: N(S) > k ahead of V(R) or behind V(R).
+        // Per AX.25 v2.2 Section 4.2.4 discard silently; acknowledge if P/F set
         if (pf) {
             send_rr(conn, true);  // Immediate response for P/F bit
         }
@@ -1107,7 +1195,21 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame) {
             conn->peer_addr = frame->header;
             conn->peer_addr.cr = false;  // Response will have opposite CR bit
             conn->vars.vs = conn->vars.vr = conn->vars.va = 0;
-            conn->vars.mod = (frame->type == AX25_FRAME_UNNUMBERED_SABME) ? 128 : 8;
+            conn->vars.mod = (frame->type == AX25_FRAME_UNNUMBERED_SABME) ? 128u : 8u;
+
+            // For modulo-8: max k = 7 (M-1). For modulo-128: max k = 127,
+            // further bounded by queue capacity.
+            uint8_t proto_max_k = (conn->vars.mod == 128u) ? 127u : 7u;
+            uint8_t queue_max_k = (uint8_t) (AX25_MAX_QUEUE_SIZE - 1u);
+            uint8_t effective_max = (proto_max_k < queue_max_k) ? proto_max_k : queue_max_k;
+            // Preserve XID-negotiated k if still within range for the new modulus.
+            // Clamp if too large (e.g. mod-128 k=15 -> mod-8 clamped to 7).
+            // Fill spec default if k is zero (invalid).
+            if (conn->timers.k == 0u || conn->timers.k > effective_max) {
+                uint8_t spec_default = (conn->vars.mod == 128u) ? 32u : 7u;
+                conn->timers.k = (spec_default <= effective_max) ? spec_default : effective_max;
+            }
+
             conn->state = AX25_STATE_CONNECTED;
 
             // Clear SREJ/REJ state on new connection
@@ -1539,8 +1641,12 @@ uint8_t ax25_send_data(ax25_connection_t *conn, uint8_t *data, size_t len, uint8
         return 5;  // Peer busy
 
     // Check window not exceeded
-    if (conn->tx_queue.count >= conn->timers.k)
-        return 3;  // Window closed
+    uint8_t outstanding = AX25_OUTSTANDING(conn->vars.vs, conn->vars.va, conn->vars.mod);
+    if (outstanding >= conn->timers.k)
+        return 3;  // Window closed - (V(S)-V(A)) mod modulo >= k
+
+    if (conn->tx_queue.count >= AX25_MAX_QUEUE_SIZE)
+        return 3;  // Queue physically full - secondary guard against overflow
 
     // Create I-frame
     ax25_information_frame_t iframe;
@@ -1796,9 +1902,21 @@ uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connect
     conn->timers.n2 = mgmt_ctx->agreed_params.retries;
 
     // Apply window size
-    // Per AX.25 v2.2: window size k must be <= (modulo / 2)
-    uint8_t max_window = (conn->vars.mod == 128) ? 127 : 7;
-    conn->timers.k = (mgmt_ctx->agreed_params.window_size <= max_window) ? mgmt_ctx->agreed_params.window_size : max_window;
+    // include PI=8 (Window Size Rx) in its XID, agreed_params.window_size stays at 7
+    // (the modulo-8 XID offer default); applying 7/127 would run the link at ~5.5%
+    // window efficiency; per AX.25 v2.2 the spec default for modulo-128 is 32, so
+    // promote any modulo-8-default value to 32 when we are in modulo-128 mode;
+    // always clamp to the smaller of the protocol maximum and the queue array limit
+    uint8_t max_proto_k = (conn->vars.mod == 128) ? 127u : 7u;
+    uint8_t max_queue_k = (uint8_t) (AX25_MAX_QUEUE_SIZE - 1);
+    uint8_t max_k = (max_proto_k < max_queue_k) ? max_proto_k : max_queue_k;
+    uint8_t spec_def_k = (conn->vars.mod == 128) ? 32u : 7u;
+    uint8_t req_k = mgmt_ctx->agreed_params.window_size;
+    // promote modulo-8 default to spec default for modulo-128
+    if (conn->vars.mod == 128 && req_k <= 7u) {
+        req_k = spec_def_k;
+    }
+    conn->timers.k = (req_k <= max_k) ? req_k : max_k;
 
     // Apply maximum I-field length
     conn->timers.n1 = mgmt_ctx->agreed_params.ifield_length;
@@ -1945,8 +2063,17 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
         return ax25_send_data(conn, data, len, pid);
     }
 
-    // Build AX.25 I-frame first (without HDLC encoding)
-    // We need to construct the complete AX.25 frame that will be wrapped by FX.25
+    // Gate 1: enforce send window BEFORE any encoding or transmission.
+    // Previously these checks appeared after transmit, allowing frames to be
+    // sent when the window was already full (Violation A) and V(S) to be
+    // incremented after a potential ACK arrival (Violation B).
+    uint8_t outstanding = AX25_OUTSTANDING(conn->vars.vs, conn->vars.va, conn->vars.mod);
+    if (outstanding >= conn->timers.k || conn->tx_queue.count >= AX25_MAX_QUEUE_SIZE) {
+        return 3;  // Window full - mirrors ax25_send_data() return code
+    }
+    if (conn->peer_busy) {
+        return 5;  // Peer sent RNR - cannot send I-frames
+    }
 
     // Calculate frame size: address(14) + control(1-2) + pid(1) + data(len)
     bool extended = (conn->vars.mod == 128);
@@ -1967,17 +2094,18 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
     memcpy(&ax25_frame[offset], &conn->peer_addr.source, 7);
     offset += 7;
 
-    // Build control field (I-frame format)
-    uint8_t ns = conn->vars.vs;
-    uint8_t nr = conn->vars.vr;
+    // Snapshot V(S) and V(R) before any state changes so the control field
+    // is encoded with consistent values even if a rollback is needed later.
+    uint8_t snap_vs = conn->vars.vs;
+    uint8_t snap_nr = conn->vars.vr;
 
     if (extended) {
         // Modulo-128: 2 bytes
-        ax25_frame[offset++] = (ns << 1);  // N(S) in bits 1-7, bit 0 = 0
-        ax25_frame[offset++] = (nr << 1);  // N(R) in bits 1-7, bit 0 = P
+        ax25_frame[offset++] = (snap_vs << 1);  // N(S) in bits 1-7, bit 0 = 0
+        ax25_frame[offset++] = (snap_nr << 1);  // N(R) in bits 1-7, bit 0 = P
     } else {
         // Modulo-8: 1 byte
-        ax25_frame[offset++] = (nr << 5) | (ns << 1);  // N(R)|N(S)|0
+        ax25_frame[offset++] = (snap_nr << 5) | (snap_vs << 1);  // N(R)|N(S)|0
     }
 
     // Add PID
@@ -1987,12 +2115,28 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
     memcpy(&ax25_frame[offset], data, len);
     offset += len;
 
+    // Advance V(S) NOW, before fx25_encode() or transmit(), so that any ACK
+    // arriving during or after transmission sees a valid V(S) >= N(R).
+    conn->vars.vs = INC_MOD(conn->vars.vs, conn->vars.mod);
+
+    // Cancel T2 - ACK is piggybacked in the N(R) of this outgoing I-frame
+    cancel_t2(conn);
+
+    // Start T1 acknowledgment timer if not already running
+    if (conn->t1_start_tick == 0) {
+        conn->t1_start_tick = 1;  // Sentinel: resolved to real tick in ax25_tick()
+    }
+    // T3 only runs when there are no outstanding frames
+    conn->t3_start_tick = 0;
+
     // Now wrap with FX.25
     fx25_frame_t fx25;
     uint8_t mode = fx25_select_mode_for_conditions(ax25_frame_len, channel_quality);
     uint8_t err = fx25_encode(ax25_frame, ax25_frame_len, mode, &fx25);
 
     if (err != 0) {
+        // Roll back V(S) so the window accounting stays consistent
+        conn->vars.vs = snap_vs;
         return 3;  // FX.25 encoding failed
     }
 
@@ -2004,6 +2148,7 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
 
         if (!tx_buffer) {
             fx25_frame_free(&fx25);
+            conn->vars.vs = snap_vs;  // Roll back V(S) on alloc failure
             return 4;  // Memory allocation failed
         }
 
@@ -2026,63 +2171,17 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
     // Free FX.25 frame resources
     fx25_frame_free(&fx25);
 
-    // Update state machine as if we sent a normal I-frame
-    conn->vars.vs = INC_MOD(conn->vars.vs, conn->vars.mod);
-
     // Update statistics
     conn->stats.iframe_sent++;
+    if (conn->stats.iframe_sent == 0) {
+        conn->stats.iframe_sent = 1;  // Prevent overflow
+    }
+    conn->stats.bytes_sent += len;
+    if (conn->stats.bytes_sent < len) {
+        conn->stats.bytes_sent = len;  // Prevent overflow
+    }
+
     conn->stats.bytes_sent += len;
 
     return 0;
-}
-
-void ax25_connection_tick(ax25_connection_t *conn, uint32_t current_tick) {
-    if (!conn)
-        return;
-
-    // Start T3 if connected, no outstanding frames (T1 not running), and T3 not active
-    if (conn->state == AX25_STATE_CONNECTED && conn->t1_start_tick == 0 && conn->t3_start_tick == 0) {
-        conn->t3_start_tick = current_tick;
-    }
-
-    // Start T1 if not running and there are outstanding frames
-    // This handles the case where T1 was stopped by an RR but frames still remain
-    if (conn->t1_start_tick == 0 && conn->tx_queue.count > 0 && conn->state == AX25_STATE_CONNECTED) {
-        conn->t1_start_tick = current_tick;
-    }
-
-    // T1: Acknowledgment timer expiration
-    if (conn->t1_start_tick != 0 && (current_tick - conn->t1_start_tick) >= conn->params.ack_timer) {
-        conn->retry_count++;
-        if (conn->retry_count > conn->params.retries) {
-            // Max retries: Disconnect
-            conn->state = AX25_STATE_DISCONNECTED;
-            conn->t1_start_tick = 0;
-            conn->t3_start_tick = 0;  // Reset T3 as well
-            // Optional: Notify upper layers or callbacks
-        } else {
-            // Enter timer recovery and poll
-            conn->state = AX25_STATE_TIMER_RECOVERY;
-            send_rr(conn, true);  // RR with P=1
-            conn->t1_start_tick = current_tick;  // Restart T1
-        }
-        conn->stats.t1_expirations++;
-    }
-
-    // T2: Response delay timer expiration
-    if (conn->t2_running && (current_tick - conn->t2_start_tick) >= conn->params.response_delay_timer) {
-        conn->t2_running = false;
-        if (conn->t2_ack_pending) {
-            send_rr(conn, false);  // Send delayed ACK
-            conn->t2_ack_pending = false;
-        }
-    }
-
-    // T3: Inactive link timer expiration (assuming t3_timeout added to conn or params)
-    if (conn->t3_start_tick != 0 && (current_tick - conn->t3_start_tick) >= conn->t3_timeout) {  // Use conn->t3_timeout if added
-    // Send poll to check link
-        send_rr(conn, true);  // RR with P=1
-        conn->t1_start_tick = current_tick;  // Start T1 for response wait
-        conn->t3_start_tick = current_tick;  // Restart T3
-    }
 }

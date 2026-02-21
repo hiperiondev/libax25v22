@@ -304,6 +304,4 @@ void ax25_reset_statistics(ax25_connection_t *conn);
 // Returns: 0 on success, 1-5 on error
 uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t len, uint8_t pid, bool use_fx25, uint8_t channel_quality);
 
-void ax25_connection_tick(ax25_connection_t *conn, uint32_t current_tick);
-
 #endif /* AX25_STATE_MACHINE_H_ */
