@@ -475,8 +475,8 @@ This checklist documents the implementation status of all features defined in:
 - ✅ Multiple simultaneous SREJ conditions
 
 ### 13.2 Extended Sequence Numbers
-- ✅ 7-bit sequence numbers (modulo 128) - Framework present
-- ⚠️ 127-frame window support
+- ✅ 7-bit sequence numbers (modulo 128)
+- ✅ 127-frame window support
 - ✅ SABME negotiation
 - ✅ 16-bit control field encoding/decoding
 
