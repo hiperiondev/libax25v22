@@ -289,7 +289,7 @@ This checklist documents the implementation status of all features defined in:
 - ✅ Modulo 128 capability indication
 - ✅ Extended address encoding support
 - ✅ 16-bit FCS support
-- ❌ 32-bit FCS option (Version 2.2 Revision: July 1998 defines only 16-bit FCS)
+- ❌ 32-bit FCS option (Version 2.2 Revision(July 1998) defines only 16-bit FCS)
 - ✅ TEST command/response support
 - ✅ XID command/response support
 

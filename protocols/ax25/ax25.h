@@ -1,22 +1,37 @@
-/*
- * Copyright 2026 Emiliano Augusto Gonzalez (egonzalez . hiperion @ gmail . com)
- * * Project Site: https://github.com/hiperiondev/libax25v22 *
+/**
+ * @file ax25.h
+ * @brief AX.25 v2.2 Protocol Library - Core Frame Structures and Functions
+ * @author Emiliano Augusto Gonzalez (egonzalez . hiperion @ gmail . com)
+ * @copyright GNU General Public License v3
+ * @date 2026
  *
- * This is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 3, or (at your option)
- * any later version.
+ * @section Overview
+ * This header defines the complete AX.25 v2.2 Link Access Protocol for Amateur
+ * Packet Radio. AX.25 is derived from the X.25 protocol and HDLC standard,
+ * designed specifically for amateur radio environments where both ends of
+ * the link operate as peer stations rather than master/slave configurations.
  *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * @section Protocol_Features
+ * - HDLC-based frame structure with bit stuffing and flag delimiters
+ * - 7-byte address fields with callsign, SSID (0-15), and control bits
+ * - Modulo-8 (3-bit) and Modulo-128 (7-bit) sequence numbering
+ * - Three frame types: Information (I), Supervisory (S), and Unnumbered (U)
+ * - Level 2 digipeater support with up to 8 repeaters in path
+ * - XID parameter negotiation for operational characteristics
+ * - Selective Reject (SREJ) and Implicit Reject (REJ) error recovery
+ * - Full-duplex and half-duplex operation modes
+ * - Protocol Identifier (PID) field for layer 3 multiplexing
  *
- * You should have received a copy of the GNU General Public License
- * along with this software; see the file COPYING.  If not, write to
- * the Free Software Foundation, Inc., 51 Franklin Street,
- * Boston, MA 02110-1301, USA.
+ * @section Standards_References
+ * - AX.25 Link Access Protocol for Amateur Packet Radio, Version 2.2 (July 1998)
+ * - ISO 3309 HDLC frame structure
+ * - ITU-T X.25 packet layer protocol
+ * - FX.25 Forward Error Correction extension
  *
+ * @see https://github.com/hiperiondev/libax25v22
+ * @see https://www.ax25.net/AX25.2.2-Jul%2098-2.pdf
+ * @see https://web.tapr.org/meetings/DCC_1995/DCC1995-Modul128-4AX.25-PE1CHL.pdf
+ * @see https://eindhoven.space/wp-content/uploads/2022/12/fx-25_01_06.pdf
  */
 
 #ifndef AX25_H_
@@ -26,1171 +41,1239 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/**
- * @defgroup ControlFieldMasks Control Field Masks and Values
- * @{
- * Masks and values used to identify frame types in the control field of an AX.25 frame.
- */
-#define CONTROL_I_MASK  0x01 ///< Mask for I-frame (bit 0 = 0)
-#define CONTROL_I_VAL   0x00 ///< Value for I-frame
-#define CONTROL_US_MASK 0x03 ///< Mask for S or U frames (bits 0-1)
-#define CONTROL_S_VAL   0x01 ///< Value for S-frame (01)
-#define CONTROL_U_VAL   0x03 ///< Value for U-frame (11)
-/** @} */
+/*============================================================================*/
+/* Control Field Masks and Values                                             */
+/*============================================================================*/
 
 /**
- * @defgroup PollFinalBits Poll/Final Bit Positions
- * @{
- * Positions of the Poll/Final bit in 8-bit and 16-bit control fields.
- */
-#define POLL_FINAL_8BIT  0x10   ///< Poll/Final bit position in 8-bit control field
-#define POLL_FINAL_16BIT 0x0100 ///< Poll/Final bit position in 16-bit control field
-/** @} */
-
-/**
- * @defgroup ModuloConstants Modulo Sequence Numbering Constants
- * @{
- * Constants to control sequence numbering mode (modulo 8 or modulo 128).
- */
-#define MODULO128_NONE  -1 ///< No modulo 128 (use modulo 8)
-#define MODULO128_FALSE 0  ///< Explicitly use modulo 8
-#define MODULO128_TRUE  1  ///< Use modulo 128
-#define MODULO128_AUTO  2  ///< Automatically determine modulo based on frame type
-/** @} */
-
-/**
- * @defgroup AddressConstants Address Field Constants
- * @{
- * Constants defining the maximum number of repeaters and callsign length.
- */
-#define AX25_MAX_REPEATERS 8    ///< Maximum number of repeaters in path
-#define CALLSIGN_MAX 7     ///< Maximum length of callsign (6 chars + null)
-/** @} */
-
-/**
- * @defgroup PIDCodes Protocol Identifier (PID) Codes
- * @{
- * Protocol Identifiers for layer 3 protocols as per AX.25 specification (Section 6.5).
- */
-#define PID_ISO8208_CCITT   0x01 ///< ISO 8208/CCITT X.25 PLP
-#define PID_VJ_IP4_COMPRESS 0x06 ///< Compressed TCP/IP (Van Jacobson, RFC 1144)
-#define PID_VJ_IP4          0x07 ///< Uncompressed TCP/IP (Van Jacobson, RFC 1144)
-#define PID_SEGMENTATION    0x08 ///< Segmentation fragment
-#define PID_TEXNET          0xC3 ///< TEXNET datagram protocol
-#define PID_LINKQUALITY     0xC4 ///< Link Quality Protocol
-#define PID_APPLETALK       0xCA ///< Appletalk
-#define PID_APPLETALK_ARP   0xCB ///< Appletalk ARP
-#define PID_ARPA_IP4        0xCC ///< ARPA Internet Protocol
-#define PID_APRA_ARP        0xCD ///< ARPA Address resolution
-#define PID_FLEXNET         0xCE ///< FlexNet
-#define PID_NETROM          0xCF ///< NET/ROM
-#define PID_NO_L3           0xF0 ///< No layer 3 protocol
-#define PID_ESCAPE          0xFF ///< Escape character for extended PID
-/** @} */
-
-/**
- * @brief Enumeration of AX.25 frame types.
+ * @defgroup ControlFieldMasks Control Field Identification Masks
+ * @brief Bit masks for identifying frame types from the control field
  *
- * Defines all possible frame types in the AX.25 protocol, including raw frames,
- * unnumbered frames (e.g., UI, SABM), information frames (I-frames), and supervisory
- * frames (e.g., RR, RNR). Distinctions are made for 8-bit and 16-bit control fields,
- * corresponding to modulo 8 or modulo 128 sequence numbering (Section 6.3).
+ * The AX.25 control field uses specific bit patterns to identify frame types:
+ * - I-frames: Bit 0 = 0 (information transfer with sequence numbers)
+ * - S-frames: Bits 0-1 = 01 (supervisory functions: RR, RNR, REJ, SREJ)
+ * - U-frames: Bits 0-1 = 11 (unnumbered control and information)
+ *
+ * @section Control_Field_Structure
+ * For modulo-8 (8-bit control):
+ * - I-frame: [N(R) 3bits][P/F 1bit][N(S) 3bits][0]
+ * - S-frame: [N(R) 3bits][P/F 1bit][S 2bits][01]
+ * - U-frame: [M 3bits][P/F 1bit][M 2bits][11]
+ *
+ * For modulo-128 (16-bit control):
+ * - I-frame: [N(R) 7bits][P/F 1bit][N(S) 7bits][0]
+ * - S-frame: [N(R) 7bits][P/F 1bit][S 2bits][01]
+ */
+#define CONTROL_I_MASK  0x01 /**< Mask for I-frame identification (bit 0 = 0) */
+#define CONTROL_I_VAL   0x00 /**< Value indicating I-frame type */
+#define CONTROL_US_MASK 0x03 /**< Mask for S/U frame identification (bits 0-1) */
+#define CONTROL_S_VAL   0x01 /**< Value indicating S-frame type (binary 01) */
+#define CONTROL_U_VAL   0x03 /**< Value indicating U-frame type (binary 11) */
+
+/*============================================================================*/
+/* Poll/Final Bit Positions                                                     */
+/*============================================================================*/
+
+/**
+ * @defgroup PollFinalBits Poll/Final Bit Position Constants
+ * @brief Bit positions for the Poll/Final bit in control fields
+ *
+ * The P/F bit serves different purposes depending on frame direction:
+ * - Command frames (C=1): P bit requests immediate response
+ * - Response frames (C=0): F bit indicates final response to poll
+ *
+ * The P/F bit position varies between modulo-8 and modulo-128 modes.
+ */
+#define POLL_FINAL_8BIT  0x10   /**< P/F bit position in 8-bit control field (bit 4) */
+#define POLL_FINAL_16BIT 0x0100 /**< P/F bit position in 16-bit control field (bit 8) */
+
+/*============================================================================*/
+/* Modulo Sequence Numbering Constants                                        */
+/*============================================================================*/
+
+/**
+ * @defgroup ModuloConstants Modulo Sequence Numbering Modes
+ * @brief Constants controlling sequence number modulus selection
+ *
+ * AX.25 supports two sequence numbering modes:
+ * - Modulo-8: 3-bit sequence numbers (0-7), 8-bit control field
+ * - Modulo-128: 7-bit sequence numbers (0-127), 16-bit control field
+ *
+ * Modulo-128 is negotiated via XID or indicated by the SABME frame.
+ * The res1 bit in the source address SSID byte indicates modulo-128
+ * when cleared (0 = modulo-128, 1 = modulo-8).
+ */
+#define MODULO128_NONE  -1 /**< No modulo 128 - return raw frame without parsing */
+#define MODULO128_FALSE 0  /**< Explicitly force modulo-8 (8-bit control) */
+#define MODULO128_TRUE  1  /**< Explicitly force modulo-128 (16-bit control) */
+#define MODULO128_AUTO  2  /**< Auto-detect based on res1 bit in source address */
+
+/*============================================================================*/
+/* Address Field Constants                                                      */
+/*============================================================================*/
+
+/**
+ * @defgroup AddressConstants Address Field Limits
+ * @brief Maximum values for address field components
+ *
+ * The AX.25 address field supports:
+ * - Up to 8 level-2 repeaters (digipeaters) in a single path
+ * - 6-character callsigns padded with spaces
+ * - 4-bit SSID values (0-15) for multiple stations per callsign
+ */
+#define AX25_MAX_REPEATERS 8    /**< Maximum repeaters in digipeater path per AX.25 v2.2 Section 3.12.3 */
+#define CALLSIGN_MAX 7          /**< Maximum callsign length (6 chars + null terminator) */
+
+/*============================================================================*/
+/* Protocol Identifier (PID) Codes                                              */
+/*============================================================================*/
+
+/**
+ * @defgroup PIDCodes Layer 3 Protocol Identifiers
+ * @brief Protocol Identifier values for layer 3 protocol multiplexing
+ *
+ * The PID field identifies the layer 3 protocol carried in I-frames and
+ * UI frames. Values are defined in AX.25 v2.2 Section 6.5.
+ *
+ * @section Common_PIDs
+ * - 0xF0: No layer 3 protocol (most common for raw data)
+ * - 0xCC: ARPA Internet Protocol (IP over AX.25)
+ * - 0x08: Segmentation fragment (for large payload splitting)
+ */
+#define PID_ISO8208_CCITT   0x01 /**< ISO 8208/CCITT X.25 PLP */
+#define PID_VJ_IP4_COMPRESS 0x06 /**< Compressed TCP/IP (Van Jacobson, RFC 1144) */
+#define PID_VJ_IP4          0x07 /**< Uncompressed TCP/IP (Van Jacobson, RFC 1144) */
+#define PID_SEGMENTATION    0x08 /**< Segmentation fragment per AX.25 v2.2 Appendix C6 */
+#define PID_TEXNET          0xC3 /**< TEXNET datagram protocol */
+#define PID_LINKQUALITY     0xC4 /**< Link Quality Protocol */
+#define PID_APPLETALK       0xCA /**< Appletalk */
+#define PID_APPLETALK_ARP   0xCB /**< Appletalk ARP */
+#define PID_ARPA_IP4        0xCC /**< ARPA Internet Protocol Version 4 */
+#define PID_APRA_ARP        0xCD /**< ARPA Address Resolution Protocol */
+#define PID_FLEXNET         0xCE /**< FlexNet protocol */
+#define PID_NETROM          0xCF /**< NET/ROM protocol */
+#define PID_NO_L3           0xF0 /**< No layer 3 protocol implemented */
+#define PID_ESCAPE          0xFF /**< Escape for extended PID (next byte contains extended PID) */
+
+/*============================================================================*/
+/* Frame Type Enumeration                                                       */
+/*============================================================================*/
+
+/**
+ * @brief Enumeration of all AX.25 frame types
+ *
+ * Defines the complete set of frame types in AX.25 v2.2, including:
+ * - Raw frames: Unparsed control field
+ * - Unnumbered frames: UI, SABM, SABME, DISC, DM, UA, FRMR, XID, TEST
+ * - Information frames: I-frames with 8-bit or 16-bit control
+ * - Supervisory frames: RR, RNR, REJ, SREJ with 8-bit or 16-bit control
+ *
+ * The distinction between 8-bit and 16-bit variants corresponds to
+ * modulo-8 versus modulo-128 sequence numbering.
  */
 typedef enum {
-    AX25_FRAME_RAW,                    ///< Raw frame, unparsed control field
-    AX25_FRAME_UNNUMBERED_INFORMATION,  ///< Unnumbered Information (UI) frame
-    AX25_FRAME_UNNUMBERED_SABM,        ///< Set Asynchronous Balanced Mode frame
-    AX25_FRAME_UNNUMBERED_SABME,       ///< Set Asynchronous Balanced Mode Extended frame
-    AX25_FRAME_UNNUMBERED_DISC,        ///< Disconnect frame
-    AX25_FRAME_UNNUMBERED_DM,          ///< Disconnected Mode frame
-    AX25_FRAME_UNNUMBERED_UA,          ///< Unnumbered Acknowledge frame
-    AX25_FRAME_UNNUMBERED_FRMR,        ///< Frame Reject frame
-    AX25_FRAME_UNNUMBERED_XID,         ///< Exchange Identification frame
-    AX25_FRAME_UNNUMBERED_TEST,        ///< Test frame
-    AX25_FRAME_INFORMATION_8BIT,       ///< Information frame with 8-bit control field (modulo 8)
-    AX25_FRAME_INFORMATION_16BIT,      ///< Information frame with 16-bit control field (modulo 128)
-    AX25_FRAME_SUPERVISORY_RR_8BIT,    ///< Receive Ready supervisory frame (8-bit, modulo 8)
-    AX25_FRAME_SUPERVISORY_RNR_8BIT,   ///< Receive Not Ready supervisory frame (8-bit, modulo 8)
-    AX25_FRAME_SUPERVISORY_REJ_8BIT,   ///< Reject supervisory frame (8-bit, modulo 8)
-    AX25_FRAME_SUPERVISORY_SREJ_8BIT,  ///< Selective Reject supervisory frame (8-bit, modulo 8)
-    AX25_FRAME_SUPERVISORY_RR_16BIT,   ///< Receive Ready supervisory frame (16-bit, modulo 128)
-    AX25_FRAME_SUPERVISORY_RNR_16BIT,  ///< Receive Not Ready supervisory frame (16-bit, modulo 128)
-    AX25_FRAME_SUPERVISORY_REJ_16BIT,  ///< Reject supervisory frame (16-bit, modulo 128)
-    AX25_FRAME_SUPERVISORY_SREJ_16BIT  ///< Selective Reject supervisory frame (16-bit, modulo 128)
+    AX25_FRAME_RAW, /**< Raw frame with unparsed control field */
+    AX25_FRAME_UNNUMBERED_INFORMATION, /**< UI frame - connectionless data transfer */
+    AX25_FRAME_UNNUMBERED_SABM, /**< Set Asynchronous Balanced Mode (modulo-8) */
+    AX25_FRAME_UNNUMBERED_SABME, /**< Set Asynchronous Balanced Mode Extended (modulo-128) */
+    AX25_FRAME_UNNUMBERED_DISC, /**< Disconnect command */
+    AX25_FRAME_UNNUMBERED_DM, /**< Disconnected Mode response */
+    AX25_FRAME_UNNUMBERED_UA, /**< Unnumbered Acknowledge response */
+    AX25_FRAME_UNNUMBERED_FRMR, /**< Frame Reject - protocol error indication */
+    AX25_FRAME_UNNUMBERED_XID, /**< Exchange Identification - parameter negotiation */
+    AX25_FRAME_UNNUMBERED_TEST, /**< Test frame - link quality verification */
+    AX25_FRAME_INFORMATION_8BIT, /**< I-frame with 8-bit control (modulo-8) */
+    AX25_FRAME_INFORMATION_16BIT, /**< I-frame with 16-bit control (modulo-128) */
+    AX25_FRAME_SUPERVISORY_RR_8BIT, /**< Receive Ready with 8-bit control */
+    AX25_FRAME_SUPERVISORY_RNR_8BIT, /**< Receive Not Ready with 8-bit control */
+    AX25_FRAME_SUPERVISORY_REJ_8BIT, /**< Reject with 8-bit control */
+    AX25_FRAME_SUPERVISORY_SREJ_8BIT, /**< Selective Reject with 8-bit control */
+    AX25_FRAME_SUPERVISORY_RR_16BIT, /**< Receive Ready with 16-bit control */
+    AX25_FRAME_SUPERVISORY_RNR_16BIT, /**< Receive Not Ready with 16-bit control */
+    AX25_FRAME_SUPERVISORY_REJ_16BIT, /**< Reject with 16-bit control */
+    AX25_FRAME_SUPERVISORY_SREJ_16BIT /**< Selective Reject with 16-bit control */
 } ax25_frame_type_t;
 
+/*============================================================================*/
+/* Segmentation Structures                                                      */
+/*============================================================================*/
+
 /**
- * @brief Structure to hold segmented information fields for AX.25 frames.
+ * @brief Segmented information field structure
  *
- * Stores the information field of a segmented frame, part of a larger payload
- * split across multiple frames per AX.25 segmentation rules (Section 6.9).
+ * Represents a single segment of a larger payload that has been split
+ * across multiple I-frames per AX.25 v2.2 Appendix C6 (Segmentation).
  *
- * @var uint8_t *info_field
- * Pointer to the byte array containing the segmented information field data.
+ * @section Segmentation_Overview
+ * When the payload exceeds the negotiated maximum I-field length (N1),
+ * the segmenter splits it into multiple fragments. Each fragment is
+ * carried in a separate I-frame with PID=0x08 (segmentation).
  *
- * @var size_t info_field_len
- * Length of the info_field in bytes.
+ * @section Segment_Header_Format
+ * The first byte of each segmented info field contains:
+ * - Bit 7 (0x80): First segment indicator (BEG)
+ * - Bit 6 (0x40): Last segment indicator (END)
+ * - Bits 5-0: 6-bit segment sequence number (0-63)
+ *
+ * The first segment additionally contains a 2-byte total length field
+ * in big-endian format.
  */
 typedef struct {
-    uint8_t *info_field;    ///< Segmented information field data
-    size_t info_field_len;  ///< Length of the info_field in bytes
+    uint8_t *info_field; /**< Pointer to segmented data buffer */
+    size_t info_field_len; /**< Length of this segment in bytes */
 } ax25_segmented_info_t;
 
 /**
- * @brief Internal structure for reassembly of segmented AX.25 frames.
+ * @brief Internal reassembly segment tracking structure
  *
- * Holds information needed to reassemble a complete payload from multiple
- * segmented frames, used internally during frame processing (Section 6.9).
- *
- * @var uint8_t control
- * Control byte of the frame, indicating frame type and sequence information.
- *
- * @var uint16_t total_length
- * Total length of the complete payload before segmentation.
- *
- * @var uint8_t *data
- * Pointer to the byte array containing the segment data.
- *
- * @var size_t data_len
- * Length of the data in bytes for this segment.
- *
- * @var int segment_number
- * Sequence number of this segment, used to order segments during reassembly.
+ * Used during reassembly of segmented frames to track individual
+ * segments before they are ordered and combined into the complete payload.
  */
 typedef struct {
-    uint8_t control;        ///< Control byte of the segment
-    uint16_t total_length;  ///< Total length of the original payload
-    uint8_t *data;          ///< Segment data
-    size_t data_len;        ///< Length of the segment data in bytes
-    int segment_number;     ///< Segment sequence number
+    uint8_t control; /**< Segment header byte (BEG/END/sequence) */
+    uint16_t total_length; /**< Total original payload length (from first segment) */
+    uint8_t *data; /**< Pointer to segment payload data */
+    size_t data_len; /**< Length of segment payload */
+    int segment_number; /**< 6-bit sequence number for ordering */
 } ax25_reassembly_segment_t;
 
+/*============================================================================*/
+/* Address Structures                                                           */
+/*============================================================================*/
+
 /**
- * @brief Structure representing an AX.25 address.
+ * @brief AX.25 address structure
  *
- * Holds the components of an AX.25 address, including the callsign, SSID, and
- * control bits as per the AX.25 protocol specification (Section 6.2). Used for
- * destination, source, and repeater addresses.
+ * Represents a single AX.25 station address including callsign, SSID,
+ * and control bits as defined in AX.25 v2.2 Section 6.2.
  *
- * @var char callsign[CALLSIGN_MAX]
- * Callsign of the station, up to 6 characters, padded with spaces, null-terminated.
+ * @section Address_Encoding
+ * On-air format (7 bytes per address):
+ * - Bytes 0-5: Callsign characters, each shifted left 1 bit (ASCII * 2)
+ * - Byte 6: SSID byte with control bits
  *
- * @var int ssid
- * Secondary Station Identifier (SSID), 4-bit value (0-15) to distinguish stations.
- *
- * @var bool ch
- * Command/Response (C) bit for destination/source addresses; Has-Been-Repeated (H) bit for repeaters.
- *
- * @var bool res0
- * Reserved bit 0, typically set to 0 (Section 6.2).
- *
- * @var bool res1
- * Reserved bit 1, typically set to 0 (Section 6.2).
- *
- * @var bool extension
- * HDLC extension bit; set to 1 for the last address in the address field, 0 otherwise.
+ * @section SSID_Byte_Structure
+ * Bit 7: C/H bit - Command/Response (dest/source) or Has-been-repeated (repeater)
+ * Bit 6: res1 - Reserved (modulo-128 indicator: 0=mod128, 1=mod8)
+ * Bit 5: res0 - Reserved (should be 1)
+ * Bits 4-1: SSID value (0-15)
+ * Bit 0: Extension bit (0=more addresses follow, 1=last address)
  */
 typedef struct {
-    char callsign[CALLSIGN_MAX];  ///< Callsign, up to 6 chars, null-terminated
-    int ssid;                     ///< SSID, 4-bit value (0-15)
-    bool ch;                      ///< C bit (dest/source) or H bit (repeater)
-    bool res0;                    ///< Reserved bit 0, typically 0
-    bool res1;                    ///< Reserved bit 1, typically 0
-    bool mod128;                  ///< bit 6: false = modulo-128 frame, true = modulo-8 frame
-    bool extension;               ///< HDLC extension bit (1 = last address)
+    char callsign[CALLSIGN_MAX]; /**< Callsign, 1-6 chars, space-padded, null-terminated */
+    int ssid; /**< Secondary Station Identifier (0-15) */
+    bool ch; /**< C bit (command/response) or H bit (has-been-repeated) */
+    bool res0; /**< Reserved bit 0 - should be set to 1 */
+    bool res1; /**< Reserved bit 1 - modulo-128 indicator */
+    bool mod128; /**< Local interpretation: true=modulo-8, false=modulo-128 */
+    bool extension; /**< HDLC extension bit - 1 indicates last address */
 } ax25_address_t;
 
 /**
- * @brief Structure representing the path of repeaters in an AX.25 frame.
+ * @brief Repeater path structure
  *
- * Holds an array of repeater addresses and the count of repeaters, used for
- * digipeating in the AX.25 protocol (Section 6.2).
+ * Contains the ordered list of digipeater addresses for frames that
+ * traverse multiple level-2 repeaters. Supports up to 8 repeaters per
+ * AX.25 v2.2 Section 3.12.3.
  *
- * @var ax25_address_t repeaters[MAX_REPEATERS]
- * Array of repeater addresses, up to MAX_REPEATERS (8).
- *
- * @var int num_repeaters
- * Number of repeaters in the path, capped at MAX_REPEATERS.
+ * @section Digipeater_Operation
+ * Each repeater in the path processes frames sequentially:
+ * 1. Examines next unused address (H-bit = 0)
+ * 2. If matches own callsign, sets H-bit to 1 and retransmits
+ * 3. Subsequent repeaters process until destination reached
  */
 typedef struct {
-    ax25_address_t repeaters[AX25_MAX_REPEATERS];  ///< Array of repeater addresses
-    int num_repeaters;                             ///< Number of repeaters (0 to 8)
+    ax25_address_t repeaters[AX25_MAX_REPEATERS]; /**< Array of repeater addresses */
+    int num_repeaters; /**< Number of repeaters in path (0-8) */
 } ax25_path_t;
 
+/*============================================================================*/
+/* Frame Header Structure                                                       */
+/*============================================================================*/
+
 /**
- * @brief Structure representing the header of an AX.25 frame.
+ * @brief AX.25 frame header structure
  *
- * Contains destination and source addresses, repeater path, and command/response
- * flags, as defined in the AX.25 address field (Section 6.2).
+ * Contains the complete address field information for any AX.25 frame,
+ * including destination, source, and optional repeater path.
  *
- * @var ax25_address_t destination
- * Destination address of the frame.
+ * @section Header_Structure
+ * The address field always contains at minimum:
+ * - Destination address (7 bytes)
+ * - Source address (7 bytes)
  *
- * @var ax25_address_t source
- * Source address of the frame.
+ * Optionally followed by repeater addresses (7 bytes each).
  *
- * @var ax25_path_t repeaters
- * Path of repeaters for digipeating, if any.
- *
- * @var bool cr
- * Command/Response flag for the frame, derived from address fields.
- *
- * @var bool src_cr
- * Source Command/Response flag, used for specific frame processing.
+ * @section CR_Bit_Derivation
+ * The command/response (CR) flag is derived from the C-bits:
+ * - Command frame: Destination C-bit = 1, Source C-bit = 0
+ * - Response frame: Destination C-bit = 0, Source C-bit = 1
  */
 typedef struct {
-    ax25_address_t destination;  ///< Destination address
-    ax25_address_t source;      ///< Source address
-    ax25_path_t repeaters;      ///< Repeater path
-    bool cr;                    ///< Command/Response flag
-    bool src_cr;                ///< Source Command/Response flag
+    ax25_address_t destination; /**< Destination station address */
+    ax25_address_t source; /**< Source station address */
+    ax25_path_t repeaters; /**< Repeater path (empty if direct) */
+    bool cr; /**< Command/Response flag for frame */
+    bool src_cr; /**< Source C-bit value for processing */
 } ax25_frame_header_t;
 
+/*============================================================================*/
+/* Base Frame Structure                                                         */
+/*============================================================================*/
+
 /**
- * @brief Base structure for all AX.25 frames.
+ * @brief Base frame structure for all AX.25 frames
  *
- * Serves as the base for all specific frame types, containing the frame type
- * and header (Section 6.3).
+ * This structure serves as the common header for all specific frame types.
+ * It contains the frame type discriminator and the address header.
  *
- * @var ax25_frame_type_t type
- * Type of the frame (e.g., I-frame, S-frame, U-frame).
- *
- * @var ax25_frame_header_t header
- * Frame header with address information.
+ * @section Type_Polymorphism
+ * All frame types can be cast to ax25_frame_t* for type-agnostic operations.
+ * The type field determines the actual structure type for safe casting:
+ * - AX25_FRAME_INFORMATION_* -> ax25_information_frame_t*
+ * - AX25_FRAME_SUPERVISORY_* -> ax25_supervisory_frame_t*
+ * - AX25_FRAME_UNNUMBERED_* -> ax25_unnumbered_frame_t* or specific subtype
  */
 typedef struct {
-    ax25_frame_type_t type;     ///< Frame type
-    ax25_frame_header_t header;  ///< Frame header
+    ax25_frame_type_t type; /**< Frame type discriminator */
+    ax25_frame_header_t header; /**< Frame header with address information */
 } ax25_frame_t;
 
-/**
- * @brief Structure representing a raw AX.25 frame.
- *
- * Holds the base frame information, control byte, and raw payload, used when
- * the frame type is not further interpreted (Section 6.3).
- *
- * @var ax25_frame_t base
- * Base frame structure.
- *
- * @var uint8_t control
- * Control byte defining frame type and control bits.
- *
- * @var uint8_t *payload
- * Pointer to the raw payload data.
- *
- * @var size_t payload_len
- * Length of the payload in bytes.
- */
-typedef struct {
-    ax25_frame_t base;      ///< Base frame
-    uint8_t control;        ///< Control byte
-    uint8_t *payload;       ///< Raw payload data
-    size_t payload_len;     ///< Payload length in bytes
-} ax25_raw_frame_t;
+/*============================================================================*/
+/* Raw Frame Structure                                                          */
+/*============================================================================*/
 
 /**
- * @brief Structure representing an unnumbered AX.25 frame.
+ * @brief Raw AX.25 frame structure
  *
- * Holds the base frame information, poll/final bit, and modifier for unnumbered
- * frames (e.g., SABM, UI) (Section 6.3.3).
- *
- * @var ax25_frame_t base
- * Base frame structure.
- *
- * @var bool pf
- * Poll/Final bit for command/response signaling.
- *
- * @var uint8_t modifier
- * Modifier bits defining the specific unnumbered frame type (e.g., SABM, UI).
+ * Used when the control field cannot be parsed or when MODULO128_NONE
+ * is specified. Preserves the raw control byte and payload without
+ * protocol interpretation.
  */
 typedef struct {
-    ax25_frame_t base;    ///< Base frame
-    bool pf;              ///< Poll/Final bit
-    uint8_t modifier;     ///< Modifier bits for U-frame type
+    ax25_frame_t base; /**< Base frame structure */
+    uint8_t control; /**< Raw control field byte(s) */
+    uint8_t *payload; /**< Raw payload data following control */
+    size_t payload_len; /**< Payload length in bytes */
+} ax25_raw_frame_t;
+
+/*============================================================================*/
+/* Unnumbered Frame Structures                                                  */
+/*============================================================================*/
+
+/**
+ * @brief Base unnumbered frame structure
+ *
+ * Common structure for all U-frames containing the modifier bits
+ * and Poll/Final bit. U-frames have no sequence numbers.
+ *
+ * @section U_Frame_Modifiers
+ * The modifier field (5 bits: M3,M4,M2,M1,M0) determines U-frame type:
+ * - 0x2F (01111): SABM
+ * - 0x6F (11011): SABME
+ * - 0x43 (10001): DISC
+ * - 0x0F (00111): DM
+ * - 0x63 (11000): UA
+ * - 0x87 (11100): FRMR
+ * - 0xAF (10101): XID
+ * - 0xE3 (11100): TEST
+ * - 0x03 (00011): UI
+ */
+typedef struct {
+    ax25_frame_t base; /**< Base frame structure */
+    bool pf; /**< Poll/Final bit */
+    uint8_t modifier; /**< 5-bit modifier determining U-frame type */
 } ax25_unnumbered_frame_t;
 
 /**
- * @brief Structure representing an Unnumbered Information (UI) frame.
+ * @brief Unnumbered Information (UI) frame structure
  *
- * Extends the unnumbered frame with a Protocol Identifier (PID) and payload,
- * used for connectionless data transfer (Section 6.3.7).
+ * Used for connectionless datagram transmission. UI frames carry
+ * payload without establishing a connection and are not acknowledged.
  *
- * @var ax25_unnumbered_frame_t base
- * Base unnumbered frame structure.
+ * @section UI_Frame_Usage
+ * Common applications include:
+ * - APRS (Automatic Packet Reporting System)
+ * - Beacon transmissions
+ * - Connectionless layer 3 protocols
  *
- * @var uint8_t pid
- * Protocol Identifier (e.g., 0xF0 for no layer 3).
- *
- * @var uint8_t *payload
- * Pointer to the payload data.
- *
- * @var size_t payload_len
- * Length of the payload in bytes.
+ * @section UI_Control_Field
+ * Control byte: 0x03 (modifier 00011) with optional P/F bit
  */
 typedef struct {
-    ax25_unnumbered_frame_t base;  ///< Base unnumbered frame
-    uint8_t pid;                  ///< Protocol Identifier
-    uint8_t *payload;             ///< Payload data
-    size_t payload_len;           ///< Payload length in bytes
+    ax25_unnumbered_frame_t base; /**< Base unnumbered frame */
+    uint8_t pid; /**< Protocol Identifier */
+    uint8_t *payload; /**< UI payload data */
+    size_t payload_len; /**< UI payload length */
 } ax25_unnumbered_information_frame_t;
 
 /**
- * @brief Structure representing a Frame Reject (FRMR) frame.
+ * @brief Frame Reject (FRMR) frame structure
  *
- * Holds information about a rejected frame, including control fields and sequence
- * numbers, used to indicate errors in received frames (Section 6.4.4).
+ * Sent to indicate a protocol error requiring link reset.
+ * FRMR carries information about the rejected frame for diagnostics.
  *
- * @var ax25_unnumbered_frame_t base
- * Base unnumbered frame structure.
+ * @section FRMR_Triggers
+ * Per AX.25 v2.2 Section 4.3.3.6, FRMR is sent when:
+ * - W: Invalid control field received
+ * - X: Frame with info field not permitted (U/S frame with wrong length)
+ * - Y: Info field exceeded maximum length (N1)
+ * - Z: Invalid N(R) received (acknowledgment of unsent frame)
  *
- * @var bool is_modulo128
- * True if modulo 128 sequence numbering is used, false for modulo 8.
- *
- * @var uint16_t frmr_control
- * Control field of the rejected frame (8 or 16 bits).
- *
- * @var int vs
- * Send sequence number of the rejected frame (3 bits for modulo 8, 7 bits for modulo 128).
- *
- * @var int vr
- * Receive sequence number of the rejected frame (3 bits for modulo 8, 7 bits for modulo 128).
- *
- * @var bool frmr_cr
- * Command/Response flag of the rejected frame.
- *
- * @var bool w, x, y, z
- * Flags indicating the reason for rejection (e.g., invalid control field).
+ * @section FRMR_Info_Field
+ * For modulo-8: 3 bytes (control, V(S)/V(R)/CR, flags)
+ * For modulo-128: 5 bytes (control-low, control-high, N(S)/CR, N(R), flags)
  */
 typedef struct {
-    ax25_unnumbered_frame_t base;  ///< Base unnumbered frame
-    bool is_modulo128;           ///< Modulo 128 sequence numbering flag
-    uint16_t frmr_control;       ///< Control field of rejected frame
-    int vs;                      ///< Send sequence number
-    int vr;                      ///< Receive sequence number
-    bool frmr_cr;                ///< Command/Response flag of rejected frame
-    bool w, x, y, z;             ///< Rejection reason flags
+    ax25_unnumbered_frame_t base; /**< Base unnumbered frame */
+    bool is_modulo128; /**< True if modulo-128 sequence numbers */
+    uint16_t frmr_control; /**< Control field of rejected frame */
+    int vs; /**< Send sequence number V(S) at error */
+    int vr; /**< Receive sequence number V(R) at error */
+    bool frmr_cr; /**< CR bit of rejected frame */
+    bool w; /**< Invalid control field flag */
+    bool x; /**< Info field not permitted flag */
+    bool y; /**< Info field too long flag */
+    bool z; /**< Invalid N(R) received flag */
 } ax25_frame_reject_frame_t;
 
+/*============================================================================*/
+/* Information Frame Structure                                                  */
+/*============================================================================*/
+
 /**
- * @brief Structure representing an Information (I) frame.
+ * @brief Information (I) frame structure
  *
- * Holds the base frame information, sequence numbers, poll/final bit, PID, and
- * payload for I-frames, used for reliable data transfer (Section 6.3.1).
+ * Used for reliable data transfer with sequence numbering and
+ * acknowledgment. I-frames carry the actual user data payload.
  *
- * @var ax25_frame_t base
- * Base frame structure.
+ * @section I_Frame_Control
+ * For modulo-8:  [N(R) 3bits][P/F 1bit][N(S) 3bits][0]
+ * For modulo-128: [N(R) 7bits][P/F 1bit][N(S) 7bits][0]
  *
- * @var int nr
- * Receive sequence number (3 bits for modulo 8, 7 bits for modulo 128).
- *
- * @var bool pf
- * Poll/Final bit for flow control.
- *
- * @var int ns
- * Send sequence number (3 bits for modulo 8, 7 bits for modulo 128).
- *
- * @var uint8_t pid
- * Protocol Identifier (e.g., 0xCC for ARPA IP).
- *
- * @var uint8_t *payload
- * Pointer to the payload data.
- *
- * @var size_t payload_len
- * Length of the payload in bytes, up to 256 octets by default.
+ * @section Sequence_Numbers
+ * - N(S): Send sequence number (0-7 or 0-127)
+ * - N(R): Receive sequence number - acknowledges receipt up to N(R)-1
  */
 typedef struct {
-    ax25_frame_t base;    ///< Base frame
-    int nr;               ///< Receive sequence number
-    bool pf;              ///< Poll/Final bit
-    int ns;               ///< Send sequence number
-    uint8_t pid;          ///< Protocol Identifier
-    uint8_t *payload;     ///< Payload data
-    size_t payload_len;   ///< Payload length in bytes
+    ax25_frame_t base; /**< Base frame structure */
+    int nr; /**< Receive sequence number N(R) */
+    bool pf; /**< Poll/Final bit */
+    int ns; /**< Send sequence number N(S) */
+    uint8_t pid; /**< Protocol Identifier */
+    uint8_t *payload; /**< Information field payload */
+    size_t payload_len; /**< Payload length (max N1 bytes) */
 } ax25_information_frame_t;
 
-/**
- * @brief Structure representing a Supervisory (S) frame.
- *
- * Holds the base frame information, receive sequence number, poll/final bit, and
- * supervisory code (RR, RNR, REJ, SREJ) for flow control (Section 6.3.2).
- *
- * @var ax25_frame_t base
- * Base frame structure.
- *
- * @var int nr
- * Receive sequence number (3 bits for modulo 8, 7 bits for modulo 128).
- *
- * @var bool pf
- * Poll/Final bit for flow control.
- *
- * @var uint8_t code
- * Supervisory code (00=RR, 01=RNR, 10=REJ, 11=SREJ).
- */
-typedef struct {
-    ax25_frame_t base;  ///< Base frame
-    int nr;            ///< Receive sequence number
-    bool pf;           ///< Poll/Final bit
-    uint8_t code;      ///< Supervisory code
-} ax25_supervisory_frame_t;
+/*============================================================================*/
+/* Supervisory Frame Structure                                                  */
+/*============================================================================*/
 
 /**
- * @brief Structure representing an XID parameter.
+ * @brief Supervisory (S) frame structure
  *
- * Holds parameters for Exchange Identification (XID) frames, including the
- * parameter identifier and function pointers for encoding, copying, and freeing
- * (Section 4.3.3.7).
+ * Used for flow control and error recovery without carrying data.
+ * S-frames acknowledge received I-frames and indicate receiver status.
  *
- * @var int pi
- * Parameter Identifier (e.g., 2 for Class of Procedures, 3 for HDLC Optional Functions).
+ * @section S_Frame_Types
+ * Code field (bits 2-3) determines type:
+ * - 00 (0): RR (Receive Ready) - ready to receive, acknowledge N(R)-1
+ * - 01 (1): RNR (Receive Not Ready) - busy condition, cannot receive
+ * - 10 (2): REJ (Reject) - go-back-N retransmission request from N(R)
+ * - 11 (3): SREJ (Selective Reject) - request retransmission of N(R) only
  *
- * @var uint8_t* (*encode)(const ax25_xid_parameter_t*, size_t*, uint8_t *err)
- * Function pointer to encode the parameter into a binary format.
+ * @section Flow_Control
+ * RR and RNR control the flow of I-frames:
+ * - RR indicates receiver is ready for more data
+ * - RNR indicates temporary busy condition (e.g., buffer full)
+ */
+typedef struct {
+    ax25_frame_t base; /**< Base frame structure */
+    int nr; /**< Receive sequence number N(R) */
+    bool pf; /**< Poll/Final bit */
+    uint8_t code; /**< Supervisory code (0=RR, 1=RNR, 2=REJ, 3=SREJ) */
+} ax25_supervisory_frame_t;
+
+/*============================================================================*/
+/* XID Parameter Structures                                                     */
+/*============================================================================*/
+
+/**
+ * @brief XID parameter structure
  *
- * @var ax25_xid_parameter_t* (*copy)(const ax25_xid_parameter_t*, uint8_t *err)
- * Function pointer to create a deep copy of the parameter.
+ * Represents a single parameter in an XID (Exchange Identification) frame.
+ * XID parameters are used to negotiate operational characteristics.
  *
- * @var void (*free)(ax25_xid_parameter_t*, uint8_t *err)
- * Function pointer to free the parameter and its data.
+ * @section XID_Parameter_Format
+ * Each parameter encoded as: [PI 1byte][PL 1byte][PV PL bytes]
+ * - PI: Parameter Identifier
+ * - PL: Parameter Length (0-255)
+ * - PV: Parameter Value
  *
- * @var void *data
- * Pointer to parameter-specific data (e.g., raw bytes or structured data).
+ * @section Common_Parameters
+ * - PI=2: Class of Procedures (half/full duplex)
+ * - PI=3: HDLC Optional Functions (REJ/SREJ, modulo-8/128)
+ * - PI=6: I-Field Length Receive (N1)
+ * - PI=8: Window Size Receive (k)
+ * - PI=9: Acknowledge Timer (T1)
+ * - PI=10: Retries (N2)
  */
 typedef struct AX25XIDParameter {
-    int pi;                                    ///< Parameter Identifier
-    uint8_t* (*encode)(const struct AX25XIDParameter*, size_t*, uint8_t *err);  ///< Encode function
-    struct AX25XIDParameter* (*copy)(const struct AX25XIDParameter*, uint8_t *err);  ///< Copy function
-    void (*free)(struct AX25XIDParameter*, uint8_t *err);  ///< Free function
-    void *data;                                ///< Parameter-specific data
+    int pi; /**< Parameter Identifier */
+    uint8_t* (*encode)(const struct AX25XIDParameter*, size_t*, uint8_t *err); /**< Encode to binary */
+    struct AX25XIDParameter* (*copy)(const struct AX25XIDParameter*, uint8_t *err); /**< Deep copy */
+    void (*free)(struct AX25XIDParameter*, uint8_t *err); /**< Free resources */
+    void *data; /**< Parameter-specific data */
 } ax25_xid_parameter_t;
 
 /**
- * @brief Structure representing an Exchange Identification (XID) frame.
+ * @brief XID frame structure
  *
- * Holds the base unnumbered frame, function identifier, group identifier, and
- * a list of parameters for XID frames (Section 4.3.3.7).
+ * Exchange Identification frames negotiate link parameters between
+ * stations. Sent after SABM/SABME connection establishment.
  *
- * @var ax25_unnumbered_frame_t base
- * Base unnumbered frame structure.
- *
- * @var uint8_t fi
- * Function Identifier, defining the XID frame's purpose.
- *
- * @var uint8_t gi
- * Group Identifier, grouping related parameters.
- *
- * @var ax25_xid_parameter_t **parameters
- * Array of pointers to XID parameters.
- *
- * @var size_t param_count
- * Number of parameters in the array.
+ * @section XID_Structure
+ * - FI (Function Identifier): 0x82 for parameter negotiation
+ * - GI (Group Identifier): 0x80 for general group
+ * - GL (Group Length): Total length of all parameters
+ * - Parameters: Array of PI/PL/PV triplets
  */
 typedef struct {
-    ax25_unnumbered_frame_t base;  ///< Base unnumbered frame
-    uint8_t fi;                   ///< Function Identifier
-    uint8_t gi;                   ///< Group Identifier
-    ax25_xid_parameter_t **parameters;  ///< Array of XID parameters
-    size_t param_count;           ///< Number of parameters
+    ax25_unnumbered_frame_t base; /**< Base unnumbered frame */
+    uint8_t fi; /**< Function Identifier */
+    uint8_t gi; /**< Group Identifier */
+    ax25_xid_parameter_t **parameters; /**< Array of parameter pointers */
+    size_t param_count; /**< Number of parameters */
 } ax25_exchange_identification_frame_t;
 
 /**
- * @brief Structure representing a Test (TEST) frame.
+ * @brief Raw parameter value structure (pointer-based)
  *
- * Holds the base unnumbered frame and test payload, used for testing link
- * connectivity (Section 6.3.3.8).
- *
- * @var ax25_unnumbered_frame_t base
- * Base unnumbered frame structure.
- *
- * @var uint8_t *payload
- * Pointer to the test payload data.
- *
- * @var size_t payload_len
- * Length of the payload in bytes.
+ * Alternative representation for XID parameter values using separate
+ * pointer and length. More portable than flexible array members.
  */
 typedef struct {
-    ax25_unnumbered_frame_t base;  ///< Base unnumbered frame
-    uint8_t *payload;             ///< Test payload data
-    size_t payload_len;           ///< Payload length in bytes
-} ax25_test_frame_t;
-
-/**
- * @brief Structure to hold raw parameter data for XID parameters.
- *
- * Stores the parameter value (PV) as a flexible byte array for XID parameters,
- * used to encode specific parameter data in XID frames (Section 4.3.3.7).
- *
- * @var uint8_t *pv
- * Pointer to the parameter value data.
- *
- * @var size_t pv_len
- * Length of the parameter value in bytes.
- */
-typedef struct {
-    uint8_t *pv;      ///< Parameter value data
-    size_t pv_len;    ///< Length of parameter value in bytes
+    uint8_t *pv; /**< Parameter value data pointer */
+    size_t pv_len; /**< Length of parameter value */
 } ax25_raw_parameter_t;
 
+/*============================================================================*/
+/* Test Frame Structure                                                         */
+/*============================================================================*/
+
 /**
- * @brief Structure to hold the result of decoding an AX.25 frame header.
+ * @brief Test frame structure
  *
- * Encapsulates the decoded header and the remaining data after decoding,
- * facilitating further processing of the frame (Section 6.2).
+ * Used for link quality verification and round-trip time measurement.
+ * The receiving station echoes the test payload back to the sender.
  *
- * @var ax25_frame_header_t *header
- * Pointer to the decoded header, or NULL on failure.
+ * @section TEST_Operation
+ * 1. Station A sends TEST command with payload and P=1
+ * 2. Station B receives TEST and sends TEST response with same payload and F=1
+ * 3. Station A measures RTT from command to response
  *
- * @var const uint8_t *remaining
- * Pointer to the data following the header.
- *
- * @var size_t remaining_len
- * Length of the remaining data in bytes.
+ * @section Payload_Limits
+ * Maximum test payload is implementation-dependent but typically
+ * limited by maximum frame size (256 bytes excluding headers).
  */
 typedef struct {
-    ax25_frame_header_t *header;  ///< Pointer to the decoded header, or NULL on failure
-    const uint8_t *remaining;     ///< Pointer to the data following the header
-    size_t remaining_len;         ///< Length of the remaining data in bytes
+    ax25_unnumbered_frame_t base; /**< Base unnumbered frame */
+    uint8_t *payload; /**< Test payload (echoed in response) */
+    size_t payload_len; /**< Payload length */
+} ax25_test_frame_t;
+
+/*============================================================================*/
+/* Header Decode Result                                                         */
+/*============================================================================*/
+
+/**
+ * @brief Header decode result structure
+ *
+ * Returned by ax25_frame_header_decode() containing the decoded header
+ * and information about remaining data in the buffer.
+ */
+typedef struct {
+    ax25_frame_header_t *header; /**< Decoded header or NULL on failure */
+    const uint8_t *remaining; /**< Pointer to data after header */
+    size_t remaining_len; /**< Length of remaining data */
 } header_decode_result_t;
 
 /**
- * @brief Structure to hold raw parameter data for XID parameters.
+ * @brief Raw parameter data with flexible array member
  *
- * This structure stores the parameter value (PV) for Exchange Identification (XID)
- * parameters in AX.25 frames, used to convey configuration data such as Class of
- * Procedures or HDLC Optional Functions (Section 4.3.3.7 of AX.25 2.2). The structure
- * uses a flexible array member to hold a variable-length byte array, requiring careful
- * memory allocation and management.
+ * Internal structure for storing XID parameter values with embedded data.
+ * Requires dynamic allocation with size calculation.
  *
- * @note The use of a flexible array member (`pv[]`) requires that this structure be
- * dynamically allocated with sufficient space for `pv_len` bytes following the `pv_len`
- * field. It must be allocated using `malloc` or similar, with the total size calculated
- * as `sizeof(ax25_raw_param_data_t) + pv_len`. This structure is non-portable in some
- * contexts due to the flexible array member; consider using `ax25_raw_parameter_t` with
- * a pointer and length for better portability.
- *
- * @var size_t pv_len
- * Length of the parameter value data in bytes. Specifies the size of the `pv` array.
- *
- * @var uint8_t pv[]
- * Flexible array member holding the raw parameter value data. The actual size is
- * determined by `pv_len`. This array contains the raw bytes of the parameter value
- * (PV) as defined in the XID parameter format [PI, PL, PV], where PV is the payload
- * specific to the parameter identifier (PI).
+ * @warning This structure uses a flexible array member and must be
+ * allocated as: malloc(sizeof(ax25_raw_param_data_t) + pv_len)
  */
 typedef struct {
-    size_t pv_len;
-    uint8_t pv[];
+    size_t pv_len; /**< Length of parameter value */
+    uint8_t pv[]; /**< Flexible array member for parameter data */
 } ax25_raw_param_data_t;
 
+/*============================================================================*/
+/* Global XID Defaults                                                          */
+/*============================================================================*/
+
 /**
- * @brief Initializes default XID parameters for AX.25 versions 2.0 and 2.2.
+ * @defgroup XID_Defaults Global XID Default Parameters
+ * @brief Pre-initialized default XID parameters for AX.25 v2.0 and v2.2
  *
- * Sets up global default XID parameters (e.g., Class of Procedures, HDLC Optional Functions)
- * for use in XID frames. Must be called once during program initialization (Section 4.3.3.7).
+ * These global variables are initialized by ax25_xid_init_defaults() and
+ * contain factory default parameters for XID negotiation.
+ */
+extern ax25_xid_parameter_t *AX25_20_DEFAULT_XID_COP; /**< AX.25 v2.0 Class of Procedures default */
+extern ax25_xid_parameter_t *AX25_22_DEFAULT_XID_COP; /**< AX.25 v2.2 Class of Procedures default */
+extern ax25_xid_parameter_t *AX25_20_DEFAULT_XID_HDLCOPTFUNC; /**< AX.25 v2.0 HDLC Optional Functions default */
+extern ax25_xid_parameter_t *AX25_22_DEFAULT_XID_HDLCOPTFUNC; /**< AX.25 v2.2 HDLC Optional Functions default */
+extern ax25_xid_parameter_t *AX25_20_DEFAULT_XID_IFIELDRX; /**< AX.25 v2.0 I-Field Length default */
+extern ax25_xid_parameter_t *AX25_22_DEFAULT_XID_IFIELDRX; /**< AX.25 v2.2 I-Field Length default */
+extern ax25_xid_parameter_t *AX25_20_DEFAULT_XID_WINDOWSZRX; /**< AX.25 v2.0 Window Size default */
+extern ax25_xid_parameter_t *AX25_22_DEFAULT_XID_WINDOWSZRX; /**< AX.25 v2.2 Window Size default */
+extern ax25_xid_parameter_t *AX25_20_DEFAULT_XID_ACKTIMER; /**< AX.25 v2.0 Ack Timer default */
+extern ax25_xid_parameter_t *AX25_22_DEFAULT_XID_ACKTIMER; /**< AX.25 v2.2 Ack Timer default */
+extern ax25_xid_parameter_t *AX25_20_DEFAULT_XID_RETRIES; /**< AX.25 v2.0 Retries default */
+extern ax25_xid_parameter_t *AX25_22_DEFAULT_XID_RETRIES; /**< AX.25 v2.2 Retries default */
+
+/*============================================================================*/
+/* XID Initialization Functions                                               */
+/*============================================================================*/
+
+/**
+ * @brief Initialize default XID parameters
  *
- * @param err Pointer to store error code (0 on success, non-zero on failure).
+ * Allocates and initializes global default XID parameters for both
+ * AX.25 v2.0 and v2.2 compatibility. Must be called once during
+ * program initialization before using XID functions.
+ *
+ * @section Default_Values
+ * AX.25 v2.0 defaults:
+ * - Half-duplex operation
+ * - Implicit reject (REJ) only
+ * - Modulo-8
+ * - Window size: 4
+ *
+ * AX.25 v2.2 defaults:
+ * - Half-duplex operation
+ * - Selective reject-reject (SREJ/REJ)
+ * - Modulo-8 (negotiable to 128)
+ * - Window size: 7
+ *
+ * @param[out] err Error code: 0=success, non-zero=failure
  */
 void ax25_xid_init_defaults(uint8_t *err);
 
 /**
- * @brief Deinitializes default XID parameters.
+ * @brief Deinitialize default XID parameters
  *
- * Frees resources allocated for default XID parameters. Must be called at
- * program termination to prevent memory leaks (Section 4.3.3.7).
+ * Frees all resources allocated by ax25_xid_init_defaults().
+ * Must be called at program termination to prevent memory leaks.
  *
- * @param err Pointer to store error code (0 on success, non-zero on failure).
+ * @param[out] err Error code: 0=success, non-zero=failure (first error if multiple)
  */
 void ax25_xid_deinit_defaults(uint8_t *err);
 
+/*============================================================================*/
+/* Frame Encode/Decode Functions                                                */
+/*============================================================================*/
+
 /**
- * @brief Encodes an AX.25 frame into a binary buffer.
+ * @brief Encode an AX.25 frame to binary format
  *
- * Converts an AX.25 frame structure into its binary representation, including
- * address, control, PID (if applicable), and payload fields (Section 6.1).
+ * Serializes a complete AX.25 frame including address field, control field,
+ * PID (if applicable), and payload into a binary buffer suitable for
+ * HDLC framing.
  *
- * @param frame Pointer to the AX.25 frame to encode.
- * @param len Pointer to a size_t where the length of the encoded buffer will be stored.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the encoded buffer (must be freed by caller).
+ * @section Encoding_Process
+ * 1. Encodes address field (destination, source, repeaters)
+ * 2. Encodes appropriate control field based on frame type
+ * 3. Adds PID for I-frames and UI frames
+ * 4. Copies payload data
+ *
+ * @param[in]  frame Pointer to frame structure to encode
+ * @param[out] len   Pointer to store encoded length
+ * @param[out] err   Error code: 0=success, 1=malloc fail, 2=invalid type, 3=payload fail, 4=result malloc fail
+ * @return Pointer to encoded buffer (caller must free), or NULL on error
  */
 uint8_t* ax25_frame_encode(const ax25_frame_t *frame, size_t *len, uint8_t *err);
 
 /**
- * @brief Decodes an AX.25 frame from binary data based on the specified modulo setting.
+ * @brief Decode binary data to AX.25 frame structure
  *
- * Interprets the binary data as an AX.25 frame, determining its type (raw,
- * unnumbered, information, or supervisory) based on the control field and the modulo128
- * parameter (Section 6.1).
+ * Parses binary AX.25 frame data and creates appropriate frame structure
+ * based on control field analysis and modulo setting.
  *
- * @param data Pointer to the binary data containing the frame.
- * @param len Length of the input data in bytes.
- * @param modulo128 Integer flag controlling frame decoding:
- *                  - MODULO128_NONE (-1): Returns a raw frame with unparsed payload.
- *                  - MODULO128_FALSE (0): Decodes using 8-bit control field.
- *                  - MODULO128_TRUE (1): Decodes using 16-bit control field.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the decoded AX.25 frame (must be freed with ax25_frame_free).
+ * @section Decoding_Logic
+ * - MODULO128_NONE: Returns raw frame without parsing control
+ * - MODULO128_FALSE: Forces 8-bit control interpretation
+ * - MODULO128_TRUE: Forces 16-bit control interpretation
+ * - MODULO128_AUTO: Auto-detects from res1 bit or frame length
+ *
+ * @param[in]  data       Binary frame data (no FCS)
+ * @param[in]  len        Length of input data
+ * @param[in]  modulo128  Modulo mode selection constant
+ * @param[out] err        Error code: 0=success, 1=too short, 2=invalid addr, 3=no control, 4=malloc fail, 5=invalid addr field, 6=invalid control
+ * @return Pointer to decoded frame (caller must free with ax25_frame_free), or NULL on error
  */
 ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, uint8_t *err);
 
 /**
- * @brief Frees an AX.25 frame and its associated resources.
+ * @brief Free AX.25 frame structure and associated resources
  *
- * Deallocates memory for the frame and its payload, ensuring no memory leaks.
- * Must be called for frames returned by ax25_frame_decode or other creation
- * functions (Section 6.1).
+ * Deallocates frame structure and all internally allocated memory
+ * including payloads and nested structures.
  *
- * @param frame Pointer to the AX.25 frame to free.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
+ * @param[in,out] frame Frame to free (pointer becomes invalid)
+ * @param[out]    err   Error code: 0=success, 1=NULL frame
  */
 void ax25_frame_free(ax25_frame_t *frame, uint8_t *err);
 
 /**
- * @brief Creates a new AX.25 frame with the specified type and header.
+ * @brief Create new AX.25 frame with specified type
  *
- * Allocates and initializes a new AX.25 frame with the given type and header
- * information. Caller must set additional fields (e.g., payload, PID) as needed
- * (Section 6.1).
+ * Allocates and initializes frame structure with given type and header.
+ * Caller must populate type-specific fields after creation.
  *
- * @param type The type of frame to create (e.g., AX25_FRAME_INFORMATION_8BIT).
- * @param header The frame header containing address information.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the new AX.25 frame (must be freed with ax25_frame_free).
+ * @param[in]  type   Frame type to create
+ * @param[in]  header Header information (copied to frame)
+ * @param[out] err    Error code: 0=success, 1=invalid header, 2=malloc fail, 3=unsupported type
+ * @return Pointer to new frame, or NULL on error
  */
 ax25_frame_t* ax25_frame_create(ax25_frame_type_t type, const ax25_frame_header_t *header, uint8_t *err);
 
+/*============================================================================*/
+/* Address Functions                                                            */
+/*============================================================================*/
+
 /**
- * @brief Encodes an AX.25 address into a 7-byte binary array.
+ * @brief Encode AX.25 address to 7-byte binary format
  *
- * Serializes an AX.25 address into the 7-byte format, with callsign characters
- * shifted left by 1 and SSID/control bits in the seventh byte (Section 6.2).
+ * Converts address structure to on-air format per AX.25 v2.2 Section 6.2:
+ * - Callsign characters shifted left 1 bit
+ * - SSID byte with control bits
  *
- * @param addr Pointer to the AX.25 address to encode.
- * @param len Pointer to a size_t where the length of the encoded data (always 7) will be stored.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the 7-byte encoded buffer (must be freed by caller).
+ * @param[in]  addr Address to encode
+ * @param[out] len  Pointer to store encoded length (always 7)
+ * @param[out] err  Error code: 0=success, 1=malloc fail, 2=NULL addr
+ * @return Pointer to 7-byte encoded buffer (caller must free), or NULL on error
  */
 uint8_t* ax25_address_encode(const ax25_address_t *addr, size_t *len, uint8_t *err);
 
 /**
- * @brief Decodes a 7-byte binary data segment into an AX.25 address.
+ * @brief Decode 7-byte binary data to AX.25 address
  *
- * Extracts an AX.25 address from a 7-byte buffer, parsing the callsign (shifted right by 1)
- * and SSID/control bits (Section 6.2).
+ * Parses on-air address format extracting callsign, SSID, and control bits.
  *
- * @param data Pointer to the 7-byte binary data containing the encoded address.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the decoded AX.25 address (must be freed by caller).
+ * @param[in]  data 7-byte binary address data
+ * @param[out] err  Error code: 0=success, 1=malloc fail, 2=NULL data
+ * @return Pointer to decoded address (caller must free), or NULL on error
  */
 ax25_address_t* ax25_address_decode(const uint8_t *data, uint8_t *err);
 
 /**
- * @brief Creates an AX.25 address from a string representation.
+ * @brief Create AX.25 address from string representation
  *
- * Parses a string in the format "CALLSIGN-SSID*" (e.g., "N0CALL-7*") to create
- * an AX.25 address. The asterisk (*) indicates the 'ch' bit (Section 6.2).
+ * Parses callsign string in format "CALLSIGN-SSID*" where:
+ * - CALLSIGN: 1-6 alphanumeric characters
+ * - SSID: 0-15 (optional, defaults to 0)
+ * - *: Indicates C/H bit set (optional)
  *
- * @param str Pointer to a null-terminated string containing the address.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the new AX.25 address (must be freed with ax25_address_free).
+ * @param[in]  str Callsign string (e.g., "N0CALL-7" or "REPEATER-1*")
+ * @param[out] err Error code: 0=success, 1=malloc fail, 2=NULL str, 4=invalid format, 5=invalid chars, 6=asterisk position error
+ * @return Pointer to address structure (caller must free), or NULL on error
  */
 ax25_address_t* ax25_address_from_string(const char *str, uint8_t *err);
 
 /**
- * @brief Creates a deep copy of an AX.25 address.
+ * @brief Create deep copy of AX.25 address
  *
- * Duplicates an AX.25 address, allocating new memory and copying all fields,
- * ensuring the copy is independent of the original (Section 6.2).
+ * Duplicates address structure including all fields.
  *
- * @param addr Pointer to the AX.25 address to copy.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the new AX.25 address (must be freed with ax25_address_free).
+ * @param[in]  addr Address to copy
+ * @param[out] err  Error code: 0=success, 1=malloc fail
+ * @return Pointer to copied address (caller must free), or NULL on error
  */
 ax25_address_t* ax25_address_copy(const ax25_address_t *addr, uint8_t *err);
 
 /**
- * @brief Frees the memory allocated for an AX.25 address.
+ * @brief Free AX.25 address structure
  *
- * Deallocates an AX.25 address structure to prevent memory leaks (Section 6.2).
- *
- * @param addr Pointer to the AX.25 address to free. If NULL, the function does nothing.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
+ * @param[in,out] addr Address to free
+ * @param[out]    err  Error code: 0=success
  */
 void ax25_address_free(ax25_address_t *addr, uint8_t *err);
 
+/*============================================================================*/
+/* Path Functions                                                               */
+/*============================================================================*/
+
 /**
- * @brief Creates a new AX.25 path structure containing repeater addresses.
+ * @brief Create new repeater path from address array
  *
- * Allocates and initializes an AX.25 path with up to MAX_REPEATERS repeater
- * addresses, copying the provided addresses (Section 6.2).
+ * Allocates path structure containing copies of repeater addresses.
  *
- * @param repeaters Array of pointers to AX.25 address structures for repeaters.
- * @param num Number of repeaters, capped at MAX_REPEATERS.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the new AX.25 path (must be freed with ax25_path_free).
+ * @param[in]  repeaters Array of pointers to repeater addresses
+ * @param[in]  num       Number of repeaters (1-8)
+ * @param[out] err       Error code: 0=success, 1=malloc fail, 2=invalid input
+ * @return Pointer to path structure (caller must free), or NULL on error
  */
 ax25_path_t* ax25_path_new(ax25_address_t **repeaters, int num, uint8_t *err);
 
 /**
- * @brief Frees the memory allocated for an AX.25 path.
+ * @brief Free repeater path structure
  *
- * Deallocates an AX.25 path structure. Does not free the individual addresses,
- * as they are assumed to be managed elsewhere (Section 6.2).
- *
- * @param path Pointer to the AX.25 path to free. If NULL, the function does nothing.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
+ * @param[in,out] path Path to free
+ * @param[out]    err  Error code: 0=success
  */
 void ax25_path_free(ax25_path_t *path, uint8_t *err);
 
+/*============================================================================*/
+/* Frame Header Functions                                                       */
+/*============================================================================*/
+
 /**
- * @brief Decodes an AX.25 frame header from binary data.
+ * @brief Decode AX.25 frame header from binary data
  *
- * Parses the address field of an AX.25 frame, extracting destination, source, and
- * repeater addresses, handling the extension bit to determine the field’s end (Section 6.2).
+ * Parses complete address field including destination, source, and
+ * optional repeater path. Validates extension bit termination.
  *
- * @param data Pointer to the binary data containing the frame header.
- * @param len Length of the input data in bytes.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Structure containing the decoded header, remaining data, and its length.
+ * @param[in]  data Binary frame data starting at address field
+ * @param[in]  len  Length of available data
+ * @param[out] err  Error code: 0=success, 4=too few addresses, 5=no extension bit, 6=malloc fail, 7=invalid SSID
+ * @return Header decode result structure (header pointer NULL on failure)
  */
 header_decode_result_t ax25_frame_header_decode(const uint8_t *data, size_t len, uint8_t *err);
 
 /**
- * @brief Encodes an AX.25 frame header into a binary array.
+ * @brief Encode AX.25 frame header to binary format
  *
- * Serializes an AX.25 frame header, including destination, source, and repeater
- * addresses, setting the extension bit appropriately (Section 6.2).
+ * Serializes address field with proper extension bit settings.
  *
- * @param header Pointer to the AX.25 frame header to encode.
- * @param len Pointer to a size_t where the length of the encoded data will be stored.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the encoded buffer (must be freed by caller).
+ * @param[in]  header Header to encode
+ * @param[out] len    Pointer to store encoded length
+ * @param[out] err    Error code: 0=success, 1=malloc fail
+ * @return Pointer to encoded buffer (caller must free), or NULL on error
  */
 uint8_t* ax25_frame_header_encode(const ax25_frame_header_t *header, size_t *len, uint8_t *err);
 
 /**
- * @brief Frees the memory allocated for an AX.25 frame header.
+ * @brief Free frame header structure
  *
- * Deallocates an AX.25 frame header structure, including its nested addresses
- * (Section 6.2).
- *
- * @param header Pointer to the AX.25 frame header to free. If NULL, the function does nothing.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
+ * @param[in,out] header Header to free
+ * @param[out]    err    Error code: 0=success
  */
 void ax25_frame_header_free(ax25_frame_header_t *header, uint8_t *err);
 
+/*============================================================================*/
+/* Raw Frame Functions                                                          */
+/*============================================================================*/
+
 /**
- * @brief Encodes a raw AX.25 frame’s payload into a binary array.
+ * @brief Encode raw frame payload
  *
- * Copies the raw frame’s control field and payload as-is, without further
- * interpretation (Section 6.3).
+ * Encodes control byte and raw payload without protocol interpretation.
  *
- * @param frame Pointer to the raw AX.25 frame to encode.
- * @param len Pointer to a size_t where the length of the encoded payload will be stored.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the encoded buffer (must be freed by caller).
+ * @param[in]  frame Raw frame to encode
+ * @param[out] len   Pointer to store encoded length
+ * @param[out] err    Error code: 0=success, 1=malloc fail
+ * @return Pointer to encoded buffer (control + payload), or NULL on error
  */
 uint8_t* ax25_raw_frame_encode(const ax25_raw_frame_t *frame, size_t *len, uint8_t *err);
 
+/*============================================================================*/
+/* Unnumbered Frame Functions                                                   */
+/*============================================================================*/
+
 /**
- * @brief Decodes an unnumbered AX.25 frame from binary data.
+ * @brief Decode unnumbered frame from binary data
  *
- * Interprets an unnumbered frame based on its control byte modifier, creating
- * the appropriate subtype (e.g., UI, SABM, FRMR) (Section 6.3.3).
+ * Interprets control byte modifier and dispatches to specific U-frame
+ * decoder (UI, FRMR, XID, TEST, or simple U-frame).
  *
- * @param header Pointer to the AX.25 frame header.
- * @param control The control byte from the frame data.
- * @param data Pointer to the remaining data after the control byte.
- * @param len Length of the remaining data in bytes.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the decoded unnumbered frame (must be freed with ax25_frame_free).
+ * @param[in,out] header  Frame header (modified with CR bits)
+ * @param[in]     control Control byte from frame
+ * @param[in]     data    Data following control byte
+ * @param[in]     len     Length of remaining data
+ * @param[out]    err     Error code: 0=success, 1=malloc fail, 6=invalid modifier
+ * @return Pointer to unnumbered frame structure, or NULL on error
  */
 ax25_unnumbered_frame_t* ax25_unnumbered_frame_decode(ax25_frame_header_t *header, uint8_t control, const uint8_t *data, size_t len, uint8_t *err);
 
 /**
- * @brief Encodes an unnumbered AX.25 frame into a binary array.
+ * @brief Encode unnumbered frame control byte
  *
- * Serializes the control byte of an unnumbered frame, combining the modifier
- * with the poll/final bit (Section 6.3.3).
- *
- * @param frame Pointer to the unnumbered AX.25 frame to encode.
- * @param len Pointer to a size_t where the length of the encoded data (always 1) will be stored.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the encoded buffer (must be freed by caller).
+ * @param[in]  frame U-frame to encode
+ * @param[out] len   Pointer to store encoded length (always 1)
+ * @param[out] err    Error code: 0=success, 1=malloc fail
+ * @return Pointer to 1-byte control buffer, or NULL on error
  */
 uint8_t* ax25_unnumbered_frame_encode(const ax25_unnumbered_frame_t *frame, size_t *len, uint8_t *err);
 
 /**
- * @brief Decodes an Unnumbered Information (UI) frame from binary data.
+ * @brief Decode UI frame from binary data
  *
- * Creates a UI frame, extracting the PID and payload following the control byte
- * (Section 6.3.7).
+ * Extracts PID and payload from UI frame data.
  *
- * @param header Pointer to the AX.25 frame header.
- * @param pf Boolean indicating the poll/final bit from the control byte.
- * @param data Pointer to the data containing PID and payload.
- * @param len Length of the data in bytes (must be at least 1 for PID).
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the decoded UI frame (must be freed with ax25_frame_free).
+ * @param[in,out] header Frame header
+ * @param[in]     pf     Poll/Final bit from control byte
+ * @param[in]     data   Data following control byte (starts with PID)
+ * @param[in]     len    Length of data
+ * @param[out]    err    Error code: 0=success, 1=malloc fail or too short
+ * @return Pointer to UI frame structure, or NULL on error
  */
 ax25_unnumbered_information_frame_t* ax25_unnumbered_information_frame_decode(ax25_frame_header_t *header, bool pf, const uint8_t *data, size_t len,
         uint8_t *err);
 
 /**
- * @brief Encodes an Unnumbered Information (UI) frame into a binary array.
+ * @brief Encode UI frame to binary format
  *
- * Serializes a UI frame, including the control byte, PID, and payload (Section 6.3.7).
- *
- * @param frame Pointer to the UI frame to encode.
- * @param len Pointer to a size_t where the length of the encoded data will be stored.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the encoded buffer (must be freed by caller).
+ * @param[in]  frame UI frame to encode
+ * @param[out] len   Pointer to store encoded length
+ * @param[out] err   Error code: 0=success, 1=malloc fail
+ * @return Pointer to encoded buffer (control + PID + payload), or NULL on error
  */
 uint8_t* ax25_unnumbered_information_frame_encode(const ax25_unnumbered_information_frame_t *frame, size_t *len, uint8_t *err);
 
 /**
- * @brief Decodes a Frame Reject (FRMR) frame from binary data.
+ * @brief Decode FRMR frame from binary data
  *
- * Interprets a 3-byte FRMR payload, extracting rejection flags, sequence numbers,
- * and control fields (Section 6.4.4).
+ * Parses FRMR info field extracting rejection reason and state variables.
+ * Handles both modulo-8 (3-byte) and modulo-128 (5-byte) formats.
  *
- * @param header Pointer to the AX.25 frame header.
- * @param pf Boolean indicating the poll/final bit.
- * @param data Pointer to the 3-byte data containing FRMR fields.
- * @param len Length of the data (must be exactly 3 bytes).
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the decoded FRMR frame (must be freed with ax25_frame_free).
+ * @param[in,out] header Frame header
+ * @param[in]     pf     Poll/Final bit
+ * @param[in]     data   FRMR info field data
+ * @param[in]     len    Length of info field (3 or 5 bytes)
+ * @param[out]    err    Error code: 0=success, 1=invalid length, 2=malloc fail
+ * @return Pointer to FRMR frame structure, or NULL on error
  */
 ax25_frame_reject_frame_t* ax25_frame_reject_frame_decode(ax25_frame_header_t *header, bool pf, const uint8_t *data, size_t len, uint8_t *err);
 
 /**
- * @brief Encodes a Frame Reject (FRMR) frame into a binary array.
+ * @brief Encode FRMR frame to binary format
  *
- * Serializes an FRMR frame, including the control byte and 3-byte rejection payload
- * (Section 6.4.4).
- *
- * @param frame Pointer to the FRMR frame to encode.
- * @param len Pointer to a size_t where the length of the encoded data (always 4) will be stored.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the encoded buffer (must be freed by caller).
+ * @param[in]  frame FRMR frame to encode
+ * @param[out] len   Pointer to store encoded length (4 or 6 bytes)
+ * @param[out] err    Error code: 0=success, 1=malloc fail
+ * @return Pointer to encoded buffer, or NULL on error
  */
 uint8_t* ax25_frame_reject_frame_encode(const ax25_frame_reject_frame_t *frame, size_t *len, uint8_t *err);
 
+/*============================================================================*/
+/* Information Frame Functions                                                  */
+/*============================================================================*/
+
 /**
- * @brief Decodes an Information (I) frame from binary data.
+ * @brief Decode I-frame from binary data
  *
- * Interprets an I-frame, supporting 8-bit or 16-bit control fields, extracting
- * sequence numbers, PID, and payload (Section 6.3.1).
+ * Extracts sequence numbers, PID, and payload from I-frame data.
  *
- * @param header Pointer to the AX.25 frame header.
- * @param control The control field (up to 16 bits).
- * @param data Pointer to the data containing PID and payload.
- * @param len Length of the data in bytes (must be at least 1 for PID).
- * @param is_16bit Boolean flag indicating 16-bit (true) or 8-bit (false) control field.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the decoded I-frame (must be freed with ax25_frame_free).
+ * @param[in,out] header   Frame header
+ * @param[in]     control  Control field value (8 or 16 bits)
+ * @param[in]     data     Data following control field (starts with PID)
+ * @param[in]     len      Length of remaining data
+ * @param[in]     is_16bit True if 16-bit control (modulo-128)
+ * @param[out]    err      Error code: 0=success, 1=malloc fail, 2=too short, 3=payload malloc fail
+ * @return Pointer to I-frame structure, or NULL on error
  */
 ax25_information_frame_t* ax25_information_frame_decode(ax25_frame_header_t *header, uint16_t control, const uint8_t *data, size_t len, bool is_16bit,
         uint8_t *err);
 
 /**
- * @brief Encodes an Information (I) frame into a binary array.
+ * @brief Encode I-frame to binary format
  *
- * Serializes an I-frame, including the control field, PID, and payload (Section 6.3.1).
- *
- * @param frame Pointer to the I-frame to encode.
- * @param len Pointer to a size_t where the length of the encoded data will be stored.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the encoded buffer (must be freed by caller).
+ * @param[in]  frame I-frame to encode
+ * @param[out] len   Pointer to store encoded length
+ * @param[out] err   Error code: 0=success, 1=malloc fail
+ * @return Pointer to encoded buffer (control + PID + payload), or NULL on error
  */
 uint8_t* ax25_information_frame_encode(const ax25_information_frame_t *frame, size_t *len, uint8_t *err);
 
+/*============================================================================*/
+/* Supervisory Frame Functions                                                  */
+/*============================================================================*/
+
 /**
- * @brief Decodes a Supervisory (S) frame from binary data.
+ * @brief Decode S-frame from binary data
  *
- * Interprets an S-frame (RR, RNR, REJ, SREJ), extracting the receive sequence number
- * and frame type from 8-bit or 16-bit control fields (Section 6.3.2).
+ * Extracts supervisory code, N(R), and P/F bit from control field.
  *
- * @param header Pointer to the AX.25 frame header.
- * @param control The control field (up to 16 bits).
- * @param is_16bit Boolean flag indicating 16-bit (true) or 8-bit (false) control field.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the decoded S-frame (must be freed with ax25_frame_free).
+ * @param[in,out] header   Frame header
+ * @param[in]     control  Control field value (8 or 16 bits)
+ * @param[in]     is_16bit True if 16-bit control (modulo-128)
+ * @param[out]    err      Error code: 0=success, 1=invalid code, 2=malloc fail
+ * @return Pointer to S-frame structure, or NULL on error
  */
 ax25_supervisory_frame_t* ax25_supervisory_frame_decode(ax25_frame_header_t *header, uint16_t control, bool is_16bit, uint8_t *err);
 
 /**
- * @brief Encodes a Supervisory (S) frame into a binary array.
+ * @brief Encode S-frame to binary format
  *
- * Serializes an S-frame, including the control field (8-bit or 16-bit) (Section 6.3.2).
- *
- * @param frame Pointer to the S-frame to encode.
- * @param len Pointer to a size_t where the length of the encoded data (1 or 2) will be stored.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the encoded buffer (must be freed by caller).
+ * @param[in]  frame S-frame to encode
+ * @param[out] len   Pointer to store encoded length (1 or 2 bytes)
+ * @param[out] err   Error code: 0=success, 1=malloc fail
+ * @return Pointer to encoded buffer, or NULL on error
  */
 uint8_t* ax25_supervisory_frame_encode(const ax25_supervisory_frame_t *frame, size_t *len, uint8_t *err);
 
+/*============================================================================*/
+/* XID Parameter Functions                                                      */
+/*============================================================================*/
+
 /**
- * @brief Creates a new raw XID parameter with specified identifier and value.
+ * @brief Create raw XID parameter
  *
- * Allocates an XID parameter with a parameter identifier (PI) and raw byte array
- * as the parameter value (PV) for XID frames (Section 4.3.3.7).
+ * Allocates XID parameter with specified PI and raw value data.
  *
- * @param pi The parameter identifier.
- * @param pv Pointer to the parameter value bytes, or NULL if no value.
- * @param pv_len Length of the parameter value in bytes.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the new XID parameter (must be freed with its free function).
+ * @param[in]  pi     Parameter Identifier
+ * @param[in]  pv     Parameter value data (can be NULL for zero-length)
+ * @param[in]  pv_len Length of parameter value (0-255)
+ * @param[out] err    Error code: 0=success, 1=pv too long, 2=malloc fail, 3=data malloc fail
+ * @return Pointer to XID parameter, or NULL on error
  */
 ax25_xid_parameter_t* ax25_xid_raw_parameter_new(int pi, const uint8_t *pv, size_t pv_len, uint8_t *err);
 
 /**
- * @brief Encodes a raw XID parameter into a binary array.
+ * @brief Encode XID parameter to binary format
  *
- * Serializes an XID parameter into the format [PI, PL, PV], where PI is the
- * parameter identifier, PL is the parameter length, and PV is the value (Section 4.3.3.7).
+ * Serializes parameter as [PI][PL][PV] triplet.
  *
- * @param param Pointer to the XID parameter to encode.
- * @param len Pointer to a size_t where the length of the encoded data will be stored.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the encoded buffer (must be freed by caller).
+ * @param[in]  param Parameter to encode
+ * @param[out] len   Pointer to store encoded length (2 + pv_len)
+ * @param[out] err   Error code: 0=success, 1=malloc fail
+ * @return Pointer to encoded buffer, or NULL on error
  */
 uint8_t* ax25_xid_raw_parameter_encode(const ax25_xid_parameter_t *param, size_t *len, uint8_t *err);
 
 /**
- * @brief Creates a deep copy of a raw XID parameter.
+ * @brief Create deep copy of XID parameter
  *
- * Duplicates an XID parameter, including its parameter value, ensuring the copy
- * is independent (Section 4.3.3.7).
- *
- * @param param Pointer to the XID parameter to copy.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the new XID parameter (must be freed with its free function).
+ * @param[in]  param Parameter to copy
+ * @param[out] err   Error code: 0=success
+ * @return Pointer to copied parameter, or NULL on error
  */
 ax25_xid_parameter_t* ax25_xid_raw_parameter_copy(const ax25_xid_parameter_t *param, uint8_t *err);
 
 /**
- * @brief Frees a raw XID parameter and its data.
+ * @brief Free XID parameter and associated data
  *
- * Deallocates an XID parameter and its parameter value to prevent memory leaks
- * (Section 4.3.3.7).
- *
- * @param param Pointer to the XID parameter to free. If NULL, the function does nothing.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
+ * @param[in,out] param Parameter to free
+ * @param[out]    err   Error code: 0=success, 1=NULL param
  */
 void ax25_xid_raw_parameter_free(ax25_xid_parameter_t *param, uint8_t *err);
 
 /**
- * @brief Decodes an XID parameter from binary data.
+ * @brief Decode XID parameter from binary data
  *
- * Interprets a segment of XID frame data as a parameter, extracting PI, PL, and PV
- * fields (Section 4.3.3.7).
+ * Parses PI, PL, and PV from data buffer.
  *
- * @param data Pointer to the binary data containing the parameter.
- * @param len Length of the available data in bytes.
- * @param consumed Pointer to a size_t where the number of bytes consumed will be stored.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the decoded XID parameter (must be freed with its free function).
+ * @param[in]  data     Binary parameter data
+ * @param[in]  len      Length of available data
+ * @param[out] consumed Pointer to store bytes consumed (2 + PL)
+ * @param[out] err      Error code: 0=success, 1=too short, 2=PL exceeds data, 3=malloc fail
+ * @return Pointer to decoded parameter, or NULL on error
  */
 ax25_xid_parameter_t* ax25_xid_parameter_decode(const uint8_t *data, size_t len, size_t *consumed, uint8_t *err);
 
 /**
- * @brief Decodes an Exchange Identification (XID) frame from binary data.
+ * @brief Decode complete XID frame from binary data
  *
- * Interprets an XID frame, extracting the function identifier (FI), group identifier (GI),
- * group length (GL), and parameters (Section 4.3.3.7).
+ * Parses FI, GI, GL, and all parameter fields.
  *
- * @param header Pointer to the AX.25 frame header.
- * @param pf Boolean indicating the poll/final bit.
- * @param data Pointer to the data containing XID fields and parameters.
- * @param len Length of the data in bytes (must be at least 4).
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the decoded XID frame (must be freed with ax25_frame_free).
+ * @param[in,out] header Frame header
+ * @param[in]     pf     Poll/Final bit
+ * @param[in]     data   Data following control byte (XID info field)
+ * @param[in]     len    Length of XID info field
+ * @param[out]    err    Error code: 0=success, 1=too short, 2=length mismatch, 3=param decode fail, 4=realloc fail, 5=frame malloc fail
+ * @return Pointer to XID frame structure, or NULL on error
  */
 ax25_exchange_identification_frame_t* ax25_exchange_identification_frame_decode(ax25_frame_header_t *header, bool pf, const uint8_t *data, size_t len,
         uint8_t *err);
 
 /**
- * @brief Encodes an Exchange Identification (XID) frame into a binary array.
+ * @brief Encode XID frame to binary format
  *
- * Serializes an XID frame, including the control byte, FI, GI, GL, and parameters
- * (Section 4.3.3.7).
- *
- * @param frame Pointer to the XID frame to encode.
- * @param len Pointer to a size_t where the length of the encoded data will be stored.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the encoded buffer (must be freed by caller).
+ * @param[in]  frame XID frame to encode
+ * @param[out] len   Pointer to store encoded length
+ * @param[out] err   Error code: 0=success, 1=malloc fail
+ * @return Pointer to encoded buffer (control + FI + GI + GL + parameters), or NULL on error
  */
 uint8_t* ax25_exchange_identification_frame_encode(const ax25_exchange_identification_frame_t *frame, size_t *len, uint8_t *err);
 
+/*============================================================================*/
+/* Test Frame Functions                                                         */
+/*============================================================================*/
+
 /**
- * @brief Decodes a Test (TEST) frame from binary data.
+ * @brief Decode TEST frame from binary data
  *
- * Interprets a TEST frame, extracting the payload for link connectivity testing
- * (Section 6.3.3.8).
- *
- * @param header Pointer to the AX.25 frame header.
- * @param pf Boolean indicating the poll/final bit.
- * @param data Pointer to the test payload data.
- * @param len Length of the payload data in bytes.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the decoded TEST frame (must be freed with ax25_frame_free).
+ * @param[in,out] header Frame header
+ * @param[in]     pf     Poll/Final bit
+ * @param[in]     data   Test payload data
+ * @param[in]     len    Length of payload
+ * @param[out]    err    Error code: 0=success, 1=malloc fail, 2=payload malloc fail
+ * @return Pointer to TEST frame structure, or NULL on error
  */
 ax25_test_frame_t* ax25_test_frame_decode(ax25_frame_header_t *header, bool pf, const uint8_t *data, size_t len, uint8_t *err);
 
 /**
- * @brief Encodes a Test (TEST) frame into a binary array.
+ * @brief Encode TEST frame to binary format
  *
- * Serializes a TEST frame, including the control byte and test payload (Section 6.3.3.8).
- *
- * @param frame Pointer to the TEST frame to encode.
- * @param len Pointer to a size_t where the length of the encoded data will be stored.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the encoded buffer (must be freed by caller).
+ * @param[in]  frame TEST frame to encode
+ * @param[out] len   Pointer to store encoded length (1 + payload_len)
+ * @param[out] err   Error code: 0=success, 1=malloc fail
+ * @return Pointer to encoded buffer, or NULL on error
  */
 uint8_t* ax25_test_frame_encode(const ax25_test_frame_t *frame, size_t *len, uint8_t *err);
 
+/*============================================================================*/
+/* XID Convenience Constructors                                                 */
+/*============================================================================*/
+
 /**
- * @brief Creates an XID parameter for Class of Procedures (COP).
+ * @brief Create Class of Procedures XID parameter
  *
- * Constructs an XID parameter for Class of Procedures with specified flags and
- * reserved field (Section 4.3.3.7).
+ * Constructs PI=2 parameter negotiating operational mode.
  *
- * @param a_flag Boolean flag for procedure A.
- * @param b_flag Boolean flag for procedure B.
- * @param c_flag Boolean flag for procedure C.
- * @param d_flag Boolean flag for procedure D.
- * @param e_flag Boolean flag for procedure E.
- * @param f_flag Boolean flag for procedure F.
- * @param g_flag Boolean flag for procedure G.
- * @param reserved Reserved field value (8 bits).
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the new XID parameter (must be freed with its free function).
+ * @section COP_Bits
+ * Byte 0 bits:
+ * - 0x01 (a): Half-duplex
+ * - 0x02 (b): Full-duplex
+ * - 0x04 (c): Reserved
+ * - 0x08 (d): Reserved
+ * - 0x10 (e): Reserved
+ * - 0x20 (f): Reserved
+ * - 0x40 (g): Reserved
+ * - 0x80: Reserved
+ *
+ * @param[in]  a_flag    Half-duplex flag
+ * @param[in]  b_flag    Full-duplex flag
+ * @param[in]  c_flag    Reserved
+ * @param[in]  d_flag    Reserved
+ * @param[in]  e_flag    Reserved
+ * @param[in]  f_flag    Reserved
+ * @param[in]  g_flag    Reserved
+ * @param[in]  reserved  Reserved byte value
+ * @param[out] err       Error code
+ * @return Pointer to XID parameter, or NULL on error
  */
 ax25_xid_parameter_t* ax25_xid_class_of_procedures_new(bool a_flag, bool b_flag, bool c_flag, bool d_flag, bool e_flag, bool f_flag, bool g_flag,
         uint8_t reserved, uint8_t *err);
 
 /**
- * @brief Creates an XID parameter for HDLC Optional Functions.
+ * @brief Create HDLC Optional Functions XID parameter
  *
- * Constructs an XID parameter for HDLC optional functions with specified flags
- * and reserved fields (Section 4.3.3.7).
+ * Constructs PI=3 parameter negotiating protocol features.
  *
- * @param rnr Boolean flag for Receiver Not Ready.
- * @param rej Boolean flag for Reject.
- * @param srej Boolean flag for Selective Reject.
- * @param sabm Boolean flag for Set Asynchronous Balanced Mode.
- * @param sabme Boolean flag for SABM Extended.
- * @param dm Boolean flag for Disconnect Mode.
- * @param disc Boolean flag for Disconnect.
- * @param ua Boolean flag for Unnumbered Acknowledge.
- * @param frmr Boolean flag for Frame Reject.
- * @param ui Boolean flag for Unnumbered Information.
- * @param xid Boolean flag for Exchange Identification.
- * @param test Boolean flag for Test.
- * @param modulo8 Boolean flag for modulo 8 operation.
- * @param modulo128 Boolean flag for modulo 128 operation.
- * @param res1 Boolean reserved flag 1.
- * @param res2 Boolean reserved flag 2.
- * @param res3 Boolean reserved flag 3.
- * @param res4 Boolean reserved flag 4.
- * @param res5 Boolean reserved flag 5.
- * @param res6 Boolean reserved flag 6.
- * @param res7 Boolean reserved flag 7.
- * @param reserved Reserved field value (8 bits).
- * @param ext Boolean flag for extension bit.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the new XID parameter (must be freed with its free function).
+ * @section HDLC_Opt_Bits
+ * Byte 0: RNR(0x01), REJ(0x02), SREJ(0x04), SABM(0x08), SABME(0x10), DM(0x20), DISC(0x40), UA(0x80)
+ * Byte 1: FRMR(0x01), UI(0x02), XID(0x04), TEST(0x08), MOD8(0x10), MOD128(0x20)
+ *
+ * @param[in]  rnr       Receiver Not Ready supported
+ * @param[in]  rej       Implicit Reject supported
+ * @param[in]  srej      Selective Reject supported
+ * @param[in]  sabm      SABM supported
+ * @param[in]  sabme     SABME supported
+ * @param[in]  dm        DM supported
+ * @param[in]  disc      DISC supported
+ * @param[in]  ua        UA supported
+ * @param[in]  frmr      FRMR supported
+ * @param[in]  ui        UI supported
+ * @param[in]  xid       XID supported
+ * @param[in]  test      TEST supported
+ * @param[in]  modulo8   Modulo-8 supported
+ * @param[in]  modulo128 Modulo-128 supported
+ * @param[in]  res1-res7 Reserved flags
+ * @param[in]  reserved  Reserved byte
+ * @param[in]  ext       Extension bit
+ * @param[out] err       Error code
+ * @return Pointer to XID parameter, or NULL on error
  */
 ax25_xid_parameter_t* ax25_xid_hdlc_optional_functions_new(bool rnr, bool rej, bool srej, bool sabm, bool sabme, bool dm, bool disc, bool ua, bool frmr,
-bool ui, bool xid, bool test, bool modulo8, bool modulo128, bool res1, bool res2, bool res3, bool res4, bool res5, bool res6, bool res7, uint8_t reserved,
-bool ext, uint8_t *err);
+        bool ui, bool xid, bool test, bool modulo8, bool modulo128, bool res1, bool res2, bool res3, bool res4, bool res5, bool res6, bool res7,
+        uint8_t reserved, bool ext, uint8_t *err);
 
 /**
- * @brief Creates an XID parameter with a big-endian integer value.
+ * @brief Create big-endian integer XID parameter
  *
- * Constructs an XID parameter with a specified PI and a big-endian encoded integer
- * value for parameters like I-field length or window size (Section 4.3.3.7).
+ * Constructs parameter with integer value encoded in big-endian format.
+ * Used for PI=6 (N1), PI=8 (k), PI=9 (T1), PI=10 (N2), PI=11 (T2).
  *
- * @param pi The parameter identifier.
- * @param value The integer value to encode.
- * @param length The number of bytes for the value (1, 2, or 4).
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the new XID parameter (must be freed with its free function).
+ * @param[in]  pi     Parameter Identifier
+ * @param[in]  value  Integer value to encode
+ * @param[in]  length Number of bytes (1, 2, or 4)
+ * @param[out] err    Error code: 0=success, 1=encode fail
+ * @return Pointer to XID parameter, or NULL on error
  */
 ax25_xid_parameter_t* ax25_xid_big_endian_new(int pi, uint32_t value, size_t length, uint8_t *err);
 
+/*============================================================================*/
+/* Segmentation Functions                                                       */
+/*============================================================================*/
+
 /**
- * @brief Segments a payload into info fields for AX.25 frames.
+ * @brief Segment payload into multiple info fields
  *
- * Splits a payload into multiple segments suitable for AX.25 frames, respecting
- * the maximum segment size (n1) (Section 6.9).
+ * Splits large payload into segments suitable for individual I-frames.
+ * Per AX.25 v2.2 Appendix C6.
  *
- * @param payload Pointer to the payload data to segment.
- * @param payload_len Length of the payload in bytes.
- * @param n1 Maximum size of each segment in bytes.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @param num_segments Pointer to store the number of segments created.
- * @return Pointer to an array of segmented info fields (must be freed with ax25_free_segmented_info).
+ * @section Segment_Structure
+ * First segment: [PID=0x08][Control=0x80|seq][TotalLength 2bytes][data...]
+ * Other segments: [PID=0x08][Control=0x00/0x40|seq][data...]
+ *
+ * @param[in]  payload      Data to segment
+ * @param[in]  payload_len  Length of payload (max 65535)
+ * @param[in]  n1           Maximum info field size per segment
+ * @param[out] err          Error code: 0=success, 1=invalid input, 2=n1 too small, 3=calculation error, 4=overflow, 5=malloc fail, 6=realloc fail, 7=too many segments
+ * @param[out] num_segments Pointer to store number of segments created
+ * @return Pointer to array of segments (caller must free with ax25_free_segmented_info), or NULL on error
  */
 ax25_segmented_info_t* ax25_segment_info_fields(const uint8_t *payload, size_t payload_len, size_t n1, uint8_t *err, size_t *num_segments);
 
 /**
- * @brief Reassembles the original payload from segmented info fields.
+ * @brief Reassemble payload from segmented info fields
  *
- * Combines segmented info fields into the original payload (Section 6.9).
+ * Combines multiple segments into original payload. Validates sequence
+ * numbers and completeness.
  *
- * @param info_fields Array of segmented info fields.
- * @param num_info_fields Number of info fields in the array.
- * @param reassembled_len Pointer to store the length of the reassembled payload.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the reassembled payload (must be freed by caller).
+ * @param[in]  info_fields      Array of segmented info fields
+ * @param[in]  num_info_fields  Number of segments
+ * @param[out] reassembled_len  Pointer to store reassembled length
+ * @param[out] err              Error code: 0=success, 1=malloc fail, 2=invalid format, 3=first segment error, 4=no first segment, 5=missing segment, 6=count mismatch, 7=malloc fail, 8=length mismatch
+ * @return Pointer to reassembled payload (caller must free), or NULL on error
  */
 uint8_t* ax25_reassemble_info_fields(ax25_segmented_info_t *info_fields, size_t num_info_fields, size_t *reassembled_len, uint8_t *err);
 
 /**
- * @brief Frees the memory allocated for segmented info fields.
+ * @brief Free segmented info array
  *
- * Deallocates an array of segmented info fields to prevent memory leaks (Section 6.9).
- *
- * @param segments Array of segmented info fields to free.
- * @param num_segments Number of segments in the array.
+ * @param[in,out] segments     Array to free
+ * @param[in]     num_segments Number of segments in array
  */
 void ax25_free_segmented_info(ax25_segmented_info_t *segments, size_t num_segments);
 
+/*============================================================================*/
+/* Utility Functions                                                            */
+/*============================================================================*/
+
 /**
- * @brief Determines if modulo 128 sequence numbering is used.
+ * @brief Determine if modulo-128 is used based on SABME/response exchange
  *
- * Checks if a SABME frame and its response indicate the use of modulo 128
- * sequence numbering (Section 4.3).
- *
- * @param sabme Pointer to the SABME frame.
- * @param response Pointer to the response frame.
- * @return True if modulo 128 is used, false otherwise.
+ * @param[in] sabme  SABME frame sent
+ * @param[in] response Response frame received (UA, DM, or FRMR)
+ * @return true if modulo-128 negotiated, false for modulo-8
  */
 bool is_modulo128_used(ax25_frame_t *sabme, ax25_frame_t *response);
 
 /**
- * @brief Creates an XID parameter with raw data.
- *
- * Allocates and initializes an XID parameter with the given parameter identifier
- * and raw parameter value (Section 4.3.3.7).
- *
- * @param pi Parameter Identifier (e.g., 2 for Class of Procedures, 3 for HDLC Optional Functions).
- * @param pv Pointer to the parameter value data.
- * @param pv_len Length of the parameter value in bytes.
- * @param err Pointer to store error code (0 on success, non-zero on failure).
- * @return Pointer to the new XID parameter (must be freed with its free function).
- */
-ax25_xid_parameter_t* ax25_xid_parameter_create(int pi, const uint8_t *pv, size_t pv_len, uint8_t *err);
-
-/**
- * @brief Validate AX.25 frame meets minimum size requirement
+ * @brief Validate frame meets minimum size requirement
  *
  * Per AX.25 v2.2 Section 3.9: minimum 136 bits (17 bytes)
- * Minimum: Dest(7) + Source(7) + Control(1) + FCS(2) = 17 bytes
+ * Minimum without FCS: Dest(7) + Source(7) + Control(1) = 15 bytes
+ * Minimum with FCS: 15 + FCS(2) = 17 bytes
  *
- * @param frame_len Length of the frame in bytes
+ * @param[in] frame_len Frame length in bytes
  * @return true if frame meets minimum size, false otherwise
  */
 bool ax25_validate_frame_size(size_t frame_len);
@@ -1198,91 +1281,77 @@ bool ax25_validate_frame_size(size_t frame_len);
 /**
  * @brief Validate address field structure
  *
- * Checks extension bits and field alignment according to AX.25 v2.2 Section 3.12
- * Validates that:
- * - At least 2 addresses present (destination + source)
+ * Checks per AX.25 v2.2 Section 3.12:
+ * - At least 2 addresses (destination + source)
  * - Maximum 10 addresses (dest + source + 8 repeaters)
  * - Proper extension bit termination
- * - No incomplete addresses
+ * - Complete addresses (no truncation)
  *
- * @param addr_field Pointer to the address field data
- * @param len Length of available data
- * @param addr_field_len Output pointer to store validated address field length
- * @return true if address field is valid, false otherwise
+ * @param[in]  addr_field      Pointer to address field data
+ * @param[in]  len             Length of available data
+ * @param[out] addr_field_len  Output: validated address field length
+ * @return true if valid structure, false otherwise
  */
 bool ax25_validate_address_field(const uint8_t *addr_field, size_t len, size_t *addr_field_len);
 
 /**
- * @brief Validate SSID value
+ * @brief Validate SSID value range
  *
- * Per AX.25 v2.2 Section 3.12.2: SSID must be in range 0-15 (4 bits)
+ * Per AX.25 v2.2 Section 3.12.2: SSID is 4-bit field (0-15)
  *
- * @param ssid SSID value to validate
- * @return true if SSID is valid (0-15), false otherwise
+ * @param[in] ssid SSID value to validate
+ * @return true if valid (0-15), false otherwise
  */
 bool ax25_validate_ssid(int ssid);
 
 /**
  * @brief Reverse repeater path for response frames
  *
- * Per AX.25 v2.2 Section 3.12.4: When responding to a frame received through
- * digipeaters, the repeater path must be reversed and H-bits reset.
- * This allows the response to follow the same path back to the originator.
+ * Per AX.25 v2.2 Section 3.12.4: When responding through digipeaters,
+ * the path must be reversed and H-bits cleared.
  *
- * Example: If received path is DIGI1*,DIGI2*,DIGI3 (where * = H-bit set)
- * The reversed path becomes DIGI3,DIGI2,DIGI1 with all H-bits cleared
+ * Example: Received path DIGI1*,DIGI2*,DIGI3 becomes DIGI3,DIGI2,DIGI1
  *
- * @param header Pointer to frame header containing repeater path to reverse
+ * @param[in,out] header Frame header containing path to reverse
  */
 void ax25_reverse_repeater_path(ax25_frame_header_t *header);
 
 /**
- * @brief Check if frame has been digipeated through specified station
+ * @brief Check if frame has been digipeated by specified station
  *
- * Per AX.25 v2.2 Section 3.12.3: The H-bit (has-been-repeated bit) in a
- * digipeater address indicates whether that digipeater has already processed
- * the frame. This function checks if a specific station appears in the path
- * with its H-bit set.
+ * Examines repeater path for matching callsign with H-bit set.
  *
- * @param header Pointer to frame header to check
- * @param our_call Our callsign to search for
- * @param our_ssid Our SSID to search for
- * @return true if frame has been digipeated by the specified station, false otherwise
+ * @param[in] header    Frame header to check
+ * @param[in] our_call  Callsign to search for
+ * @param[in] our_ssid  SSID to search for (0-15)
+ * @return true if frame was digipeated by this station, false otherwise
  */
 bool ax25_frame_digipeated_by(const ax25_frame_header_t *header, const char *our_call, uint8_t our_ssid);
 
 /**
  * @brief Find next unused digipeater in path
  *
- * Per AX.25 v2.2 Section 3.12.3: Digipeaters process frames sequentially.
- * This function finds the first digipeater in the path whose H-bit is not set,
- * indicating it has not yet processed the frame.
+ * Per AX.25 v2.2 Section 3.12.3: Digipeaters process sequentially.
+ * Returns index of first repeater with H-bit = 0.
  *
- * The digipeater path is processed left to right. When a digipeater receives
- * a frame, it checks if it matches the next unused digipeater in the path.
- *
- * @param header Pointer to frame header to search
+ * @param[in] header Frame header to search
  * @return Index of next unused digipeater (0-7), or -1 if all used or no path
  */
 int8_t ax25_find_next_digi(const ax25_frame_header_t *header);
 
 /**
- * @brief Simple digipeater function for frame forwarding
+ * @brief Simple digipeater frame forwarding function
  *
- * Per AX.25 v2.2 Section 3.12.3: A digipeater examines the address field
- * of each frame. If the digipeater's address matches the next unused address
- * in the path, it:
- * 1. Sets the H-bit for that address
- * 2. Retransmits the frame
+ * Implements basic digipeater operation per AX.25 v2.2 Section 3.12.3:
+ * 1. Decodes frame
+ * 2. Finds next unused digipeater slot
+ * 3. If matches my_call/my_ssid, sets H-bit and retransmits
  *
- * This implements a basic digipeater that can run on a separate node.
- * For more complex routing or selective digipeating, extend this function.
- *
- * @param frame_data Pointer to received AX.25 frame data
- * @param len Length of frame data
- * @param my_call Our digipeater callsign
- * @param my_ssid Our digipeater SSID
- * @param retransmit Callback function to retransmit the modified frame
+ * @param[in,out] frame_data  Frame buffer (modified if digipeated)
+ * @param[in]     len         Frame length
+ * @param[in]     my_call     This digipeater's callsign
+ * @param[in]     my_ssid     This digipeater's SSID
+ * @param[in]     retransmit  Callback to transmit modified frame
  */
 void ax25_digipeat_frame(uint8_t *frame_data, size_t len, const char *my_call, uint8_t my_ssid, void (*retransmit)(uint8_t*, size_t));
 
