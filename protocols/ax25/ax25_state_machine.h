@@ -152,33 +152,33 @@ typedef void (*ax25_protocol_handler_t)(void *user_data, uint8_t *data, size_t l
  */
 typedef struct {
     /* Frame counters - 32-bit for high volume handling */
-    uint32_t iframe_sent;           /**< Total I-frames transmitted */
-    uint32_t iframe_received;       /**< Total I-frames received */
-    uint32_t iframe_retransmitted;  /**< I-frames retransmitted due to error recovery */
-    uint32_t sframe_sent;           /**< Total S-frames (RR/RNR/REJ/SREJ) transmitted */
-    uint32_t sframe_received;       /**< Total S-frames received */
-    uint32_t uframe_sent;           /**< Total U-frames transmitted */
-    uint32_t uframe_received;       /**< Total U-frames received */
+    uint32_t iframe_sent; /**< Total I-frames transmitted */
+    uint32_t iframe_received; /**< Total I-frames received */
+    uint32_t iframe_retransmitted; /**< I-frames retransmitted due to error recovery */
+    uint32_t sframe_sent; /**< Total S-frames (RR/RNR/REJ/SREJ) transmitted */
+    uint32_t sframe_received; /**< Total S-frames received */
+    uint32_t uframe_sent; /**< Total U-frames transmitted */
+    uint32_t uframe_received; /**< Total U-frames received */
 
     /* Error counters - 16-bit sufficient for error tracking */
-    uint16_t fcs_errors;            /**< Frames discarded due to FCS mismatch */
-    uint16_t aborts;                /**< Frame abort sequences received */
-    uint16_t overruns;              /**< Receiver buffer overruns */
-    uint16_t crc_errors;            /**< CRC calculation errors */
-    uint16_t frmr_sent;             /**< FRMR frames transmitted */
-    uint16_t frmr_received;         /**< FRMR frames received */
+    uint16_t fcs_errors; /**< Frames discarded due to FCS mismatch */
+    uint16_t aborts; /**< Frame abort sequences received */
+    uint16_t overruns; /**< Receiver buffer overruns */
+    uint16_t crc_errors; /**< CRC calculation errors */
+    uint16_t frmr_sent; /**< FRMR frames transmitted */
+    uint16_t frmr_received; /**< FRMR frames received */
 
     /* Performance metrics */
-    uint16_t t1_expirations;        /**< T1 acknowledgment timer expirations */
-    uint16_t retries;               /**< Total retransmission attempts */
-    uint32_t bytes_sent;            /**< Total payload bytes transmitted */
-    uint32_t bytes_received;        /**< Total payload bytes received */
+    uint16_t t1_expirations; /**< T1 acknowledgment timer expirations */
+    uint16_t retries; /**< Total retransmission attempts */
+    uint32_t bytes_sent; /**< Total payload bytes transmitted */
+    uint32_t bytes_received; /**< Total payload bytes received */
 
     /* Current state snapshot */
-    uint8_t current_vs;             /**< Current send state variable V(S) */
-    uint8_t current_vr;             /**< Current receive state variable V(R) */
-    uint8_t current_va;             /**< Current acknowledge state variable V(A) */
-    uint8_t tx_queue_depth;         /**< Current transmit queue occupancy */
+    uint8_t current_vs; /**< Current send state variable V(S) */
+    uint8_t current_vr; /**< Current receive state variable V(R) */
+    uint8_t current_va; /**< Current acknowledge state variable V(A) */
+    uint8_t tx_queue_depth; /**< Current transmit queue occupancy */
 } ax25_statistics_t;
 
 /*============================================================================*/
@@ -198,10 +198,10 @@ typedef struct {
  * appropriate handler based on PID matching.
  */
 typedef struct {
-    uint8_t pid;                      /**< Protocol Identifier for this handler */
-    ax25_protocol_handler_t handler;  /**< Handler callback function */
-    void *user_data;                  /**< Context pointer passed to handler */
-    bool active;                      /**< Entry valid flag */
+    uint8_t pid; /**< Protocol Identifier for this handler */
+    ax25_protocol_handler_t handler; /**< Handler callback function */
+    void *user_data; /**< Context pointer passed to handler */
+    bool active; /**< Entry valid flag */
 } ax25_protocol_entry_t;
 
 /*============================================================================*/
@@ -235,14 +235,14 @@ typedef struct {
  * - Any -> DISCONNECTED: DL-DISCONNECT request or excessive retries
  */
 typedef enum {
-    AX25_STATE_DISCONNECTED = 0,     /**< No connection established */
-    AX25_STATE_AWAITING_CONNECTION,  /**< Sent SABM/SABME, awaiting UA */
-    AX25_STATE_AWAITING_RELEASE,     /**< Sent DISC, awaiting UA/DM */
-    AX25_STATE_CONNECTED,            /**< Information transfer phase */
-    AX25_STATE_TIMER_RECOVERY,       /**< Retransmitting after T1 expiry */
-    AX25_STATE_AWAITING_SABM,        /**< Received SABM, sending UA */
-    AX25_STATE_AWAITING_DISC,        /**< Received DISC, sending UA */
-    AX25_STATE_FRAME_REJECT          /**< Protocol error, FRMR sent */
+    AX25_STATE_DISCONNECTED = 0, /**< No connection established */
+    AX25_STATE_AWAITING_CONNECTION, /**< Sent SABM/SABME, awaiting UA */
+    AX25_STATE_AWAITING_RELEASE, /**< Sent DISC, awaiting UA/DM */
+    AX25_STATE_CONNECTED, /**< Information transfer phase */
+    AX25_STATE_TIMER_RECOVERY, /**< Retransmitting after T1 expiry */
+    AX25_STATE_AWAITING_SABM, /**< Received SABM, sending UA */
+    AX25_STATE_AWAITING_DISC, /**< Received DISC, sending UA */
+    AX25_STATE_FRAME_REJECT /**< Protocol error, FRMR sent */
 } ax25_link_state_t;
 
 /*============================================================================*/
@@ -267,10 +267,10 @@ typedef enum {
  * Window is closed when outstanding >= k (window size).
  */
 typedef struct {
-    uint8_t vs;   /**< Send state variable V(S) - next transmit sequence number */
-    uint8_t vr;   /**< Receive state variable V(R) - expected receive sequence number */
-    uint8_t va;   /**< Acknowledge state variable V(A) - oldest unacknowledged frame */
-    uint8_t mod;  /**< Modulus: 8 (standard) or 128 (extended) */
+    uint8_t vs; /**< Send state variable V(S) - next transmit sequence number */
+    uint8_t vr; /**< Receive state variable V(R) - expected receive sequence number */
+    uint8_t va; /**< Acknowledge state variable V(A) - oldest unacknowledged frame */
+    uint8_t mod; /**< Modulus: 8 (standard) or 128 (extended) */
 } ax25_state_vars_t;
 
 /*============================================================================*/
@@ -300,12 +300,12 @@ typedef struct {
  * - N1: 256 bytes
  */
 typedef struct {
-    uint16_t t1;  /**< T1: Acknowledgment timer (10ms units) */
-    uint16_t t2;  /**< T2: Response delay timer (10ms units) */
-    uint16_t t3;  /**< T3: Inactive link timer (10ms units) */
-    uint8_t n2;   /**< N2: Maximum number of retries */
-    uint8_t k;    /**< k: Window size (max outstanding I-frames) */
-    uint16_t n1;  /**< N1: Maximum I-field length (octets) */
+    uint16_t t1; /**< T1: Acknowledgment timer (10ms units) */
+    uint16_t t2; /**< T2: Response delay timer (10ms units) */
+    uint16_t t3; /**< T3: Inactive link timer (10ms units) */
+    uint8_t n2; /**< N2: Maximum number of retries */
+    uint8_t k; /**< k: Window size (max outstanding I-frames) */
+    uint16_t n1; /**< N1: Maximum I-field length (octets) */
 } ax25_timers_t;
 
 /*============================================================================*/
@@ -333,12 +333,12 @@ typedef struct {
 #define AX25_MAX_QUEUE_SIZE 16 /**< Maximum queued frames for retransmission */
 
 typedef struct {
-    uint8_t *frames[AX25_MAX_QUEUE_SIZE];  /**< Encoded frame data pointers */
-    size_t lengths[AX25_MAX_QUEUE_SIZE];   /**< Frame length for each entry */
-    uint8_t ns[AX25_MAX_QUEUE_SIZE];       /**< N(S) sequence number tracking */
-    uint8_t head;                          /**< Queue head index (oldest frame) */
-    uint8_t tail;                          /**< Queue tail index (newest frame) */
-    uint8_t count;                         /**< Current queue occupancy */
+    uint8_t *frames[AX25_MAX_QUEUE_SIZE]; /**< Encoded frame data pointers */
+    size_t lengths[AX25_MAX_QUEUE_SIZE]; /**< Frame length for each entry */
+    uint8_t ns[AX25_MAX_QUEUE_SIZE]; /**< N(S) sequence number tracking */
+    uint8_t head; /**< Queue head index (oldest frame) */
+    uint8_t tail; /**< Queue tail index (newest frame) */
+    uint8_t count; /**< Current queue occupancy */
 } ax25_frame_queue_t;
 
 /*============================================================================*/
@@ -454,10 +454,10 @@ typedef struct {
  * Fallback to lower capability if either station cannot support higher.
  */
 typedef enum {
-    AX25_REJ_MODE_NONE = 0,    /**< No reject mode (uninitialized) */
-    AX25_REJ_MODE_REJ,         /**< Implicit reject (go-back-N) only */
-    AX25_REJ_MODE_SREJ,        /**< Selective reject only */
-    AX25_REJ_MODE_SREJ_REJ     /**< Selective reject with REJ fallback (default) */
+    AX25_REJ_MODE_NONE = 0, /**< No reject mode (uninitialized) */
+    AX25_REJ_MODE_REJ, /**< Implicit reject (go-back-N) only */
+    AX25_REJ_MODE_SREJ, /**< Selective reject only */
+    AX25_REJ_MODE_SREJ_REJ /**< Selective reject with REJ fallback (default) */
 } ax25_rej_mode_t;
 
 /*============================================================================*/
@@ -477,13 +477,13 @@ typedef enum {
  * Used to set T1 = 2 * RTT + margin.
  */
 typedef struct {
-    uint16_t test_sent;         /**< TEST commands transmitted */
-    uint16_t test_received;     /**< TEST responses received */
-    uint16_t test_lost;         /**< TEST timeouts (no response) */
-    uint32_t last_test_tick;    /**< Timestamp of last TEST command (10ms) */
-    uint32_t rtt_sum;           /**< Sum of all RTT measurements (10ms ticks) */
-    uint16_t rtt_count;         /**< Number of valid RTT measurements */
-    uint8_t test_sequence;      /**< TEST sequence number for tracking */
+    uint16_t test_sent; /**< TEST commands transmitted */
+    uint16_t test_received; /**< TEST responses received */
+    uint16_t test_lost; /**< TEST timeouts (no response) */
+    uint32_t last_test_tick; /**< Timestamp of last TEST command (10ms) */
+    uint32_t rtt_sum; /**< Sum of all RTT measurements (10ms ticks) */
+    uint16_t rtt_count; /**< Number of valid RTT measurements */
+    uint8_t test_sequence; /**< TEST sequence number for tracking */
 } ax25_test_stats_t;
 
 /*============================================================================*/
@@ -514,71 +514,71 @@ typedef struct {
  */
 typedef struct {
     /* Core state machine */
-    ax25_link_state_t state;        /**< Current link state */
-    ax25_state_vars_t vars;         /**< Sequence number state variables */
-    ax25_timers_t timers;           /**< Timer configuration and parameters */
-    ax25_frame_header_t peer_addr;  /**< Connected station address */
-    ax25_frame_queue_t tx_queue;    /**< Unacknowledged I-frame queue */
-    ax25_callbacks_t callbacks;     /**< Upper layer callback interface */
-    void *user_data;                /**< Upper layer context pointer */
+    ax25_link_state_t state; /**< Current link state */
+    ax25_state_vars_t vars; /**< Sequence number state variables */
+    ax25_timers_t timers; /**< Timer configuration and parameters */
+    ax25_frame_header_t peer_addr; /**< Connected station address */
+    ax25_frame_queue_t tx_queue; /**< Unacknowledged I-frame queue */
+    ax25_callbacks_t callbacks; /**< Upper layer callback interface */
+    void *user_data; /**< Upper layer context pointer */
 
     /* Timer tracking (10ms tick resolution) */
-    uint32_t t1_start_tick;  /**< T1 start timestamp (0 = stopped) */
-    uint32_t t2_start_tick;  /**< T2 start timestamp (0 = stopped) */
-    uint32_t t3_start_tick;  /**< T3 start timestamp (0 = stopped) */
-    uint8_t retry_count;     /**< Current retry counter for T1 expiry */
+    uint32_t t1_start_tick; /**< T1 start timestamp (0 = stopped) */
+    uint32_t t2_start_tick; /**< T2 start timestamp (0 = stopped) */
+    uint32_t t3_start_tick; /**< T3 start timestamp (0 = stopped) */
+    uint8_t retry_count; /**< Current retry counter for T1 expiry */
 
     /* Flow control state */
-    bool peer_busy;          /**< Remote station in busy condition (RNR) */
-    bool local_busy;         /**< Local station in busy condition */
-    uint32_t rnr_start_tick;  /**< Time when peer busy was detected */
+    bool peer_busy; /**< Remote station in busy condition (RNR) */
+    bool local_busy; /**< Local station in busy condition */
+    uint32_t rnr_start_tick; /**< Time when peer busy was detected */
 
     /* Address and negotiation */
-    ax25_address_t peer;      /**< Peer address (redundant with peer_addr) */
-    ax25_negotiated_params_t params;  /**< XID negotiated parameters */
-    uint16_t t3_timeout;      /**< T3 timeout value (10ms units) */
+    ax25_address_t peer; /**< Peer address (redundant with peer_addr) */
+    ax25_negotiated_params_t params; /**< XID negotiated parameters */
+    uint16_t t3_timeout; /**< T3 timeout value (10ms units) */
 
     /* Duplex mode */
-    bool full_duplex;        /**< Full-duplex operation enabled */
+    bool full_duplex; /**< Full-duplex operation enabled */
 
     /* Selective Reject state per Section 6.4.4 */
-    ax25_rej_mode_t rej_mode;       /**< Negotiated error recovery mode */
-    bool srej_exception;            /**< SREJ recovery in progress */
-    uint8_t srej_first_missing;     /**< First missing frame sequence number */
-    uint8_t srej_count;             /**< Number of pending SREJ conditions */
-    uint8_t srej_max;               /**< Maximum simultaneous SREJ (typically 1) */
-    uint8_t srej_bitmap[16];        /**< Bitmap of frames with pending SREJ */
+    ax25_rej_mode_t rej_mode; /**< Negotiated error recovery mode */
+    bool srej_exception; /**< SREJ recovery in progress */
+    uint8_t srej_first_missing; /**< First missing frame sequence number */
+    uint8_t srej_count; /**< Number of pending SREJ conditions */
+    uint8_t srej_max; /**< Maximum simultaneous SREJ (typically 1) */
+    uint8_t srej_bitmap[16]; /**< Bitmap of frames with pending SREJ */
 
     /* Implicit Reject state */
-    bool rej_exception;             /**< REJ recovery in progress */
+    bool rej_exception; /**< REJ recovery in progress */
 
     /* SREJ frame buffering per Section 6.4.4.2 */
-    uint8_t srej_buffer[AX25_MAX_QUEUE_SIZE][256];  /**< Buffered out-of-seq frames */
-    uint8_t srej_buffer_len[AX25_MAX_QUEUE_SIZE];   /**< Buffered frame lengths */
-    uint8_t srej_buffer_ns[AX25_MAX_QUEUE_SIZE];    /**< Buffered frame N(S) values */
-    uint8_t srej_buffer_count;                      /**< Number of buffered frames */
+    uint8_t srej_buffer[AX25_MAX_QUEUE_SIZE][256]; /**< Buffered out-of-seq frames */
+    uint8_t srej_buffer_len[AX25_MAX_QUEUE_SIZE]; /**< Buffered frame lengths */
+    uint8_t srej_buffer_ns[AX25_MAX_QUEUE_SIZE]; /**< Buffered frame N(S) values */
+    uint8_t srej_buffer_count; /**< Number of buffered frames */
 
     /* FRMR state per Section 4.4.5 */
-    bool frmr_pending;              /**< FRMR retransmission required */
-    uint8_t frmr_info[5];           /**< Stored FRMR info field (3 or 5 bytes) */
-    uint8_t frmr_info_len;          /**< Length of stored FRMR info */
-    uint8_t frmr_retry_count;       /**< FRMR retransmission counter */
+    bool frmr_pending; /**< FRMR retransmission required */
+    uint8_t frmr_info[5]; /**< Stored FRMR info field (3 or 5 bytes) */
+    uint8_t frmr_info_len; /**< Length of stored FRMR info */
+    uint8_t frmr_retry_count; /**< FRMR retransmission counter */
 
     /* T2 response delay state per Section 6.7.1.2 */
-    bool t2_running;             /**< T2 timer active */
-    bool t2_ack_pending;         /**< Delayed ACK pending T2 expiry */
-    uint8_t t2_pending_nr;       /**< N(R) value for delayed ACK */
+    bool t2_running; /**< T2 timer active */
+    bool t2_ack_pending; /**< Delayed ACK pending T2 expiry */
+    uint8_t t2_pending_nr; /**< N(R) value for delayed ACK */
 
     /* Link quality monitoring */
-    ax25_test_stats_t test_stats;   /**< TEST frame RTT statistics */
+    ax25_test_stats_t test_stats; /**< TEST frame RTT statistics */
 
     /* Protocol multiplexing per Section 6.5 */
-    ax25_protocol_entry_t protocols[AX25_MAX_PROTOCOL_HANDLERS];  /**< PID handlers */
-    ax25_protocol_handler_t default_handler;                      /**< Fallback handler */
-    void *default_user_data;                                      /**< Fallback context */
+    ax25_protocol_entry_t protocols[AX25_MAX_PROTOCOL_HANDLERS]; /**< PID handlers */
+    ax25_protocol_handler_t default_handler; /**< Fallback handler */
+    void *default_user_data; /**< Fallback context */
 
     /* Diagnostics */
-    ax25_statistics_t stats;  /**< Link statistics counters */
+    ax25_statistics_t stats; /**< Link statistics counters */
 } ax25_connection_t;
 
 /*============================================================================*/
@@ -987,5 +987,16 @@ void ax25_reset_statistics(ax25_connection_t *conn);
  * See FX.25 specification v0.01.06 for details.
  */
 uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t len, uint8_t pid, bool use_fx25, uint8_t channel_quality);
+
+/**
+ * @brief Free all resources held by a connection without sending any frames
+ *
+ * Call this before the ax25_connection_t goes out of scope when a full
+ * ax25_disconnect() handshake is not needed (e.g. at end of unit tests).
+ * Frees every frame currently queued in conn->tx_queue.
+ *
+ * @param conn Connection to clean up (may be NULL, then no-op)
+ */
+void ax25_connection_cleanup(ax25_connection_t *conn);
 
 #endif /* AX25_STATE_MACHINE_H_ */

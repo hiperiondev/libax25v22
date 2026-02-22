@@ -2224,3 +2224,15 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
 
     return 0;
 }
+
+void ax25_connection_cleanup(ax25_connection_t *conn) {
+    if (!conn)
+        return;
+    // Drain and free every frame still queued for retransmission
+    while (conn->tx_queue.count > 0) {
+        free(conn->tx_queue.frames[conn->tx_queue.head]);
+        conn->tx_queue.frames[conn->tx_queue.head] = NULL;
+        conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
+        conn->tx_queue.count--;
+    }
+}

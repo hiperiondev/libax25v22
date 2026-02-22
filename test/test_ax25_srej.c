@@ -27,7 +27,6 @@
 //   - Section 6.4.8:   Handling received SREJ (retransmitting a specific I-frame)
 //   - Section 6.4.7:   Handling received REJ (retransmitting from N(R) forward)
 //   - Section 6.4.4 bitmap tracking and SREJ state machine transitions
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -325,24 +324,18 @@ static int test_srej_single_missing_frame_mod8(void) {
     ax25_connection_t conn;
     force_connected(&conn, &h, 8);
 
-    // start modified part - added debug for test 1
     DEBUG_PRINT("Test 1 setup: mod=8, rej_mode=%d, srej_max=%u", conn.rej_mode, (unsigned)conn.srej_max);DEBUG_STATE("Initial state", conn.state);DEBUG_VAR("Initial V(S)", conn.vars.vs);DEBUG_VAR("Initial V(R)", conn.vars.vr);DEBUG_VAR("Initial V(A)", conn.vars.va);DEBUG_VAR("Timer k (window)", conn.timers.k);
-    // end modified part
 
     // Receive frame N(S)=0 - expected, no SREJ
     uint8_t payload0[] = { 'F', 'R', 'M', '0' };
     ax25_frame_t *f0 = make_iframe(0, 0, false, payload0, sizeof(payload0), 8);
 
-    // start modified part - debug before/after frame 0 injection
     DEBUG_PRINT("Injecting I-frame N(S)=0 (in-order, expected)");DEBUG_FRAME("frame0 payload", payload0, sizeof(payload0));
-    // end modified part
 
     ax25_process_frame(&conn, f0, 1);
     free_iframe(f0);
 
-    // start modified part - debug state after frame 0
     DEBUG_VAR("V(R) after frame 0", conn.vars.vr);DEBUG_VAR("rx_data_count after frame 0", h.rx_data_count);DEBUG_VAR("tx_count after frame 0", h.tx_count);DEBUG_BOOL("srej_exception after frame 0", conn.srej_exception);
-    // end modified part
 
     // V(R) should now be 1
     TEST_ASSERT(conn.vars.vr == 1, "V(R) = 1 after receiving frame N(S)=0", 0);
@@ -350,9 +343,7 @@ static int test_srej_single_missing_frame_mod8(void) {
 
     uint8_t tx_before = h.tx_count;
 
-    // start modified part - debug before gap injection
     DEBUG_PRINT("Injecting I-frame N(S)=2 (frame 1 missing - creating gap)");DEBUG_VAR("tx_count before gap injection", tx_before);
-    // end modified part
 
     // Receive frame N(S)=2 (frame 1 is missing) - single gap, SREJ(1) expected
     uint8_t payload2[] = { 'F', 'R', 'M', '2' };
@@ -360,16 +351,12 @@ static int test_srej_single_missing_frame_mod8(void) {
     ax25_process_frame(&conn, f2, 1);
     free_iframe(f2);
 
-    // start modified part - debug state after gap injection
     DEBUG_VAR("V(R) after frame 2 (gap at 1)", conn.vars.vr);DEBUG_BOOL("srej_exception after gap", conn.srej_exception);DEBUG_BOOL("rej_exception after gap", conn.rej_exception);DEBUG_VAR("srej_count", conn.srej_count);DEBUG_VAR("srej_buffer_count", conn.srej_buffer_count);DEBUG_VAR("tx_count after gap", h.tx_count);DEBUG_VAR("srej_bitmap[0]", conn.srej_bitmap[0]);DEBUG_VAR("rx_data_count after gap", h.rx_data_count);
-    // end modified part
 
     // SREJ should have been sent for missing frame N(S)=1
     uint8_t srej_count = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_SREJ_8BIT);
 
-    // start modified part - debug SREJ frame analysis
     DEBUG_VAR("SREJ frames found in tx buffer", srej_count);
-    // end modified part
 
     TEST_ASSERT(srej_count >= 1, "SREJ sent for missing frame N(S)=1", 0);
 
@@ -377,12 +364,10 @@ static int test_srej_single_missing_frame_mod8(void) {
     int srej_idx = find_last_sframe(&h, AX25_FRAME_SUPERVISORY_SREJ_8BIT);
     int srej_nr = get_sframe_nr(&h, srej_idx);
 
-    // start modified part - debug SREJ N(R) value
     DEBUG_VAR("SREJ frame index in tx buffer", (unsigned)srej_idx);DEBUG_VAR("SREJ N(R) value", (unsigned)srej_nr);
     if (srej_idx >= 0) {
         DEBUG_FRAME("SREJ raw frame bytes", h.tx_frames[srej_idx].data, h.tx_frames[srej_idx].len);
     }
-    // end modified part
 
     TEST_ASSERT(srej_nr == 1, "SREJ N(R) = 1 (requesting retransmit of frame 1)", 0);
 
@@ -395,9 +380,7 @@ static int test_srej_single_missing_frame_mod8(void) {
     // V(R) must still be 1 (cannot advance past missing frame)
     TEST_ASSERT(conn.vars.vr == 1, "V(R) still 1 (blocked by missing frame 1)", 0);
 
-    // start modified part - debug final state summary for test 1
     DEBUG_PRINT("Test 1 final state summary:");DEBUG_VAR("Final V(R)", conn.vars.vr);DEBUG_VAR("Final V(S)", conn.vars.vs);DEBUG_VAR("Final rx_data_count", h.rx_data_count);DEBUG_VAR("Final tx_count", h.tx_count);DEBUG_VAR("Final srej_bitmap[0]", conn.srej_bitmap[0]);DEBUG_BOOL("Final srej_exception", conn.srej_exception);
-    // end modified part
 
     printf("SREJ count: %u, SREJ N(R): %d\n", (unsigned) srej_count, srej_nr);
     (void) tx_before;
@@ -417,39 +400,29 @@ static int test_srej_recovery_on_retransmit(void) {
     ax25_connection_t conn;
     force_connected(&conn, &h, 8);
 
-    // start modified part - debug for test 2
     DEBUG_PRINT("Test 2 setup: mod=8, rej_mode=%d, srej_max=%u", conn.rej_mode, (unsigned)conn.srej_max);DEBUG_STATE("Initial state", conn.state);DEBUG_VAR("Initial V(S)", conn.vars.vs);DEBUG_VAR("Initial V(R)", conn.vars.vr);
-    // end modified part
 
     // Receive frame 0 (in-order)
     uint8_t p0[] = { 0x10, 0x11, 0x12, 0x13 };
     ax25_frame_t *f0 = make_iframe(0, 0, false, p0, sizeof(p0), 8);
 
-    // start modified part - debug frame 0 injection
     DEBUG_PRINT("Injecting I-frame N(S)=0 (in-order)");DEBUG_FRAME("p0 payload", p0, sizeof(p0));
-    // end modified part
 
     ax25_process_frame(&conn, f0, 1);
     free_iframe(f0);
 
-    // start modified part - debug state after frame 0
     DEBUG_VAR("V(R) after frame 0", conn.vars.vr);DEBUG_VAR("rx_data_count after frame 0", h.rx_data_count);
-    // end modified part
 
     // Receive frame 2 (frame 1 missing) - triggers SREJ(1)
     uint8_t p2[] = { 0x20, 0x21, 0x22, 0x23 };
     ax25_frame_t *f2 = make_iframe(2, 0, false, p2, sizeof(p2), 8);
 
-    // start modified part - debug gap injection
     DEBUG_PRINT("Injecting I-frame N(S)=2 (frame 1 missing - expected SREJ(1))");DEBUG_FRAME("p2 payload", p2, sizeof(p2));
-    // end modified part
 
     ax25_process_frame(&conn, f2, 1);
     free_iframe(f2);
 
-    // start modified part - debug SREJ state
     DEBUG_BOOL("srej_exception after gap", conn.srej_exception);DEBUG_VAR("V(R) after gap (should be 1)", conn.vars.vr);DEBUG_VAR("rx_data_count after gap (should be 1)", h.rx_data_count);DEBUG_VAR("srej_buffer_count (frame 2 buffered)", conn.srej_buffer_count);DEBUG_VAR("srej_bitmap[0]", conn.srej_bitmap[0]);DEBUG_VAR("tx_count (SREJ should have been sent)", h.tx_count);
-    // end modified part
 
     TEST_ASSERT(conn.srej_exception == true, "SREJ exception active after gap", 0);
     TEST_ASSERT(h.rx_data_count == 1, "Only frame 0 delivered before retransmit", 0);
@@ -458,14 +431,11 @@ static int test_srej_recovery_on_retransmit(void) {
     uint8_t p1[] = { 0xAA, 0xBB, 0xCC, 0xDD };
     ax25_frame_t *f1 = make_iframe(1, 0, false, p1, sizeof(p1), 8);
 
-    // start modified part - debug retransmit injection
     DEBUG_PRINT("Injecting retransmitted I-frame N(S)=1 (SREJ recovery)");DEBUG_FRAME("p1 payload (retransmit)", p1, sizeof(p1));
-    // end modified part
 
     ax25_process_frame(&conn, f1, 1);
     free_iframe(f1);
 
-    // start modified part - debug post-recovery state
     DEBUG_VAR("rx_data_count after retransmit (should be 3)", h.rx_data_count);DEBUG_VAR("V(R) after recovery (should be 3)", conn.vars.vr);DEBUG_BOOL("srej_exception after recovery (should be false)", conn.srej_exception);DEBUG_VAR("srej_buffer_count after recovery (should be 0)", conn.srej_buffer_count);DEBUG_VAR("srej_bitmap[0] after recovery (should be 0)", conn.srej_bitmap[0]);
     // verify in-order delivery of payloads
     if (h.on_data_call_count >= 2) {
@@ -474,7 +444,6 @@ static int test_srej_recovery_on_retransmit(void) {
     if (h.on_data_call_count >= 3) {
         DEBUG_FRAME("Delivered payload[2] (should match p2)", h.last_rx_payloads[2], h.last_rx_payload_lens[2]);
     }
-    // end modified part
 
     // After receiving the missing frame 1, both frame 1 and buffered frame 2
     // should be delivered. V(R) advances to 3.
@@ -493,9 +462,7 @@ static int test_srej_recovery_on_retransmit(void) {
     int match2 = memcmp(h.last_rx_payloads[2], p2, sizeof(p2));
     TEST_ASSERT(match2 == 0, "Frame 2 buffered payload delivered correctly after frame 1", 0);
 
-    // start modified part - debug final state for test 2
     DEBUG_PRINT("Test 2 final state: recovery complete");DEBUG_VAR("Final V(R)", conn.vars.vr);DEBUG_VAR("Final rx_data_count", h.rx_data_count);DEBUG_VAR("Final srej_bitmap[0]", conn.srej_bitmap[0]);
-    // end modified part
 
     return 0;
 }
@@ -518,9 +485,7 @@ static int test_srej_fallback_to_rej_on_multiple_gaps(void) {
     conn.rej_mode = AX25_REJ_MODE_SREJ_REJ;
     conn.srej_max = 1;
 
-    // start modified part - debug test 3 setup
     DEBUG_PRINT("Test 3 setup: SREJ/REJ mode, srej_max=1 (multiple-gap fallback test)");DEBUG_VAR("rej_mode", conn.rej_mode);DEBUG_VAR("srej_max", conn.srej_max);DEBUG_STATE("Initial state", conn.state);DEBUG_VAR("Initial V(R)", conn.vars.vr);
-    // end modified part
 
     // Receive frame 0 (in-order)
     uint8_t p0[] = { 0x00 };
@@ -528,30 +493,23 @@ static int test_srej_fallback_to_rej_on_multiple_gaps(void) {
 
     // start modified part - debug frame 0
     DEBUG_PRINT("Injecting I-frame N(S)=0 (in-order)");
-    // end modified part
 
     ax25_process_frame(&conn, f0, 1);
     free_iframe(f0);
 
-    // start modified part - debug after frame 0
     DEBUG_VAR("V(R) after frame 0", conn.vars.vr);DEBUG_VAR("rx_data_count after frame 0", h.rx_data_count);
-    // end modified part
 
     // Receive frame 3 - gap of 3 frames missing (1, 2, 3 expected; 1 and 2 missing)
     // With srej_max=1 and missing_count=3 this should fall back to REJ
 
-    // start modified part - debug multi-gap injection
     DEBUG_PRINT("Injecting I-frame N(S)=3 (gap of 3: frames 1 and 2 missing)");DEBUG_PRINT("Expected: fallback to REJ because gap > srej_max");
-    // end modified part
 
     uint8_t p3[] = { 0x30 };
     ax25_frame_t *f3 = make_iframe(3, 0, false, p3, sizeof(p3), 8);
     ax25_process_frame(&conn, f3, 1);
     free_iframe(f3);
 
-    // start modified part - debug post-gap state
     DEBUG_BOOL("rej_exception after multi-gap", conn.rej_exception);DEBUG_BOOL("srej_exception after multi-gap", conn.srej_exception);DEBUG_VAR("V(R) after multi-gap", conn.vars.vr);DEBUG_VAR("srej_bitmap[0]", conn.srej_bitmap[0]);DEBUG_VAR("tx_count after multi-gap", h.tx_count);
-    // start modified part - guard debug-only variables to suppress unused-variable warnings
 #ifdef DEBUG_ENABLE
     uint8_t rej_dbg = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_REJ_8BIT);
     uint8_t srej_dbg = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_SREJ_8BIT);
@@ -560,8 +518,6 @@ static int test_srej_fallback_to_rej_on_multiple_gaps(void) {
     int rej_dbg_nr = get_sframe_nr(&h, rej_dbg_idx);
     DEBUG_VAR("REJ N(R) value", (unsigned)rej_dbg_nr);
 #endif // DEBUG_ENABLE
-    // end modified part
-    // end modified part
 
     // Check that REJ was sent (not SREJ) because gap > 1
     uint8_t rej_count = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_REJ_8BIT);
@@ -575,9 +531,7 @@ static int test_srej_fallback_to_rej_on_multiple_gaps(void) {
     // REJ exception must be set
     TEST_ASSERT(conn.rej_exception == true, "REJ exception active after multi-frame gap", 0);
 
-    // start modified part - debug final state test 3
     DEBUG_PRINT("Test 3 final state: REJ fallback complete");DEBUG_VAR("Final V(R)", conn.vars.vr);DEBUG_BOOL("Final rej_exception", conn.rej_exception);DEBUG_BOOL("Final srej_exception", conn.srej_exception);
-    // end modified part
 
     printf("REJ count: %u, REJ N(R): %d\n", (unsigned) rej_count, rej_nr);
     return 0;
@@ -599,39 +553,28 @@ static int test_rej_only_mode_single_gap(void) {
     // Force REJ-only mode (no SREJ support)
     conn.rej_mode = AX25_REJ_MODE_REJ;
 
-    // start modified part - debug test 4 setup
     DEBUG_PRINT("Test 4 setup: REJ-only mode (no SREJ), single-gap scenario");DEBUG_VAR("rej_mode", conn.rej_mode);DEBUG_STATE("Initial state", conn.state);DEBUG_VAR("Initial V(R)", conn.vars.vr);
-    // end modified part
 
     // Receive frame 0 in-order
     uint8_t p0[] = { 0xA0 };
     ax25_frame_t *f0 = make_iframe(0, 0, false, p0, sizeof(p0), 8);
 
-    // start modified part - debug frame 0
     DEBUG_PRINT("Injecting I-frame N(S)=0 (in-order)");
-    // end modified part
 
     ax25_process_frame(&conn, f0, 1);
     free_iframe(f0);
 
-    // start modified part - debug after frame 0
     DEBUG_VAR("V(R) after frame 0", conn.vars.vr);DEBUG_VAR("rx_data_count after frame 0", h.rx_data_count);
-    // end modified part
 
     // Receive frame 2 (frame 1 missing) - even single gap must use REJ in REJ-only mode
-
-    // start modified part - debug gap injection REJ mode
     DEBUG_PRINT("Injecting I-frame N(S)=2 (frame 1 missing, REJ-only mode expects REJ not SREJ)");
-    // end modified part
 
     uint8_t p2[] = { 0xA2 };
     ax25_frame_t *f2 = make_iframe(2, 0, false, p2, sizeof(p2), 8);
     ax25_process_frame(&conn, f2, 1);
     free_iframe(f2);
 
-    // start modified part - debug post-gap state REJ mode
     DEBUG_BOOL("rej_exception after gap in REJ-only mode", conn.rej_exception);DEBUG_BOOL("srej_exception (should be false in REJ-only)", conn.srej_exception);DEBUG_VAR("V(R) after gap", conn.vars.vr);DEBUG_VAR("tx_count after gap", h.tx_count);
-    // start modified part - guard debug-only variables to suppress unused-variable warnings
 #ifdef DEBUG_ENABLE
     uint8_t rej4_count = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_REJ_8BIT);
     uint8_t srej4_count = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_SREJ_8BIT);
@@ -639,8 +582,6 @@ static int test_rej_only_mode_single_gap(void) {
     int rej4_idx = find_last_sframe(&h, AX25_FRAME_SUPERVISORY_REJ_8BIT);
     DEBUG_VAR("REJ N(R)", (unsigned)get_sframe_nr(&h, rej4_idx));
 #endif // DEBUG_ENABLE
-    // end modified part
-    // end modified part
 
     // No SREJ should have been sent
     uint8_t srej_count = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_SREJ_8BIT);
@@ -655,9 +596,7 @@ static int test_rej_only_mode_single_gap(void) {
     int rej_nr = get_sframe_nr(&h, rej_idx);
     TEST_ASSERT(rej_nr == 1, "REJ N(R) = 1 in REJ-only mode", 0);
 
-    // start modified part - debug final state test 4
     DEBUG_PRINT("Test 4 final state: REJ-only mode verified");DEBUG_VAR("Final REJ count", rej_count);DEBUG_VAR("Final SREJ count (must be 0)", srej_count);DEBUG_VAR("Final REJ N(R)", (unsigned)rej_nr);
-    // end modified part
 
     printf("SREJ count: %u, REJ count: %u, REJ N(R): %d\n", (unsigned) srej_count, (unsigned) rej_count, rej_nr);
     return 0;
@@ -678,9 +617,7 @@ static int test_received_srej_causes_selective_retransmit(void) {
     ax25_connection_t conn;
     force_connected(&conn, &h, 8);
 
-    // start modified part - debug test 5 setup
     DEBUG_PRINT("Test 5 setup: sending 4 frames then injecting SREJ(2) from remote");DEBUG_VAR("rej_mode", conn.rej_mode);DEBUG_VAR("srej_max", conn.srej_max);DEBUG_VAR("window size k", conn.timers.k);
-    // end modified part
 
     // Window size = 7, send 4 frames 0-3
     uint8_t d[4][4];
@@ -690,26 +627,20 @@ static int test_received_srej_causes_selective_retransmit(void) {
         d[i][2] = (uint8_t) (0xB2 + i);
         d[i][3] = (uint8_t) (0xB3 + i);
 
-        // start modified part - debug each send
         DEBUG_PRINT("Sending I-frame %d: [%02X %02X %02X %02X]", i, d[i][0], d[i][1], d[i][2], d[i][3]);
-        // end modified part
 
         uint8_t ret = ax25_send_data(&conn, d[i], 4, PID_NO_L3);
         TEST_ASSERT(ret == 0, "ax25_send_data succeeds for frames 0-3", 0);
     }
 
-    // start modified part - debug after sending 4 frames
     DEBUG_VAR("V(S) after sending 4 frames (should be 4)", conn.vars.vs);DEBUG_VAR("V(A) after sending 4 frames", conn.vars.va);DEBUG_VAR("tx_queue.count after sending 4 frames", conn.tx_queue.count);DEBUG_VAR("total tx_count (4 frames transmitted)", h.tx_count);
-    // end modified part
 
     // V(S) should be 4 after sending 4 frames
     TEST_ASSERT(conn.vars.vs == 4, "V(S) = 4 after sending 4 frames", 0);
 
     uint8_t tx_count_before = h.tx_count;
 
-    // start modified part - debug SREJ injection
     DEBUG_PRINT("Injecting SREJ(2) from remote (selective retransmit request for N(S)=2)");DEBUG_VAR("tx_count before SREJ injection", tx_count_before);
-    // end modified part
 
     // Remote sends SREJ(2): requesting retransmit of our N(S)=2
     ax25_frame_t *srej = make_sframe(AX25_FRAME_SUPERVISORY_SREJ_8BIT, 2, false, 3);
@@ -720,9 +651,7 @@ static int test_received_srej_causes_selective_retransmit(void) {
     uint8_t tx_count_after = h.tx_count;
     uint8_t new_tx = (uint8_t) (tx_count_after - tx_count_before);
 
-    // start modified part - debug retransmit result
     DEBUG_VAR("tx_count after SREJ(2)", tx_count_after);DEBUG_VAR("new_tx (should be 1 - only frame 2 retransmitted)", new_tx);DEBUG_VAR("V(S) after SREJ", conn.vars.vs);DEBUG_VAR("V(A) after SREJ", conn.vars.va);
-    // end modified part
 
     TEST_ASSERT(new_tx == 1, "Exactly 1 frame retransmitted in response to SREJ(2)", 0);
 
@@ -735,20 +664,18 @@ static int test_received_srej_causes_selective_retransmit(void) {
             TEST_ASSERT(decoded->type == AX25_FRAME_INFORMATION_8BIT, "Retransmitted frame is an I-frame", 0);
             ax25_information_frame_t *rf = (ax25_information_frame_t*) decoded;
 
-            // start modified part - debug retransmitted frame details
             DEBUG_VAR("Retransmitted frame N(S) (should be 2)", rf->ns);DEBUG_VAR("Retransmitted frame N(R)", rf->nr);DEBUG_FRAME("Retransmitted frame raw bytes", h.tx_frames[tx_count_before].data, h.tx_frames[tx_count_before].len);
-            // end modified part
 
             TEST_ASSERT(rf->ns == 2, "Retransmitted I-frame has N(S)=2", 0);
             ax25_frame_free(decoded, &err);
         }
     }
 
-    // start modified part - debug final state test 5
     DEBUG_PRINT("Test 5 final state: selective retransmit verified");DEBUG_VAR("Final V(S)", conn.vars.vs);DEBUG_VAR("Final V(A)", conn.vars.va);DEBUG_VAR("Final new_tx count", new_tx);
-    // end modified part
 
     printf("New TX after SREJ: %u\n", (unsigned) new_tx);
+    ax25_connection_cleanup(&conn);
+
     return 0;
 }
 
@@ -766,9 +693,7 @@ static int test_received_rej_causes_bulk_retransmit(void) {
     ax25_connection_t conn;
     force_connected(&conn, &h, 8);
 
-    // start modified part - debug test 6 setup
     DEBUG_PRINT("Test 6 setup: sending 4 frames then injecting REJ(2) from remote");DEBUG_VAR("window size k", conn.timers.k);DEBUG_VAR("rej_mode", conn.rej_mode);
-    // end modified part
 
     // Send 4 frames 0-3
     uint8_t d[4][4];
@@ -778,23 +703,17 @@ static int test_received_rej_causes_bulk_retransmit(void) {
         d[i][2] = (uint8_t) (0xC2 + i);
         d[i][3] = (uint8_t) (0xC3 + i);
 
-        // start modified part - debug each send
         DEBUG_PRINT("Sending I-frame %d: [%02X %02X %02X %02X]", i, d[i][0], d[i][1], d[i][2], d[i][3]);
-        // end modified part
 
         uint8_t ret = ax25_send_data(&conn, d[i], 4, PID_NO_L3);
         TEST_ASSERT(ret == 0, "ax25_send_data succeeds (REJ test frames)", 0);
     }
 
-    // start modified part - debug after sending
     DEBUG_VAR("V(S) after sending 4 frames", conn.vars.vs);DEBUG_VAR("V(A) before REJ", conn.vars.va);DEBUG_VAR("tx_queue.count", conn.tx_queue.count);DEBUG_VAR("tx_count before REJ", h.tx_count);
-    // end modified part
 
     uint8_t tx_count_before = h.tx_count;
 
-    // start modified part - debug REJ injection
     DEBUG_PRINT("Injecting REJ(2) from remote (bulk retransmit from N(S)=2 onwards)");
-    // end modified part
 
     // Remote sends REJ(2): retransmit everything from N(S)=2 onwards
     ax25_frame_t *rej = make_sframe(AX25_FRAME_SUPERVISORY_REJ_8BIT, 2, false, 2);
@@ -804,12 +723,10 @@ static int test_received_rej_causes_bulk_retransmit(void) {
     // Frames 2 and 3 must be retransmitted (2 new transmissions)
     uint8_t new_tx = (uint8_t) (h.tx_count - tx_count_before);
 
-    // start modified part - debug bulk retransmit result
     DEBUG_VAR("new_tx after REJ(2) (should be 2)", new_tx);DEBUG_VAR("V(S) after REJ processing", conn.vars.vs);DEBUG_VAR("V(A) after REJ processing", conn.vars.va);
     for (uint8_t dbg_i = 0; dbg_i < new_tx && dbg_i < 2; dbg_i++) {
         DEBUG_FRAME("Retransmitted frame raw bytes", h.tx_frames[tx_count_before + dbg_i].data, h.tx_frames[tx_count_before + dbg_i].len);
     }
-    // end modified part
 
     TEST_ASSERT(new_tx == 2, "Frames 2 and 3 retransmitted after REJ(2)", 0);
 
@@ -822,20 +739,18 @@ static int test_received_rej_causes_bulk_retransmit(void) {
             TEST_ASSERT(decoded->type == AX25_FRAME_INFORMATION_8BIT, "Retransmitted frame is I-frame", 0);
             ax25_information_frame_t *rf = (ax25_information_frame_t*) decoded;
 
-            // start modified part - debug each retransmitted frame
             DEBUG_VAR("Retransmitted frame N(S)", rf->ns);DEBUG_VAR("Expected N(S)", (unsigned)(2 + i));
-            // end modified part
 
             TEST_ASSERT((int )rf->ns == (int )(2 + i), "Retransmitted I-frame N(S) matches expected sequence", 0);
             ax25_frame_free(decoded, &err);
         }
     }
 
-    // start modified part - debug final state test 6
     DEBUG_PRINT("Test 6 final state: bulk REJ retransmit verified");DEBUG_VAR("Final new_tx count", new_tx);DEBUG_VAR("Final V(S)", conn.vars.vs);DEBUG_VAR("Final V(A)", conn.vars.va);
-    // end modified part
 
     printf("New TX after REJ(2): %u (expected 2)\n", (unsigned) new_tx);
+    ax25_connection_cleanup(&conn);
+
     return 0;
 }
 
@@ -854,43 +769,32 @@ static int test_srej_bitmap_tracking(void) {
     ax25_connection_t conn;
     force_connected(&conn, &h, 8);
 
-    // start modified part - debug test 7 setup
     DEBUG_PRINT("Test 7 setup: bitmap tracking test, mod=8");DEBUG_VAR("Initial srej_bitmap[0]", conn.srej_bitmap[0]);DEBUG_BOOL("Initial srej_exception", conn.srej_exception);DEBUG_VAR("Initial V(R)", conn.vars.vr);
-    // end modified part
 
     // Receive frame 0
     uint8_t p0[] = { 0xD0 };
     ax25_frame_t *f0 = make_iframe(0, 0, false, p0, sizeof(p0), 8);
 
-    // start modified part - debug frame 0
     DEBUG_PRINT("Injecting I-frame N(S)=0");
-    // end modified part
 
     ax25_process_frame(&conn, f0, 1);
     free_iframe(f0);
 
-    // start modified part - debug after frame 0
     DEBUG_VAR("V(R) after frame 0", conn.vars.vr);DEBUG_VAR("srej_bitmap[0] after frame 0 (should be 0)", conn.srej_bitmap[0]);DEBUG_BOOL("srej_exception after frame 0 (should be false)", conn.srej_exception);
-    // end modified part
 
     // Verify bitmap clean before gap
     TEST_ASSERT(conn.srej_bitmap[0] == 0, "SREJ bitmap clear before any gap", 0);
     TEST_ASSERT(conn.srej_exception == false, "No SREJ exception before gap", 0);
 
     // Receive frame 2 (frame 1 missing) - SREJ(1) sent, bit 1 set in bitmap
-
-    // start modified part - debug gap injection for bitmap
     DEBUG_PRINT("Injecting I-frame N(S)=2 (frame 1 missing, expecting bitmap bit 1 set)");
-    // end modified part
 
     uint8_t p2[] = { 0xD2 };
     ax25_frame_t *f2 = make_iframe(2, 0, false, p2, sizeof(p2), 8);
     ax25_process_frame(&conn, f2, 1);
     free_iframe(f2);
 
-    // start modified part - debug bitmap state after gap
     DEBUG_VAR("srej_bitmap[0] after gap (bit 1 expected set: 0x02)", conn.srej_bitmap[0]);DEBUG_BOOL("srej_exception after gap", conn.srej_exception);DEBUG_VAR("srej_count after gap", conn.srej_count);DEBUG_VAR("V(R) after gap (should still be 1)", conn.vars.vr);DEBUG_BOOL("bit 1 set in srej_bitmap[0]", (conn.srej_bitmap[0] & (1U << 1)) != 0);
-    // end modified part
 
     // Bit 1 (for N(S)=1) must be set in byte 0 of bitmap
     TEST_ASSERT((conn.srej_bitmap[0] & (1U << 1)) != 0, "SREJ bitmap bit 1 set for missing frame N(S)=1", 0);
@@ -900,37 +804,27 @@ static int test_srej_bitmap_tracking(void) {
     printf("srej_bitmap[0] = 0x%02X (expected bit 1 set)\n", conn.srej_bitmap[0]);
 
     // Receive frame 3 as well (still waiting for 1)
-
-    // start modified part - debug frame 3 injection while waiting for 1
     DEBUG_PRINT("Injecting I-frame N(S)=3 (frame 1 still missing)");
-    // end modified part
 
     uint8_t p3[] = { 0xD3 };
     ax25_frame_t *f3 = make_iframe(3, 0, false, p3, sizeof(p3), 8);
     ax25_process_frame(&conn, f3, 1);
     free_iframe(f3);
 
-    // start modified part - debug after frame 3
     DEBUG_VAR("srej_bitmap[0] after frame 3 (bit 1 still expected)", conn.srej_bitmap[0]);DEBUG_VAR("srej_buffer_count (frames 2,3 buffered)", conn.srej_buffer_count);DEBUG_BOOL("srej_exception still active", conn.srej_exception);DEBUG_VAR("V(R) still 1 (blocked)", conn.vars.vr);
-    // end modified part
 
     // Bit 1 still set (frame 1 still missing)
     TEST_ASSERT((conn.srej_bitmap[0] & (1U << 1)) != 0, "SREJ bitmap bit 1 still set (frame 1 still missing)", 0);
 
     // Now retransmit frame 1 to resolve the SREJ
-
-    // start modified part - debug frame 1 retransmit
     DEBUG_PRINT("Injecting retransmitted I-frame N(S)=1 (SREJ recovery)");
-    // end modified part
 
     uint8_t p1[] = { 0xD1 };
     ax25_frame_t *f1 = make_iframe(1, 0, false, p1, sizeof(p1), 8);
     ax25_process_frame(&conn, f1, 1);
     free_iframe(f1);
 
-    // start modified part - debug post-recovery bitmap state
     DEBUG_VAR("srej_bitmap[0] after frame 1 retransmit (should be 0)", conn.srej_bitmap[0]);DEBUG_BOOL("srej_exception after recovery (should be false)", conn.srej_exception);DEBUG_VAR("V(R) after full recovery (should be 4)", conn.vars.vr);DEBUG_VAR("rx_data_count after recovery (should be 4)", h.rx_data_count);DEBUG_VAR("srej_buffer_count after recovery (should be 0)", conn.srej_buffer_count);
-    // end modified part
 
     // Bitmap bit 1 must be cleared now
     TEST_ASSERT((conn.srej_bitmap[0] & (1U << 1)) == 0, "SREJ bitmap bit 1 cleared after frame 1 retransmitted", 0);
@@ -963,17 +857,13 @@ static int test_srej_simultaneous_multiple_mod128(void) {
     conn.srej_max = 2;
     conn.timers.k = 127;  // Large window for this test
 
-    // start modified part - debug test 8 setup
     DEBUG_PRINT("Test 8 setup: mod=128, srej_max=2, window=127, multi-SREJ scenario");DEBUG_VAR("rej_mode", conn.rej_mode);DEBUG_VAR("srej_max", conn.srej_max);DEBUG_VAR("mod", conn.vars.mod);DEBUG_VAR("window k", conn.timers.k);DEBUG_STATE("Initial state", conn.state);DEBUG_VAR("Initial V(R)", conn.vars.vr);
-    // end modified part
 
     // Frame 0 - in order
     uint8_t p0[] = { 0x00 };
     ax25_frame_t *f0 = make_iframe(0, 0, false, p0, sizeof(p0), 128);
 
-    // start modified part - debug frame 0
     DEBUG_PRINT("Injecting I-frame N(S)=0 (mod128, in-order)");
-    // end modified part
 
     ax25_process_frame(&conn, f0, 1);
     free_iframe(f0);
@@ -982,38 +872,28 @@ static int test_srej_simultaneous_multiple_mod128(void) {
     uint8_t p1[] = { 0x01 };
     ax25_frame_t *f1 = make_iframe(1, 0, false, p1, sizeof(p1), 128);
 
-    // start modified part - debug frame 1
     DEBUG_PRINT("Injecting I-frame N(S)=1 (mod128, in-order)");
-    // end modified part
 
     ax25_process_frame(&conn, f1, 1);
     free_iframe(f1);
 
-    // start modified part - debug after in-order frames
     DEBUG_VAR("V(R) after frames 0,1 (should be 2)", conn.vars.vr);DEBUG_VAR("rx_data_count after frames 0,1", h.rx_data_count);
-    // end modified part
 
     TEST_ASSERT(conn.vars.vr == 2, "V(R) = 2 after frames 0 and 1", 0);
 
     // Frame 3 received - frame 2 missing -> first SREJ(2)
-
-    // start modified part - debug first gap (frame 2 missing)
     DEBUG_PRINT("Injecting I-frame N(S)=3 (mod128, frame 2 missing -> SREJ(2) expected)");
-    // end modified part
 
     uint8_t p3[] = { 0x03 };
     ax25_frame_t *f3 = make_iframe(3, 0, false, p3, sizeof(p3), 128);
     ax25_process_frame(&conn, f3, 1);
     free_iframe(f3);
 
-    // start modified part - debug after first gap mod128
-    // start modified part - guard debug-only variable to suppress unused-variable warning
 #ifdef DEBUG_ENABLE
     uint8_t srej16_count_1 = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_SREJ_16BIT);
     DEBUG_VAR("SREJ_16BIT frames sent after first gap", srej16_count_1);
 #endif // DEBUG_ENABLE
     DEBUG_VAR("srej_bitmap[0] after first gap (bit 2 expected set)", conn.srej_bitmap[0]);DEBUG_BOOL("srej_exception after first gap", conn.srej_exception);DEBUG_VAR("V(R) after first gap (should be 2 - blocked)", conn.vars.vr);DEBUG_BOOL("bit 2 set in srej_bitmap[0]", (conn.srej_bitmap[0] & (1U << 2)) != 0);
-    // end modified part
 
     // SREJ for frame 2 must be pending
     uint8_t srej_count_1 = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_SREJ_16BIT);
@@ -1022,10 +902,7 @@ static int test_srej_simultaneous_multiple_mod128(void) {
     TEST_ASSERT(conn.srej_exception == true, "SREJ exception active after first gap", 0);
 
     // Frame 5 received - frame 4 missing (while frame 2 still missing) -> second SREJ(4)
-
-    // start modified part - debug second gap
     DEBUG_PRINT("Injecting I-frame N(S)=5 (mod128, frame 4 also missing -> second SREJ(4))");
-    // end modified part
 
     uint8_t p5[] = { 0x05 };
     ax25_frame_t *f5 = make_iframe(5, 0, false, p5, sizeof(p5), 128);
@@ -1034,9 +911,7 @@ static int test_srej_simultaneous_multiple_mod128(void) {
 
     uint8_t srej_count_2 = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_SREJ_16BIT);
 
-    // start modified part - debug after second gap mod128
     DEBUG_VAR("Total SREJ_16BIT frames after second gap", srej_count_2);DEBUG_VAR("srej_bitmap[0] (bits 2 and 4 expected set)", conn.srej_bitmap[0]);DEBUG_BOOL("bit 2 still set (frame 2 still missing)", (conn.srej_bitmap[0] & (1U << 2)) != 0);DEBUG_BOOL("bit 4 set (frame 4 missing)", (conn.srej_bitmap[0] & (1U << 4)) != 0);DEBUG_VAR("srej_count", conn.srej_count);DEBUG_BOOL("srej_exception still active", conn.srej_exception);DEBUG_BOOL("rej_exception (should be false with srej_max=2)", conn.rej_exception);DEBUG_VAR("V(R) (still 2 - blocked by frame 2)", conn.vars.vr);
-    // end modified part
 
     printf("Total SREJ frames sent: %u\n", (unsigned) srej_count_2);
 
@@ -1055,37 +930,27 @@ static int test_srej_simultaneous_multiple_mod128(void) {
     printf("srej_bitmap[0] = 0x%02X, srej_count = %u, SREJ frames sent = %u\n", conn.srej_bitmap[0], (unsigned) conn.srej_count, (unsigned) srej_count_2);
 
     // Now retransmit frame 2 to partially resolve
-
-    // start modified part - debug partial recovery (frame 2)
     DEBUG_PRINT("Injecting retransmitted I-frame N(S)=2 (partial recovery, frame 4 still missing)");
-    // end modified part
 
     uint8_t p2[] = { 0x02 };
     ax25_frame_t *f2 = make_iframe(2, 0, false, p2, sizeof(p2), 128);
     ax25_process_frame(&conn, f2, 1);
     free_iframe(f2);
 
-    // start modified part - debug after partial recovery
     DEBUG_VAR("V(R) after frame 2 delivered (should be >= 4)", conn.vars.vr);DEBUG_VAR("rx_data_count after frame 2", h.rx_data_count);DEBUG_VAR("srej_bitmap[0] after frame 2 retransmit", conn.srej_bitmap[0]);DEBUG_BOOL("srej_exception (still active - frame 4 missing)", conn.srej_exception);
-    // end modified part
 
     // After frame 2 arrives, V(R) advances to 4 (frames 0-3 now in order)
     TEST_ASSERT(conn.vars.vr >= 4, "V(R) >= 4 after frame 2 delivered", 0);
 
     // Retransmit frame 4 to fully resolve
-
-    // start modified part - debug final recovery (frame 4)
     DEBUG_PRINT("Injecting retransmitted I-frame N(S)=4 (final recovery)");
-    // end modified part
 
     uint8_t p4[] = { 0x04 };
     ax25_frame_t *f4 = make_iframe(4, 0, false, p4, sizeof(p4), 128);
     ax25_process_frame(&conn, f4, 1);
     free_iframe(f4);
 
-    // start modified part - debug after full recovery mod128
     DEBUG_VAR("V(R) after full recovery (should be 6)", conn.vars.vr);DEBUG_VAR("rx_data_count (should be 6)", h.rx_data_count);DEBUG_BOOL("srej_exception after full recovery (should be false)", conn.srej_exception);DEBUG_VAR("srej_bitmap[0] after full recovery (should be 0)", conn.srej_bitmap[0]);DEBUG_VAR("srej_count after full recovery (should be 0)", conn.srej_count);
-    // end modified part
 
     // After both missing frames retransmitted, all 6 frames (0-5) delivered
     TEST_ASSERT(conn.vars.vr == 6, "V(R) = 6 after all missing frames retransmitted", 0);
@@ -1113,66 +978,50 @@ static int test_srej_exception_cleared_on_rej_fallback(void) {
     conn.rej_mode = AX25_REJ_MODE_SREJ_REJ;
     conn.srej_max = 1;
 
-    // start modified part - debug test 9 setup
     DEBUG_PRINT("Test 9 setup: SREJ/REJ mode, srej_max=1 (SREJ->REJ fallback on second gap)");DEBUG_VAR("rej_mode", conn.rej_mode);DEBUG_VAR("srej_max", conn.srej_max);DEBUG_STATE("Initial state", conn.state);
-    // end modified part
 
     // Receive frame 0
     uint8_t p0[] = { 0xE0 };
     ax25_frame_t *f0 = make_iframe(0, 0, false, p0, sizeof(p0), 8);
 
-    // start modified part - debug frame 0
     DEBUG_PRINT("Injecting I-frame N(S)=0");
-    // end modified part
 
     ax25_process_frame(&conn, f0, 1);
     free_iframe(f0);
 
     // Receive frame 2 - SREJ(1) sent, one SREJ active
-
-    // start modified part - debug first gap
     DEBUG_PRINT("Injecting I-frame N(S)=2 (frame 1 missing -> SREJ(1))");
-    // end modified part
 
     uint8_t p2[] = { 0xE2 };
     ax25_frame_t *f2 = make_iframe(2, 0, false, p2, sizeof(p2), 8);
     ax25_process_frame(&conn, f2, 1);
     free_iframe(f2);
 
-    // start modified part - debug SREJ state after first gap
     DEBUG_BOOL("srej_exception after first gap (should be true)", conn.srej_exception);DEBUG_BOOL("rej_exception after first gap (should be false)", conn.rej_exception);DEBUG_VAR("srej_count (should be 1)", conn.srej_count);DEBUG_VAR("srej_bitmap[0] (bit 1 set)", conn.srej_bitmap[0]);DEBUG_VAR("V(R) after first gap (should be 1)", conn.vars.vr);
-    // start modified part - guard debug-only variable to suppress unused-variable warning
 #ifdef DEBUG_ENABLE
     uint8_t t9_srej_cnt = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_SREJ_8BIT);
     DEBUG_VAR("SREJ frames sent", t9_srej_cnt);
 #endif // DEBUG_ENABLE
-    // end modified part
 
     TEST_ASSERT(conn.srej_exception == true, "SREJ exception active after frame 1 missing", 0);
     TEST_ASSERT(conn.rej_exception == false, "No REJ exception yet", 0);
 
     // Now receive frame 4 while frame 1 still missing (srej_max already used by frame 1)
     // This should fall back to REJ and clear SREJ state
-
-    // start modified part - debug second gap (forces REJ fallback)
     DEBUG_PRINT("Injecting I-frame N(S)=4 (second gap while srej_max=1 exhausted -> REJ fallback)");DEBUG_PRINT("Expected: SREJ exception cleared, REJ exception set, bitmap zeroed");
-    // end modified part
 
     uint8_t p4[] = { 0xE4 };
     ax25_frame_t *f4 = make_iframe(4, 0, false, p4, sizeof(p4), 8);
     ax25_process_frame(&conn, f4, 1);
     free_iframe(f4);
 
-    // start modified part - debug post-fallback state
     DEBUG_BOOL("rej_exception after second gap (should be true)", conn.rej_exception);DEBUG_BOOL("srej_exception after fallback (should be false)", conn.srej_exception);DEBUG_VAR("srej_bitmap[0] after fallback (should be 0)", conn.srej_bitmap[0]);
-    // start modified part - guard debug-only variables to suppress unused-variable warnings
 #ifdef DEBUG_ENABLE
     uint8_t t9_rej_cnt = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_REJ_8BIT);
     DEBUG_VAR("REJ frames sent", t9_rej_cnt);
     int t9_rej_idx = find_last_sframe(&h, AX25_FRAME_SUPERVISORY_REJ_8BIT);
     DEBUG_VAR("REJ N(R) value", (unsigned)get_sframe_nr(&h, t9_rej_idx)); DEBUG_VAR("V(R) after fallback", conn.vars.vr);
 #endif // DEBUG_ENABLE
-    // end modified part
 
     // REJ exception must now be set
     TEST_ASSERT(conn.rej_exception == true, "REJ exception set after SREJ max exceeded", 0);
@@ -1186,9 +1035,7 @@ static int test_srej_exception_cleared_on_rej_fallback(void) {
     int rej_nr = get_sframe_nr(&h, rej_idx);
     TEST_ASSERT(rej_nr == 1, "REJ N(R) = 1 (retransmit from frame 1)", 0);
 
-    // start modified part - debug final state test 9
     DEBUG_PRINT("Test 9 final state: SREJ->REJ fallback verified");DEBUG_BOOL("Final rej_exception", conn.rej_exception);DEBUG_BOOL("Final srej_exception", conn.srej_exception);DEBUG_VAR("Final srej_bitmap[0]", conn.srej_bitmap[0]);DEBUG_VAR("Final REJ N(R)", (unsigned)rej_nr);
-    // end modified part
 
     printf("rej_exception=%d, srej_exception=%d, srej_bitmap[0]=0x%02X, REJ N(R)=%d\n", (int) conn.rej_exception, (int) conn.srej_exception,
             conn.srej_bitmap[0], rej_nr);
@@ -1212,78 +1059,56 @@ static int test_rej_exception_clears_on_expected_frame(void) {
     // Use REJ-only mode
     conn.rej_mode = AX25_REJ_MODE_REJ;
 
-    // start modified part - debug test 10 setup
     DEBUG_PRINT("Test 10 setup: REJ-only mode, verify REJ exception clears on expected frame");DEBUG_VAR("rej_mode", conn.rej_mode);DEBUG_STATE("Initial state", conn.state);DEBUG_VAR("Initial V(R)", conn.vars.vr);
-    // end modified part
 
     // Receive frame 0 in-order
     uint8_t p0[] = { 0xF0 };
     ax25_frame_t *f0 = make_iframe(0, 0, false, p0, sizeof(p0), 8);
 
-    // start modified part - debug frame 0
     DEBUG_PRINT("Injecting I-frame N(S)=0 (in-order)");
-    // end modified part
 
     ax25_process_frame(&conn, f0, 1);
     free_iframe(f0);
 
-    // start modified part - debug after frame 0
     DEBUG_VAR("V(R) after frame 0", conn.vars.vr);DEBUG_VAR("rx_data_count after frame 0", h.rx_data_count);
-    // end modified part
 
     // Receive frame 2 - REJ(1) sent
-
-    // start modified part - debug gap injection
     DEBUG_PRINT("Injecting I-frame N(S)=2 (frame 1 missing -> REJ(1) in REJ-only mode)");
-    // end modified part
 
     uint8_t p2[] = { 0xF2 };
     ax25_frame_t *f2 = make_iframe(2, 0, false, p2, sizeof(p2), 8);
     ax25_process_frame(&conn, f2, 1);
     free_iframe(f2);
 
-    // start modified part - debug after REJ sent
     DEBUG_BOOL("rej_exception after gap (should be true)", conn.rej_exception);DEBUG_VAR("V(R) after gap (should be 1)", conn.vars.vr);
-    // start modified part - guard debug-only variable to suppress unused-variable warning
 #ifdef DEBUG_ENABLE
     uint8_t t10_rej_cnt = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_REJ_8BIT);
     DEBUG_VAR("REJ frames sent", t10_rej_cnt);
 #endif // DEBUG_ENABLE
-    // end modified part
 
     TEST_ASSERT(conn.rej_exception == true, "REJ exception active after gap", 0);
 
     // While REJ pending, receive duplicate of frame 2 - must be discarded
-
-    // start modified part - debug duplicate during REJ
     DEBUG_PRINT("Injecting duplicate I-frame N(S)=2 during REJ exception (should be discarded)");DEBUG_VAR("rx_data_count before duplicate injection", h.rx_data_count);
-    // end modified part
 
     ax25_frame_t *f2dup = make_iframe(2, 0, false, p2, sizeof(p2), 8);
     ax25_process_frame(&conn, f2dup, 1);
     free_iframe(f2dup);
 
-    // start modified part - debug after duplicate
     DEBUG_VAR("rx_data_count after duplicate (should remain 1 - discarded)", h.rx_data_count);DEBUG_BOOL("rej_exception still active after duplicate", conn.rej_exception);
-    // end modified part
 
     // rx_data_count must remain 1 (frame 2 discarded during REJ exception)
     TEST_ASSERT(h.rx_data_count == 1, "Duplicate out-of-seq frame discarded during REJ exception", 0);
 
     // Receive frame 1 (the retransmitted expected frame) - clears REJ
-
-    // start modified part - debug expected frame clears REJ
     DEBUG_PRINT("Injecting retransmitted I-frame N(S)=1 (expected frame - should clear REJ exception)");
-    // end modified part
 
     uint8_t p1[] = { 0xF1 };
     ax25_frame_t *f1 = make_iframe(1, 0, false, p1, sizeof(p1), 8);
     ax25_process_frame(&conn, f1, 1);
     free_iframe(f1);
 
-    // start modified part - debug after REJ cleared
     DEBUG_BOOL("rej_exception after frame 1 (should be false - cleared)", conn.rej_exception);DEBUG_VAR("rx_data_count after frame 1 (should be 2)", h.rx_data_count);DEBUG_VAR("V(R) after frame 1 (should be 2)", conn.vars.vr);
-    // end modified part
 
     // REJ exception must be cleared
     TEST_ASSERT(conn.rej_exception == false, "REJ exception cleared after frame 1 received", 0);
@@ -1294,18 +1119,13 @@ static int test_rej_exception_clears_on_expected_frame(void) {
     TEST_ASSERT(conn.vars.vr == 2, "V(R) = 2 after REJ recovery with frame 1", 0);
 
     // Receive frame 2 again (re-sent per REJ) - must be accepted now
-
-    // start modified part - debug frame 2 re-acceptance
     DEBUG_PRINT("Injecting I-frame N(S)=2 again (re-sent per REJ, should now be accepted)");
-    // end modified part
 
     ax25_frame_t *f2b = make_iframe(2, 0, false, p2, sizeof(p2), 8);
     ax25_process_frame(&conn, f2b, 1);
     free_iframe(f2b);
 
-    // start modified part - debug final state test 10
     DEBUG_VAR("rx_data_count after frame 2 re-accepted (should be 3)", h.rx_data_count);DEBUG_VAR("V(R) after full REJ recovery (should be 3)", conn.vars.vr);DEBUG_BOOL("rej_exception final (should be false)", conn.rej_exception);
-    // end modified part
 
     TEST_ASSERT(h.rx_data_count == 3, "Frame 2 accepted and delivered after REJ cleared", 0);
     TEST_ASSERT(conn.vars.vr == 3, "V(R) = 3 after complete REJ recovery", 0);
@@ -1327,55 +1147,40 @@ static int test_srej_duplicate_frame_discarded(void) {
     ax25_connection_t conn;
     force_connected(&conn, &h, 8);
 
-    // start modified part - debug test 11 setup
     DEBUG_PRINT("Test 11 setup: SREJ/REJ mode, duplicate frame discard test");DEBUG_VAR("rej_mode", conn.rej_mode);DEBUG_STATE("Initial state", conn.state);
-    // end modified part
 
     // Frame 0 in-order
     uint8_t p0[] = { 0x01 };
     ax25_frame_t *f0 = make_iframe(0, 0, false, p0, sizeof(p0), 8);
 
-    // start modified part - debug frame 0
     DEBUG_PRINT("Injecting I-frame N(S)=0 (in-order)");
-    // end modified part
 
     ax25_process_frame(&conn, f0, 1);
     free_iframe(f0);
 
-    // start modified part - debug after frame 0
     DEBUG_VAR("V(R) after frame 0", conn.vars.vr);
-    // end modified part
 
     // Frame 2 - SREJ(1) sent
-
-    // start modified part - debug gap
     DEBUG_PRINT("Injecting I-frame N(S)=2 (frame 1 missing -> SREJ(1), frame 2 buffered)");
-    // end modified part
 
     uint8_t p2[] = { 0x02 };
     ax25_frame_t *f2 = make_iframe(2, 0, false, p2, sizeof(p2), 8);
     ax25_process_frame(&conn, f2, 1);
     free_iframe(f2);
 
-    // start modified part - debug SREJ active
     DEBUG_BOOL("srej_exception after gap (should be true)", conn.srej_exception);DEBUG_VAR("srej_buffer_count (frame 2 buffered)", conn.srej_buffer_count);DEBUG_VAR("V(R) after gap (should be 1)", conn.vars.vr);DEBUG_VAR("rx_data_count (should be 1 - frame 0 only)", h.rx_data_count);
-    // end modified part
 
     TEST_ASSERT(conn.srej_exception == true, "SREJ exception active", 0);
     uint8_t rx_before = h.rx_data_count;
 
-    // start modified part - debug duplicate injection
     DEBUG_PRINT("Injecting duplicate I-frame N(S)=2 (already buffered, should be discarded)");DEBUG_VAR("rx_data_count before duplicate", rx_before);
-    // end modified part
 
     // Receive duplicate of frame 2 - already buffered, must be discarded
     ax25_frame_t *f2dup = make_iframe(2, 0, false, p2, sizeof(p2), 8);
     ax25_process_frame(&conn, f2dup, 1);
     free_iframe(f2dup);
 
-    // start modified part - debug after duplicate
     DEBUG_VAR("rx_data_count after duplicate (should equal rx_before)", h.rx_data_count);DEBUG_VAR("V(R) after duplicate (should still be 1)", conn.vars.vr);DEBUG_BOOL("srej_exception still active after duplicate", conn.srej_exception);DEBUG_VAR("srej_buffer_count (should remain same)", conn.srej_buffer_count);
-    // end modified part
 
     TEST_ASSERT(h.rx_data_count == rx_before, "Duplicate frame during SREJ not delivered", 0);
     TEST_ASSERT(conn.vars.vr == 1, "V(R) unchanged after duplicate during SREJ", 0);
@@ -1397,9 +1202,7 @@ static int test_srej_mode_negotiation(void) {
     ax25_connection_t conn;
     force_connected(&conn, &h, 8);
 
-    // start modified part - debug test 12 setup
     DEBUG_PRINT("Test 12 setup: SREJ mode negotiation verification");DEBUG_VAR("Default rej_mode (should be AX25_REJ_MODE_SREJ_REJ=3)", conn.rej_mode);
-    // end modified part
 
     // Default mode must be SREJ_REJ per Section 6.3.2
     TEST_ASSERT(conn.rej_mode == AX25_REJ_MODE_SREJ_REJ, "Default rej_mode is AX25_REJ_MODE_SREJ_REJ per Section 6.3.2", 0);
@@ -1408,23 +1211,17 @@ static int test_srej_mode_negotiation(void) {
     conn.rej_mode = AX25_REJ_MODE_SREJ;
     conn.srej_max = 4;
 
-    // start modified part - debug SREJ-only mode setup
     DEBUG_PRINT("Switching to SREJ-only mode (rej_mode=AX25_REJ_MODE_SREJ, srej_max=4)");DEBUG_VAR("New rej_mode", conn.rej_mode);DEBUG_VAR("srej_max", conn.srej_max);
-    // end modified part
 
     uint8_t p0[] = { 0x01 };
     ax25_frame_t *f0 = make_iframe(0, 0, false, p0, sizeof(p0), 8);
 
-    // start modified part - debug frame 0
     DEBUG_PRINT("Injecting I-frame N(S)=0 (in-order)");
-    // end modified part
 
     ax25_process_frame(&conn, f0, 1);
     free_iframe(f0);
 
-    // start modified part - debug gap injection SREJ-only
     DEBUG_PRINT("Injecting I-frame N(S)=2 (frame 1 missing, SREJ-only mode: only SREJ expected)");
-    // end modified part
 
     uint8_t p2[] = { 0x02 };
     ax25_frame_t *f2 = make_iframe(2, 0, false, p2, sizeof(p2), 8);
@@ -1434,9 +1231,7 @@ static int test_srej_mode_negotiation(void) {
     uint8_t srej_c = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_SREJ_8BIT);
     uint8_t rej_c = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_REJ_8BIT);
 
-    // start modified part - debug mode verification
     DEBUG_VAR("SREJ frames sent in SREJ-only mode (should be >= 1)", srej_c);DEBUG_VAR("REJ frames sent in SREJ-only mode (should be 0)", rej_c);DEBUG_BOOL("srej_exception active", conn.srej_exception);DEBUG_BOOL("rej_exception (should be false in SREJ-only)", conn.rej_exception);DEBUG_VAR("V(R) (blocked by missing frame 1)", conn.vars.vr);
-    // end modified part
 
     TEST_ASSERT(srej_c >= 1, "SREJ sent in SREJ-only mode for single gap", 0);
     TEST_ASSERT(rej_c == 0, "No REJ sent in SREJ-only mode for single gap", 0);
@@ -1460,39 +1255,28 @@ static int test_srej_poll_final_bit_behaviour(void) {
     conn.rej_mode = AX25_REJ_MODE_SREJ_REJ;
     conn.srej_max = 3;  // Allow multiple SREJs
 
-    // start modified part - debug test 13 setup
     DEBUG_PRINT("Test 13 setup: P/F bit behaviour on SREJ, rej_mode=SREJ_REJ, srej_max=3");DEBUG_VAR("rej_mode", conn.rej_mode);DEBUG_VAR("srej_max", conn.srej_max);
-    // end modified part
 
     // Frame 0 in-order
     uint8_t p0[] = { 0xA0 };
     ax25_frame_t *f0 = make_iframe(0, 0, false, p0, sizeof(p0), 8);
 
-    // start modified part - debug frame 0
     DEBUG_PRINT("Injecting I-frame N(S)=0 (in-order)");
-    // end modified part
 
     ax25_process_frame(&conn, f0, 1);
     free_iframe(f0);
 
-    // start modified part - debug after frame 0
     DEBUG_VAR("V(R) after frame 0", conn.vars.vr);
-    // end modified part
 
     // Frame 2 - triggers first SREJ(1) with P=1
-
-    // start modified part - debug first SREJ trigger
     DEBUG_PRINT("Injecting I-frame N(S)=2 (frame 1 missing -> first SREJ(1) with P=1 expected)");DEBUG_VAR("tx_count before gap injection", h.tx_count);
-    // end modified part
 
     uint8_t p2[] = { 0xA2 };
     ax25_frame_t *f2 = make_iframe(2, 0, false, p2, sizeof(p2), 8);
     ax25_process_frame(&conn, f2, 1);
     free_iframe(f2);
 
-    // start modified part - debug after first SREJ
     DEBUG_VAR("tx_count after first gap (SREJ should have been sent)", h.tx_count);DEBUG_BOOL("srej_exception after first gap", conn.srej_exception);
-    // end modified part
 
     // Locate and decode the first SREJ frame
     int first_srej_idx = -1;
@@ -1510,9 +1294,7 @@ static int test_srej_poll_final_bit_behaviour(void) {
         ax25_frame_free(decoded, &err);
     }
 
-    // start modified part - debug first SREJ location
     DEBUG_VAR("First SREJ frame index in tx buffer", (unsigned)first_srej_idx);
-    // end modified part
 
     TEST_ASSERT(first_srej_idx >= 0, "First SREJ frame found in tx buffer", 0);
     if (first_srej_idx >= 0) {
@@ -1522,9 +1304,7 @@ static int test_srej_poll_final_bit_behaviour(void) {
         if (decoded) {
             ax25_supervisory_frame_t *sf = (ax25_supervisory_frame_t*) decoded;
 
-            // start modified part - debug P/F bit and N(R) of first SREJ
             DEBUG_BOOL("First SREJ P/F bit (should be true = P=1)", sf->pf);DEBUG_VAR("First SREJ N(R) (should be 1)", sf->nr);DEBUG_FRAME("First SREJ raw frame bytes", h.tx_frames[first_srej_idx].data, h.tx_frames[first_srej_idx].len);
-            // end modified part
 
             // Per Section 6.4.4.2: first SREJ command has P=1
             TEST_ASSERT(sf->pf == true, "First SREJ has P=1 per Section 6.4.4.2", 0);
@@ -1549,17 +1329,13 @@ static int test_srej_state_reset_on_sabm(void) {
     ax25_connection_t conn;
     force_connected(&conn, &h, 8);
 
-    // start modified part - debug test 14 setup
     DEBUG_PRINT("Test 14 setup: SREJ exception created then SABM injected");DEBUG_STATE("Initial state", conn.state);DEBUG_VAR("Initial V(S)", conn.vars.vs);DEBUG_VAR("Initial V(R)", conn.vars.vr);
-    // end modified part
 
     // Create SREJ exception state
     uint8_t p0[] = { 0xB0 };
     ax25_frame_t *f0 = make_iframe(0, 0, false, p0, sizeof(p0), 8);
 
-    // start modified part - debug frame 0 for SABM test
     DEBUG_PRINT("Injecting I-frame N(S)=0 to set up state");
-    // end modified part
 
     ax25_process_frame(&conn, f0, 1);
     free_iframe(f0);
@@ -1567,16 +1343,12 @@ static int test_srej_state_reset_on_sabm(void) {
     uint8_t p2[] = { 0xB2 };
     ax25_frame_t *f2 = make_iframe(2, 0, false, p2, sizeof(p2), 8);
 
-    // start modified part - debug gap to create SREJ state
     DEBUG_PRINT("Injecting I-frame N(S)=2 (frame 1 missing -> SREJ exception active)");
-    // end modified part
 
     ax25_process_frame(&conn, f2, 1);
     free_iframe(f2);
 
-    // start modified part - debug SREJ state before SABM
     DEBUG_BOOL("srej_exception before SABM (should be true)", conn.srej_exception);DEBUG_VAR("srej_buffer_count before SABM (should be > 0)", conn.srej_buffer_count);DEBUG_VAR("srej_bitmap[0] before SABM", conn.srej_bitmap[0]);DEBUG_VAR("V(R) before SABM", conn.vars.vr);DEBUG_VAR("V(S) before SABM", conn.vars.vs);
-    // end modified part
 
     TEST_ASSERT(conn.srej_exception == true, "SREJ exception active before SABM", 0);
     TEST_ASSERT(conn.srej_buffer_count > 0, "SREJ buffer has frames before SABM", 0);
@@ -1594,15 +1366,11 @@ static int test_srej_state_reset_on_sabm(void) {
     sabm_frame.pf = true;
     sabm_frame.modifier = 0x2F;
 
-    // start modified part - debug SABM injection
     DEBUG_PRINT("Injecting SABM frame (new connection request - should reset all SREJ state)");
-    // end modified part
 
     ax25_process_frame(&conn, (ax25_frame_t*) &sabm_frame, 1);
 
-    // start modified part - debug post-SABM state
     DEBUG_BOOL("srej_exception after SABM (should be false)", conn.srej_exception);DEBUG_BOOL("rej_exception after SABM (should be false)", conn.rej_exception);DEBUG_VAR("srej_count after SABM (should be 0)", conn.srej_count);DEBUG_VAR("srej_buffer_count after SABM (should be 0)", conn.srej_buffer_count);DEBUG_VAR("V(S) after SABM (should be 0)", conn.vars.vs);DEBUG_VAR("V(R) after SABM (should be 0)", conn.vars.vr);DEBUG_VAR("V(A) after SABM (should be 0)", conn.vars.va);DEBUG_STATE("State after SABM", conn.state);
-    // start modified part - guard debug-only variable (set-but-not-used warning suppressed)
 #ifdef DEBUG_ENABLE
     bool bitmap_clear_dbg = true;
     for (int dbg_i = 0; dbg_i < 16; dbg_i++) {
@@ -1612,8 +1380,6 @@ static int test_srej_state_reset_on_sabm(void) {
         }
     } DEBUG_BOOL("srej_bitmap all zero after SABM", bitmap_clear_dbg);
 #endif // DEBUG_ENABLE
-    // end modified part
-    // end modified part
 
     // After SABM, all SREJ state must be cleared
     TEST_ASSERT(conn.srej_exception == false, "SREJ exception cleared after SABM", 0);
@@ -1656,50 +1422,37 @@ static int test_srej_window_boundary_behaviour(void) {
     conn.srej_max = 2;
     conn.timers.k = 7;
 
-    // start modified part - debug test 15 setup
     DEBUG_PRINT("Test 15 setup: window boundary behaviour, mod=8, k=7, srej_max=2");DEBUG_VAR("rej_mode", conn.rej_mode);DEBUG_VAR("srej_max", conn.srej_max);DEBUG_VAR("window k", conn.timers.k);DEBUG_STATE("Initial state", conn.state);DEBUG_VAR("Initial V(R)", conn.vars.vr);
-    // end modified part
 
     // Receive frames 0, 1, 2 in order
     for (uint8_t ns = 0; ns < 3; ns++) {
         uint8_t p[] = { ns };
         ax25_frame_t *f = make_iframe(ns, 0, false, p, 1, 8);
 
-        // start modified part - debug each in-order frame
         DEBUG_PRINT("Injecting I-frame N(S)=%u (in-order)", (unsigned)ns);
-        // end modified part
 
         ax25_process_frame(&conn, f, 1);
         free_iframe(f);
     }
 
-    // start modified part - debug after in-order frames
     DEBUG_VAR("V(R) after frames 0-2 (should be 3)", conn.vars.vr);DEBUG_VAR("rx_data_count after frames 0-2", h.rx_data_count);
-    // end modified part
 
     TEST_ASSERT(conn.vars.vr == 3, "V(R) = 3 after frames 0-2", 0);
 
     // Receive frame 4 - frame 3 missing -> SREJ(3)
-
-    // start modified part - debug gap injection for window test
     DEBUG_PRINT("Injecting I-frame N(S)=4 (frame 3 missing -> SREJ(3) expected)");
-    // end modified part
 
     uint8_t p4[] = { 0x04 };
     ax25_frame_t *f4 = make_iframe(4, 0, false, p4, sizeof(p4), 8);
     ax25_process_frame(&conn, f4, 1);
     free_iframe(f4);
 
-    // start modified part - debug SREJ for window test
-    // start modified part - guard debug-only variables to suppress unused-variable warnings
 #ifdef DEBUG_ENABLE
     uint8_t srej_wnd = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_SREJ_8BIT);
     int srej_wnd_idx = find_last_sframe(&h, AX25_FRAME_SUPERVISORY_SREJ_8BIT);
     int srej_wnd_nr = get_sframe_nr(&h, srej_wnd_idx);
     DEBUG_VAR("SREJ frames sent after frame 4", srej_wnd); DEBUG_VAR("SREJ N(R) (should be 3)", (unsigned)srej_wnd_nr); DEBUG_BOOL("srej_exception active", conn.srej_exception); DEBUG_VAR("V(R) after frame 4 (should be 3 - blocked)", conn.vars.vr);
 #endif // DEBUG_ENABLE
-    // end modified part
-    // end modified part
 
     uint8_t srej_count = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_SREJ_8BIT);
     TEST_ASSERT(srej_count >= 1, "SREJ sent for missing frame 3", 0);
@@ -1709,34 +1462,24 @@ static int test_srej_window_boundary_behaviour(void) {
     TEST_ASSERT(srej_nr == 3, "SREJ N(R) = 3 for missing frame", 0);
 
     // Receive frame 5 and 6 (still in window while waiting for frame 3)
-
-    // start modified part - debug frame 5 within window
     DEBUG_PRINT("Injecting I-frame N(S)=5 (in window, waiting for frame 3)");
-    // end modified part
 
     uint8_t p5[] = { 0x05 };
     ax25_frame_t *f5 = make_iframe(5, 0, false, p5, sizeof(p5), 8);
     ax25_process_frame(&conn, f5, 1);
     free_iframe(f5);
 
-    // start modified part - debug after frame 5
     DEBUG_VAR("srej_buffer_count after frame 5 (buffered)", conn.srej_buffer_count);DEBUG_VAR("V(R) still blocked at 3", conn.vars.vr);
-    // end modified part
 
     // Deliver frame 3 (SREJ recovery)
-
-    // start modified part - debug SREJ recovery for window test
     DEBUG_PRINT("Injecting retransmitted I-frame N(S)=3 (SREJ recovery)");
-    // end modified part
 
     uint8_t p3[] = { 0x03 };
     ax25_frame_t *f3 = make_iframe(3, 0, false, p3, sizeof(p3), 8);
     ax25_process_frame(&conn, f3, 1);
     free_iframe(f3);
 
-    // start modified part - debug after window recovery
     DEBUG_VAR("V(R) after recovery (should be 6)", conn.vars.vr);DEBUG_VAR("rx_data_count after recovery (should be 6)", h.rx_data_count);DEBUG_BOOL("srej_exception after recovery (should be false)", conn.srej_exception);DEBUG_VAR("srej_bitmap[0] after recovery (should be 0)", conn.srej_bitmap[0]);
-    // end modified part
 
     // All 6 frames (0-5) must be delivered in order
     TEST_ASSERT(conn.vars.vr == 6, "V(R) = 6 after SREJ window recovery", 0);
@@ -1764,45 +1507,31 @@ static int test_srej_not_sent_when_local_busy(void) {
     // Set local_busy - TNC busy condition
     conn.local_busy = true;
 
-    // start modified part - debug test 16 setup
     DEBUG_PRINT("Test 16 setup: local_busy=true, verify SREJ/REJ suppressed");DEBUG_BOOL("local_busy", conn.local_busy);DEBUG_STATE("Initial state", conn.state);DEBUG_VAR("Initial V(R)", conn.vars.vr);
-    // end modified part
 
     uint8_t tx_before = h.tx_count;
 
-    // start modified part - debug tx_count before busy test
     DEBUG_VAR("tx_count before busy test", tx_before);
-    // end modified part
 
     // Receive frame 0 normally (in-order) - should still be accepted
-
-    // start modified part - debug frame 0 in busy state
     DEBUG_PRINT("Injecting I-frame N(S)=0 (in-order, local_busy=true)");
-    // end modified part
 
     uint8_t p0[] = { 0x10 };
     ax25_frame_t *f0 = make_iframe(0, 0, false, p0, sizeof(p0), 8);
     ax25_process_frame(&conn, f0, 1);
     free_iframe(f0);
 
-    // start modified part - debug after frame 0 busy
     DEBUG_VAR("V(R) after frame 0 in busy state", conn.vars.vr);DEBUG_VAR("rx_data_count after frame 0", h.rx_data_count);DEBUG_VAR("tx_count after frame 0 in busy mode", h.tx_count);
-    // end modified part
 
     // Frame 1 missing; frame 2 received
-
-    // start modified part - debug gap in busy state
     DEBUG_PRINT("Injecting I-frame N(S)=2 (frame 1 missing, local_busy=true -> no SREJ/REJ expected)");
-    // end modified part
 
     uint8_t p2[] = { 0x12 };
     ax25_frame_t *f2 = make_iframe(2, 0, false, p2, sizeof(p2), 8);
     ax25_process_frame(&conn, f2, 1);
     free_iframe(f2);
 
-    // start modified part - debug post-gap busy state
     DEBUG_BOOL("srej_exception in busy state", conn.srej_exception);DEBUG_BOOL("rej_exception in busy state", conn.rej_exception);DEBUG_VAR("V(R) after gap in busy state", conn.vars.vr);DEBUG_VAR("srej_bitmap[0] in busy state", conn.srej_bitmap[0]);
-    // start modified part - guard debug-only variables to suppress unused-variable warnings
 #ifdef DEBUG_ENABLE
     uint8_t t16_srej = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_SREJ_8BIT);
     uint8_t t16_rej = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_REJ_8BIT);
@@ -1810,8 +1539,6 @@ static int test_srej_not_sent_when_local_busy(void) {
     uint8_t tx_delta_dbg = (uint8_t) (h.tx_count - tx_before);
     DEBUG_VAR("Total new TX frames while local_busy", tx_delta_dbg);
 #endif // DEBUG_ENABLE
-    // end modified part
-    // end modified part
 
     // The srej_exception flag and local_busy interaction:
     // local_busy == true means receiver is not ready; the SREJ/REJ behaviour
@@ -1847,40 +1574,29 @@ static int test_srej_clears_on_rr_acknowledgment(void) {
     ax25_connection_t conn;
     force_connected(&conn, &h, 8);
 
-    // start modified part - debug test 17 setup
     DEBUG_PRINT("Test 17 setup: send 3 frames, receive RR(3) to acknowledge all");DEBUG_STATE("Initial state", conn.state);DEBUG_VAR("Initial V(S)", conn.vars.vs);DEBUG_VAR("Initial V(A)", conn.vars.va);
-    // end modified part
 
     // Send frames 0, 1, 2 from our side
     for (int i = 0; i < 3; i++) {
         uint8_t d[] = { (uint8_t) (0xD0 + i) };
 
-        // start modified part - debug each outgoing frame
         DEBUG_PRINT("Sending I-frame N(S)=%d: [%02X]", i, d[0]);
-        // end modified part
 
         ax25_send_data(&conn, d, 1, PID_NO_L3);
     }
 
-    // start modified part - debug after sending 3 frames
     DEBUG_VAR("V(S) after sending 3 frames (should be 3)", conn.vars.vs);DEBUG_VAR("V(A) before RR (should be 0)", conn.vars.va);DEBUG_VAR("tx_queue.count", conn.tx_queue.count);DEBUG_VAR("tx_count (3 I-frames transmitted)", h.tx_count);
-    // end modified part
 
     TEST_ASSERT(conn.vars.vs == 3, "V(S) = 3 after sending 3 frames", 0);
 
     // Receive RR(3) from remote - acknowledges all 3 of our frames
-
-    // start modified part - debug RR(3) injection
     DEBUG_PRINT("Injecting RR(3) from remote (acknowledges all 3 of our I-frames)");
-    // end modified part
 
     ax25_frame_t *rr = make_sframe(AX25_FRAME_SUPERVISORY_RR_8BIT, 3, false, 0);
     ax25_process_frame(&conn, rr, 1);
     free_sframe(rr);
 
-    // start modified part - debug after RR(3)
     DEBUG_VAR("V(A) after RR(3) (should be 3)", conn.vars.va);DEBUG_VAR("tx_queue.count after RR(3) (should be 0)", conn.tx_queue.count);
-    // end modified part
 
     // V(A) must advance to 3
     TEST_ASSERT(conn.vars.va == 3, "V(A) = 3 after RR(3) received", 0);
@@ -1893,34 +1609,24 @@ static int test_srej_clears_on_rr_acknowledgment(void) {
     // (this tests that our outgoing RR after SREJ delivers proper N(R))
 
     // Receive frame 0 from remote
-
-    // start modified part - debug SREJ+RR interaction
     DEBUG_PRINT("Now testing SREJ exception + RR interaction on receive side");DEBUG_PRINT("Injecting I-frame N(S)=0 from remote");
-    // end modified part
 
     uint8_t p0[] = { 0x01 };
     ax25_frame_t *f0 = make_iframe(0, 0, false, p0, sizeof(p0), 8);
     ax25_process_frame(&conn, f0, 1);
     free_iframe(f0);
 
-    // start modified part - debug after remote frame 0
     DEBUG_VAR("V(R) after remote frame 0", conn.vars.vr);
-    // end modified part
 
     // Receive frame 2 (gap at 1) - SREJ(1) sent
-
-    // start modified part - debug gap on receive side
     DEBUG_PRINT("Injecting remote I-frame N(S)=2 (gap at frame 1 -> SREJ(1) expected)");
-    // end modified part
 
     uint8_t p2[] = { 0x02 };
     ax25_frame_t *f2b = make_iframe(2, 0, false, p2, sizeof(p2), 8);
     ax25_process_frame(&conn, f2b, 1);
     free_iframe(f2b);
 
-    // start modified part - debug SREJ state on receive side
     DEBUG_BOOL("srej_exception after receive-side gap", conn.srej_exception);DEBUG_VAR("V(R) after gap (should be 1 - blocked)", conn.vars.vr);
-    // start modified part - guard debug-only variables to suppress unused-variable warnings
 #ifdef DEBUG_ENABLE
     uint8_t t17_srej = count_sframes_of_type(&h, AX25_FRAME_SUPERVISORY_SREJ_8BIT);
     DEBUG_VAR("SREJ frames sent from our side (receive-side SREJ)", t17_srej);
@@ -1928,7 +1634,6 @@ static int test_srej_clears_on_rr_acknowledgment(void) {
     int t17_srej_nr = get_sframe_nr(&h, t17_srej_idx);
     DEBUG_VAR("Our SREJ N(R) (should be 1)", (unsigned)t17_srej_nr);
 #endif // DEBUG_ENABLE
-    // end modified part
 
     TEST_ASSERT(conn.srej_exception == true, "SREJ exception active", 0);
     // V(R) = 1 (can't advance past missing frame 1)
@@ -1956,59 +1661,43 @@ static int test_srej_nr_piggyback_in_iframe(void) {
     ax25_connection_t conn;
     force_connected(&conn, &h, 8);
 
-    // start modified part - debug test 18 setup
     DEBUG_PRINT("Test 18 setup: N(R) piggybacking after SREJ recovery");DEBUG_STATE("Initial state", conn.state);DEBUG_VAR("Initial V(R)", conn.vars.vr);DEBUG_VAR("Initial V(S)", conn.vars.vs);
-    // end modified part
 
     // Receive frames 0, 1 in order
     for (uint8_t ns = 0; ns < 2; ns++) {
         uint8_t p[] = { ns };
         ax25_frame_t *f = make_iframe(ns, 0, false, p, 1, 8);
 
-        // start modified part - debug each in-order frame
         DEBUG_PRINT("Injecting I-frame N(S)=%u (in-order)", (unsigned)ns);
-        // end modified part
 
         ax25_process_frame(&conn, f, 1);
         free_iframe(f);
     }
 
-    // start modified part - debug after in-order frames
     DEBUG_VAR("V(R) after frames 0,1 (should be 2)", conn.vars.vr);DEBUG_VAR("rx_data_count after frames 0,1", h.rx_data_count);
-    // end modified part
 
     // Receive frame 3 (frame 2 missing) - SREJ(2)
-
-    // start modified part - debug gap for piggyback test
     DEBUG_PRINT("Injecting I-frame N(S)=3 (frame 2 missing -> SREJ(2))");
-    // end modified part
 
     uint8_t p3[] = { 0x03 };
     ax25_frame_t *f3 = make_iframe(3, 0, false, p3, sizeof(p3), 8);
     ax25_process_frame(&conn, f3, 1);
     free_iframe(f3);
 
-    // start modified part - debug SREJ state for piggyback test
     DEBUG_BOOL("srej_exception after gap (should be true)", conn.srej_exception);DEBUG_VAR("V(R) after gap (should be 2 - blocked)", conn.vars.vr);DEBUG_VAR("srej_bitmap[0] (bit 2 set)", conn.srej_bitmap[0]);
-    // end modified part
 
     TEST_ASSERT(conn.srej_exception == true, "SREJ exception active", 0);
     TEST_ASSERT(conn.vars.vr == 2, "V(R) = 2 (blocked by missing frame 2)", 0);
 
     // Retransmit frame 2 - SREJ resolved
-
-    // start modified part - debug frame 2 retransmit for piggyback
     DEBUG_PRINT("Injecting retransmitted I-frame N(S)=2 (SREJ resolution)");
-    // end modified part
 
     uint8_t p2[] = { 0x02 };
     ax25_frame_t *f2 = make_iframe(2, 0, false, p2, sizeof(p2), 8);
     ax25_process_frame(&conn, f2, 1);
     free_iframe(f2);
 
-    // start modified part - debug post-SREJ-recovery state for piggyback
     DEBUG_VAR("V(R) after SREJ recovery (should be 4)", conn.vars.vr);DEBUG_BOOL("srej_exception after recovery (should be false)", conn.srej_exception);DEBUG_VAR("rx_data_count after recovery (should be 4)", h.rx_data_count);DEBUG_VAR("srej_bitmap[0] after recovery (should be 0)", conn.srej_bitmap[0]);
-    // end modified part
 
     TEST_ASSERT(conn.vars.vr == 4, "V(R) = 4 after SREJ recovery (frames 0-3 received)", 0);
     TEST_ASSERT(conn.srej_exception == false, "SREJ exception cleared", 0);
@@ -2017,15 +1706,11 @@ static int test_srej_nr_piggyback_in_iframe(void) {
     uint8_t outdata[] = { 0xFF, 0xFE };
     uint8_t tx_before = h.tx_count;
 
-    // start modified part - debug outgoing I-frame after SREJ recovery
     DEBUG_PRINT("Sending outgoing I-frame after SREJ recovery (N(R) should be V(R)=4)");DEBUG_VAR("tx_count before outgoing I-frame", tx_before);DEBUG_VAR("Current V(R) (should be 4 - to be piggybacked as N(R))", conn.vars.vr);
-    // end modified part
 
     ax25_send_data(&conn, outdata, sizeof(outdata), PID_NO_L3);
 
-    // start modified part - debug after outgoing I-frame
     DEBUG_VAR("tx_count after send (should be tx_before+1)", h.tx_count);
-    // end modified part
 
     TEST_ASSERT((uint8_t )(h.tx_count - tx_before) == 1, "One I-frame transmitted", 0);
 
@@ -2038,18 +1723,14 @@ static int test_srej_nr_piggyback_in_iframe(void) {
             TEST_ASSERT(decoded->type == AX25_FRAME_INFORMATION_8BIT, "Outgoing frame is I-frame", 0);
             ax25_information_frame_t *iout = (ax25_information_frame_t*) decoded;
 
-            // start modified part - debug piggybacked N(R) value
             DEBUG_VAR("Outgoing I-frame N(S)", iout->ns);DEBUG_VAR("Outgoing I-frame N(R) (should be 4 = V(R) after SREJ recovery)", iout->nr);DEBUG_FRAME("Outgoing I-frame raw bytes", h.tx_frames[tx_before].data, h.tx_frames[tx_before].len);
-            // end modified part
-
             TEST_ASSERT(iout->nr == 4, "Outgoing I-frame N(R) = 4 (= V(R) after SREJ recovery)", 0);
             ax25_frame_free(decoded, &err);
         }
     }
 
-    // start modified part - debug final state test 18
     DEBUG_PRINT("Test 18 final state: N(R) piggyback verified");DEBUG_VAR("Final V(R)", conn.vars.vr);DEBUG_VAR("Final V(S)", conn.vars.vs);DEBUG_BOOL("Final srej_exception (should be false)", conn.srej_exception);
-    // end modified part
+    ax25_connection_cleanup(&conn);
 
     return 0;
 }

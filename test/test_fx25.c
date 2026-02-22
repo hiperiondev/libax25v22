@@ -32,7 +32,6 @@
 
 static uint32_t assert_count = 0;
 
-// start modified part - Fixed RS tests to work with actual implementation
 static int test_fx25_get_mode(void) {
     assert_count = 0;
     printf("\n--- test_fx25_get_mode ---\n");
@@ -193,7 +192,7 @@ static int test_rs_encode(void) {
 
     uint8_t data[239];
     for (int i = 0; i < 239; i++) {
-        data[i] = (uint8_t)(i & 0xFF);
+        data[i] = (uint8_t) (i & 0xFF);
     }
 
     uint8_t parity[16];
@@ -214,7 +213,7 @@ static int test_rs_encode(void) {
 
     uint8_t data32[223];
     for (int i = 0; i < 223; i++) {
-        data32[i] = (uint8_t)(i & 0xFF);
+        data32[i] = (uint8_t) (i & 0xFF);
     }
 
     uint8_t parity32[32];
@@ -238,7 +237,7 @@ static int test_fx25_encode_decode_basic(void) {
 
     uint8_t ax25_frame[64];
     for (int i = 0; i < 64; i++) {
-        ax25_frame[i] = (uint8_t)(i & 0xFF);
+        ax25_frame[i] = (uint8_t) (i & 0xFF);
     }
 
     fx25_frame_t tx_frame;

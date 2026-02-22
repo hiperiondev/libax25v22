@@ -149,6 +149,7 @@ static int test_data_transfer(void) {
 
     free(dest);
     free(src);
+    ax25_connection_cleanup(conn);
     free(conn);
 
     return 0;
