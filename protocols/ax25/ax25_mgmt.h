@@ -332,6 +332,15 @@
 /* Data Structures                                                            */
 /*============================================================================*/
 
+// MDL-ERROR indication codes per AX.25 v2.2 Appendix C5
+typedef enum {
+    AX25_MDL_ERROR_B = 0,  // FRMR received in AWAITING_RESPONSE state (peer is AX.25 v2.0)
+    AX25_MDL_ERROR_K = 1  // TM201 expired NM201 times - negotiation timeout
+} ax25_mdl_error_t;
+
+// MDL-ERROR indication callback type delivered to Layer 3
+typedef void (*ax25_mdl_error_cb_t)(ax25_mdl_error_t error, void *user_data);
+
 /**
  * @struct ax25_negotiated_params_t
  * @brief Negotiated operational parameters for AX.25 v2.2 connection
@@ -535,20 +544,19 @@ typedef struct {
     uint8_t retry_count;
 
     /**
-     * @brief Peer station address
-     * @details AX.25 address of the remote station being negotiated with.
-     *          Set when negotiation initiated.
+     * @brief Peer station address - AX.25 address of remote station being negotiated with
      */
     ax25_address_t peer;
+    uint8_t max_retries;                   // NM201 per AX.25 v2.2 Appendix C5 (default 3)
+    ax25_address_t local;                  // local station address stored for XID retransmit
+    void (*transmit)(uint8_t*, size_t);   // stored transmit callback for XID retransmit
+    ax25_mdl_error_cb_t on_mdl_error;      // MDL-ERROR indication callback, NULL = ignored
+    void *user_data;                       // context pointer passed to on_mdl_error
 } ax25_mgmt_context_t;
 
 /*============================================================================*/
 /* Function Prototypes                                                        */
 /*============================================================================*/
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /**
  * @brief Initialize AX.25 management context
@@ -678,5 +686,8 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
  * @see AX.25 v2.2 Appendix C5.2 (TM201 timer)
  */
 void ax25_mgmt_tick(ax25_mgmt_context_t *ctx, uint32_t current_tick);
+
+// MDL-ERROR code B: notification on FRMR received in AWAITING_RESPONSE
+void ax25_mgmt_notify_frmr_received(ax25_mgmt_context_t *ctx);
 
 #endif /* AX25_MGMT_H_ */

@@ -22,19 +22,97 @@ uint8_t ax25_mgmt_init(ax25_mgmt_context_t *ctx) {
 
     // Set local defaults (AX.25 v2.2)
     ctx->local_params.full_duplex = false;
-    ctx->local_params.selective_reject = true;   // Support SREJ
-    ctx->local_params.implicit_reject = true;    // Support REJ
-    ctx->local_params.modulo128 = true;          // Support extended
-    ctx->local_params.ifield_length = 256;       // N1 default
-    ctx->local_params.window_size = 7;           // k default (modulo-8)
-    ctx->local_params.ack_timer = 3000;          // T1 = 3 seconds
-    ctx->local_params.retries = 10;              // N2 default
-    ctx->local_params.response_delay_timer = 500;  // T2 default = 500ms
+    ctx->local_params.selective_reject = true;
+    ctx->local_params.implicit_reject = true;
+    ctx->local_params.modulo128 = true;
+    ctx->local_params.ifield_length = 256;
+    ctx->local_params.window_size = 7;
+    ctx->local_params.ack_timer = 3000;
+    ctx->local_params.retries = 10;
+    ctx->local_params.response_delay_timer = 500;
+
+    // initialize new MDL-ERROR fields
+    ctx->max_retries = 3;      // NM201 default per AX.25 v2.2 Appendix C5
+    ctx->on_mdl_error = NULL;   // caller sets after init if MDL-ERROR reporting needed
+    ctx->user_data = NULL;   // caller sets after init
+    ctx->transmit = NULL;   // set by ax25_mgmt_start_negotiation
 
     return 0;
 }
 
-// Start negotiation by sending XID command
+// Returns true if XID was successfully encoded and passed to transmit callback,
+// false if encoding failed (e.g. malloc failure on embedded target).
+static bool ax25_mgmt_send_xid_command(ax25_mgmt_context_t *ctx) {
+    if (!ctx || !ctx->transmit)
+        return false;
+
+    ax25_exchange_identification_frame_t xid;
+    xid.base.base.header.destination = ctx->peer;
+    xid.base.base.header.source = ctx->local;
+    xid.base.base.header.cr = true;
+    xid.base.base.type = AX25_FRAME_UNNUMBERED_XID;
+    xid.base.pf = true;
+    xid.fi = 0x82;
+    xid.gi = 0x80;
+
+    uint8_t num_params = 0;
+    ax25_xid_parameter_t *params[8];
+    uint8_t err;
+
+    params[num_params++] = ax25_xid_class_of_procedures_new(
+    true, ctx->local_params.full_duplex,
+    false, false, false, false, false, 0, &err);
+
+    params[num_params++] = ax25_xid_hdlc_optional_functions_new(
+    true, ctx->local_params.implicit_reject, ctx->local_params.selective_reject,
+    true, ctx->local_params.modulo128,
+    true, true, true, true, true, true, true,
+    true, ctx->local_params.modulo128,
+    false, false, false, false, false, false, false, 0,
+    false, &err);
+
+    params[num_params++] = ax25_xid_big_endian_new(
+    XID_PI_IFIELD_LENGTH_RX, ctx->local_params.ifield_length, 2, &err);
+
+    params[num_params++] = ax25_xid_big_endian_new(
+    XID_PI_WINDOW_SIZE_RX, ctx->local_params.window_size, 1, &err);
+
+    params[num_params++] = ax25_xid_big_endian_new(
+    XID_PI_ACK_TIMER, ctx->local_params.ack_timer, 2, &err);
+
+    params[num_params++] = ax25_xid_big_endian_new(
+    XID_PI_RETRIES, ctx->local_params.retries, 1, &err);
+
+    params[num_params++] = ax25_xid_big_endian_new(
+    XID_PI_RESP_DELAY_TIMER, ctx->local_params.response_delay_timer, 2, &err);
+
+    xid.parameters = params;
+    xid.param_count = num_params;
+
+    size_t len;
+    bool sent = false;
+    uint8_t *encoded = ax25_exchange_identification_frame_encode(&xid, &len, &err);
+    if (encoded) {
+        ctx->transmit(encoded, len);
+        if (encoded != NULL) {
+            free(encoded);
+            encoded = NULL;
+        }
+
+        sent = true;
+    }
+
+    for (uint8_t i = 0; i < num_params; i++) {
+        if (params[i]) {
+            if (params[i]->free) {
+                params[i]->free(params[i], &err);
+            }
+        }
+    }
+
+    return sent;
+}
+
 uint8_t ax25_mgmt_start_negotiation(ax25_mgmt_context_t *ctx, ax25_address_t *dest, ax25_address_t *src, void (*transmit)(uint8_t*, size_t)) {
     if (!ctx || !dest || !src || !transmit)
         return 1;
@@ -42,100 +120,19 @@ uint8_t ax25_mgmt_start_negotiation(ax25_mgmt_context_t *ctx, ax25_address_t *de
         return 2;  // Already negotiating
 
     ctx->peer = *dest;
+    ctx->local = *src;
+    ctx->transmit = transmit;
+    // Use UINT32_MAX as sentinel: TM201 is armed on the first ax25_mgmt_tick call,
+    // not from epoch zero. This prevents immediate TM201 expiry on running systems.
+    ctx->timeout_tick = UINT32_MAX;
     ctx->state = AX25_MGMT_AWAITING_RESPONSE;
     ctx->retry_count = 0;
 
-    // Build XID command frame
-    ax25_exchange_identification_frame_t xid;
-    xid.base.base.header.destination = *dest;
-    xid.base.base.header.source = *src;
-    xid.base.base.header.cr = true;  // Command
-    xid.base.base.type = AX25_FRAME_UNNUMBERED_XID;
-    xid.base.pf = true;
-    xid.fi = 0x82;  // Parameter negotiation
-    xid.gi = 0x80;  // General group
-
-    // Add parameters
-    uint8_t num_params = 0;
-    ax25_xid_parameter_t *params[8];
-    uint8_t err;
-
-    // Class of Procedures (PI=2) - use specific function
-    params[num_params++] = ax25_xid_class_of_procedures_new(
-    true,  // a_flag: Half-duplex
-            ctx->local_params.full_duplex,  // b_flag: Full-duplex
-            false, false, false, false, false,  // c-g flags: unused
-            0,  // reserved
-            &err);
-
-    // HDLC Optional Functions (PI=3) - use specific function
-    params[num_params++] = ax25_xid_hdlc_optional_functions_new(
-    true,  // RNR: always supported
-            ctx->local_params.implicit_reject,  // REJ
-            ctx->local_params.selective_reject,  // SREJ
-            true,  // SABM: always supported
-            ctx->local_params.modulo128,  // SABME
-            true,  // DM: always supported
-            true,  // DISC: always supported
-            true,  // UA: always supported
-            true,  // FRMR: always supported
-            true,  // UI: always supported
-            true,  // XID: always supported
-            true,  // TEST: always supported
-            true,  // Modulo 8: always supported
-            ctx->local_params.modulo128,  // Modulo 128
-            false, false, false, false, false, false, false,  // reserved flags
-            0,  // reserved byte
-            false,  // extension bit
-            &err);
-
-    // I-field length Rx (PI=6) - use big-endian function
-    params[num_params++] = ax25_xid_big_endian_new(
-    XID_PI_IFIELD_LENGTH_RX, ctx->local_params.ifield_length, 2,  // 2 bytes
-            &err);
-
-    // Window size Rx (PI=8) - use big-endian function
-    params[num_params++] = ax25_xid_big_endian_new(
-    XID_PI_WINDOW_SIZE_RX, ctx->local_params.window_size, 1,  // 1 byte
-            &err);
-
-    // Ack timer (PI=9) - use big-endian function
-    params[num_params++] = ax25_xid_big_endian_new(
-    XID_PI_ACK_TIMER, ctx->local_params.ack_timer, 2,  // 2 bytes
-            &err);
-
-    // Retries (PI=10) - use big-endian function
-    params[num_params++] = ax25_xid_big_endian_new(
-    XID_PI_RETRIES, ctx->local_params.retries, 1,  // 1 byte
-            &err);
-
-    // Response Delay Timer (PI=11) - use big-endian function
-    params[num_params++] = ax25_xid_big_endian_new(
-    XID_PI_RESP_DELAY_TIMER, ctx->local_params.response_delay_timer, 2,  // 2 bytes
-            &err);
-
-    xid.parameters = params;
-    xid.param_count = num_params;
-
-    // Encode and send
-    size_t len;
-    uint8_t *encoded = ax25_exchange_identification_frame_encode(&xid, &len, &err);
-    if (encoded) {
-        transmit(encoded, len);
-
-        if (encoded != NULL) {
-            free(encoded);
-            encoded = NULL;
-        }
-    }
-
-    // Free parameter structures
-    for (uint8_t i = 0; i < num_params; i++) {
-        if (params[i]) {
-            if (params[i]->free) {
-                params[i]->free(params[i], &err);
-            }
-        }
+    // If initial XID cannot be encoded or transmitted, abort immediately.
+    // Do not stay in AWAITING_RESPONSE with no XID sent.
+    if (!ax25_mgmt_send_xid_command(ctx)) {
+        ctx->state = AX25_MGMT_IDLE;
+        return 3;
     }
 
     return 0;
@@ -339,17 +336,57 @@ void ax25_mgmt_tick(ax25_mgmt_context_t *ctx, uint32_t current_tick) {
     if (!ctx)
         return;
 
-    // Check for timeout in awaiting response state
-    if (ctx->state == AX25_MGMT_AWAITING_RESPONSE) {
-        if ((current_tick - ctx->timeout_tick) > 3000) {  // 3 second timeout
-            ctx->retry_count++;
-            if (ctx->retry_count >= 3) {
-                // Negotiation failed, return to idle
-                ctx->state = AX25_MGMT_IDLE;
-            } else {
-                // Retransmit XID command would go here
-                ctx->timeout_tick = current_tick;
-            }
+    if (ctx->state != AX25_MGMT_AWAITING_RESPONSE)
+        return;
+
+    // UINT32_MAX sentinel: TM201 not yet armed (first tick after start_negotiation).
+    // Arm it here to prevent immediate expiry on systems where current_tick >> 0.
+    if (ctx->timeout_tick == UINT32_MAX) {
+        ctx->timeout_tick = current_tick;
+        return;
+    }
+
+    // use T1 value as TM201, minimum 3000 ms per AX.25 v2.2 Appendix C5
+    uint32_t tm201 = (ctx->local_params.ack_timer > 3000u) ? (uint32_t) ctx->local_params.ack_timer : 3000u;
+
+    if ((current_tick - ctx->timeout_tick) < tm201)
+        return;
+
+    // TM201 has expired
+    ctx->retry_count++;
+    if (ctx->retry_count >= ctx->max_retries) {
+        // NM201 retries exhausted - MDL-ERROR indication code K per AX.25 v2.2 Appendix C5
+        ctx->state = AX25_MGMT_IDLE;
+        // Clear agreed_params: no negotiation result is valid after timeout.
+        // Layer 3 must not read stale partial negotiation data after MDL-ERROR K.
+        memset(&ctx->agreed_params, 0, sizeof(ctx->agreed_params));
+        if (ctx->on_mdl_error)
+            ctx->on_mdl_error(AX25_MDL_ERROR_K, ctx->user_data);
+    } else {
+        ctx->timeout_tick = current_tick;
+        // If retransmit encoding fails on embedded target (e.g. malloc failure),
+        // issue MDL-ERROR K immediately rather than waiting NM201 more timeouts.
+        if (!ax25_mgmt_send_xid_command(ctx)) {
+            ctx->state = AX25_MGMT_IDLE;
+            memset(&ctx->agreed_params, 0, sizeof(ctx->agreed_params));
+            if (ctx->on_mdl_error)
+                ctx->on_mdl_error(AX25_MDL_ERROR_K, ctx->user_data);
         }
     }
+}
+
+// bridge FRMR event into MDL state machine
+void ax25_mgmt_notify_frmr_received(ax25_mgmt_context_t *ctx) {
+    if (!ctx)
+        return;
+    // Only meaningful while waiting for an XID response
+    if (ctx->state != AX25_MGMT_AWAITING_RESPONSE)
+        return;
+    ctx->state = AX25_MGMT_IDLE;
+    // Clear agreed_params: FRMR means peer is AX.25 v2.0, XID not supported.
+    // No agreed parameters are valid; Layer 3 must use defaults.
+    memset(&ctx->agreed_params, 0, sizeof(ctx->agreed_params));
+    // MDL-ERROR code B: FRMR received, peer is AX.25 v2.0 and does not support XID
+    if (ctx->on_mdl_error)
+        ctx->on_mdl_error(AX25_MDL_ERROR_B, ctx->user_data);
 }

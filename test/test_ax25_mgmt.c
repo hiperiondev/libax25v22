@@ -41,6 +41,17 @@ static void capture_transmit(uint8_t *data, size_t len) {
     }
 }
 
+// Tracking variables for MDL-ERROR indication delivery verification.
+static bool mdl_error_fired;
+static ax25_mdl_error_t mdl_error_code_received;
+
+// MDL-ERROR indication callback: records code for test assertions.
+static void test_on_mdl_error(ax25_mdl_error_t error, void *user_data) {
+    mdl_error_fired = true;
+    mdl_error_code_received = error;
+    (void) user_data;
+}
+
 static int test_default_parameters(void) {
     assert_count = 0;
     printf("\n--- test_default_parameters ---\n");
@@ -101,6 +112,11 @@ static int test_negotiation_timeout(void) {
     ax25_mgmt_context_t ctx;
     ax25_mgmt_init(&ctx);
 
+    // Register MDL-ERROR callback so Layer 3 delivery is verified by assertions.
+    mdl_error_fired = false;
+    mdl_error_code_received = AX25_MDL_ERROR_B;
+    ctx.on_mdl_error = test_on_mdl_error;
+
     uint8_t err = 0;
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     TEST_ASSERT(dest != NULL && err == 0, "Parsed destination address", err);
@@ -128,6 +144,10 @@ static int test_negotiation_timeout(void) {
     current_tick += 4000;
     ax25_mgmt_tick(&ctx, current_tick);
     TEST_ASSERT(ctx.retry_count == 3, "Retry count incremented", 0);
+
+    // MDL-ERROR K must be delivered to Layer 3 when NM201 retries are exhausted.
+    TEST_ASSERT(mdl_error_fired == true, "MDL-ERROR indication delivered to Layer 3", 0);
+    TEST_ASSERT(mdl_error_code_received == AX25_MDL_ERROR_K, "MDL-ERROR code is K (retransmission limit)", 0);
 
     current_tick += 4000;
     ax25_mgmt_tick(&ctx, current_tick);

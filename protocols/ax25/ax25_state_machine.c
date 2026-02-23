@@ -22,6 +22,12 @@
 #define AX25_OUTSTANDING(vs, va, mod) \
     ((uint8_t)(((uint8_t)(vs) - (uint8_t)(va)) & AX25_MASK(mod)))
 
+#define FIRE_DL_ERROR(conn, code) \
+    do { \
+        if ((conn)->callbacks.on_dl_error) \
+            (conn)->callbacks.on_dl_error((conn)->user_data, (code)); \
+    } while (0)
+
 static inline bool ax25_in_window(uint8_t ns, uint8_t vr, uint8_t k, uint8_t mod) {
     uint8_t diff = (uint8_t) (((uint8_t) ns - (uint8_t) vr) & AX25_MASK(mod));
     return (diff > 0u) && (diff <= k);
@@ -579,6 +585,9 @@ static void send_frmr_z(ax25_connection_t *conn, uint8_t bad_ctrl) {
         encoded = NULL;
     }
     conn->state = AX25_STATE_FRAME_REJECT;
+
+    // DL-ERROR indication code J: invalid N(R) received
+    FIRE_DL_ERROR(conn, AX25_DL_ERROR_J);
 }
 
 // validate N(R), dequeue acked frames, advance V(A)
@@ -867,9 +876,12 @@ static void handle_received_rr(ax25_connection_t *conn, ax25_supervisory_frame_t
 // Handle received FRMR frame - AX.25 v2.2 Section 4.4.5
 // When we receive FRMR, we must reset the link by sending SABM/SABME
 static void handle_received_frmr(ax25_connection_t *conn, ax25_frame_reject_frame_t *frmr) {
-    // FRMR received - link reset required per Section 4.4.5
-    // The station receiving FRMR should reset the link by sending SABM/SABME
+    // notify MDL state machine (MDL-ERROR B) then fire DL-ERROR B
+    if (conn->mgmt_ctx)
+        ax25_mgmt_notify_frmr_received(conn->mgmt_ctx);
+    FIRE_DL_ERROR(conn, AX25_DL_ERROR_B);
 
+    // FRMR received - link reset required per Section 4.4.5
     // Notify upper layer of the error condition
     if (conn->callbacks.on_disconnect) {
         conn->callbacks.on_disconnect(conn->user_data, 2);  // 2 = FRMR received (link reset required)
@@ -945,6 +957,9 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
 
     // Initialize statistics
     memset(&conn->stats, 0, sizeof(ax25_statistics_t));
+
+    // initialize MDL context pointer
+    conn->mgmt_ctx = NULL;  // caller sets if MDL error bridging is needed
 
     return 0;
 }
@@ -1043,6 +1058,9 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
             conn->state = AX25_STATE_DISCONNECTED;
             conn->t1_start_tick = 0;
             conn->t3_start_tick = 0;  // Reset T3 as well
+            // DL-ERROR indication code N: N2 retries exceeded
+            FIRE_DL_ERROR(conn, AX25_DL_ERROR_N);
+
             // Notify upper layer if callback exists
             if (conn->callbacks.on_disconnect) {
                 conn->callbacks.on_disconnect(conn->user_data, 3);  // 3 = timeout

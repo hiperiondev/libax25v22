@@ -89,6 +89,24 @@
 #define FRMR_Y  0x04 /**< Information field exceeded maximum length N1 */
 #define FRMR_Z  0x08 /**< Invalid N(R) received - acknowledgment error */
 
+// DL-ERROR indication codes per AX.25 v2.2 Section 17.2 / Appendix C4
+typedef enum {
+    AX25_DL_ERROR_A = 0,  // N(S) out of range
+    AX25_DL_ERROR_B = 1,  // FRMR received - link reset required
+    AX25_DL_ERROR_C = 2,  // UA received without F=1 in AWAITING_CONNECTION
+    AX25_DL_ERROR_D = 3,  // DM received in connected state
+    AX25_DL_ERROR_E = 4,  // Frame received in incorrect state
+    AX25_DL_ERROR_F = 5,  // FRMR sent by us - protocol violation detected
+    AX25_DL_ERROR_G = 6,  // I field exceeded maximum length N1
+    AX25_DL_ERROR_H = 7,  // FRMR received after FRMR sent - link failure
+    AX25_DL_ERROR_I = 8,  // Information field not permitted in this frame type
+    AX25_DL_ERROR_J = 9,  // N(R) sequence error - invalid N(R) received (Z condition)
+    AX25_DL_ERROR_K = 10,  // Reserved
+    AX25_DL_ERROR_L = 11,  // Control field invalid or not implemented
+    AX25_DL_ERROR_M = 12,  // I frame received while not in information transfer state
+    AX25_DL_ERROR_N = 13  // N2 retries exceeded - T1 timer exhaustion
+} ax25_dl_error_t;
+
 /*============================================================================*/
 /* Protocol Handler Configuration                                             */
 /*============================================================================*/
@@ -429,6 +447,10 @@ typedef struct {
      * May be NULL if physical layer does not support abort.
      */
     void (*abort_tx)(void *user_data);
+
+    // DL-ERROR indication per AX.25 v2.2 Section 17.2
+    void (*on_dl_error)(void *user_data, ax25_dl_error_t error);  // NULL = errors ignored
+
 } ax25_callbacks_t;
 
 /*============================================================================*/
@@ -579,6 +601,9 @@ typedef struct {
 
     /* Diagnostics */
     ax25_statistics_t stats; /**< Link statistics counters */
+
+    // optional MDL context pointer for FRMR-to-MDL error bridging
+    ax25_mgmt_context_t *mgmt_ctx;  // NULL = MDL bridging disabled
 } ax25_connection_t;
 
 /*============================================================================*/

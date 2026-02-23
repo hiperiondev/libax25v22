@@ -581,7 +581,7 @@ This checklist documents the implementation status of all features defined in:
 
 ### 17.2 Management Data Link Primitives
 - ✅ MDL-NEGOTIATE request/confirm
-- ⚠️ MDL-ERROR indication
+- ✅ MDL-ERROR indication
 
 ---
 

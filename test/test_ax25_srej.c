@@ -491,7 +491,6 @@ static int test_srej_fallback_to_rej_on_multiple_gaps(void) {
     uint8_t p0[] = { 0x00 };
     ax25_frame_t *f0 = make_iframe(0, 0, false, p0, sizeof(p0), 8);
 
-    // start modified part - debug frame 0
     DEBUG_PRINT("Injecting I-frame N(S)=0 (in-order)");
 
     ax25_process_frame(&conn, f0, 1);
