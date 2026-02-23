@@ -114,11 +114,9 @@ uint8_t ax25_mux_classify_priority(const uint8_t *frame, size_t len) {
     if (!frame || len < 15u)
         return AX25_MUX_PRI_UI;
 
-    /* Walk address field to locate start of control byte.
-     * Address subfields are always 7 bytes; extension bit is LSB of SSID byte. */
     size_t pos = 0;
     while (pos + 7 <= len) {
-        if (frame[pos + 6] & 0x01u) { /* extension bit set = last address */
+        if (frame[pos + 6] & 0x01u) {
             pos += 7;
             break;
         }
@@ -129,25 +127,27 @@ uint8_t ax25_mux_classify_priority(const uint8_t *frame, size_t len) {
 
     uint8_t ctrl = frame[pos];
 
-    if ((ctrl & 0x01u) == 0u) { /* I-frame: bit 0 cleared */
+    // Check specific known U-frames FIRST to prevent misclassification:
+    // 0xE1 (TEST rsp F=0) has bits 1-0 = 01 which would falsely match the
+    // S-frame pattern below if not intercepted here first.
+    if (ctrl == 0x03u || ctrl == 0x13u) {  // UI command / response
+        return AX25_MUX_PRI_UI;
+    }
+    if (ctrl == 0xAFu || ctrl == 0xBFu) {  // XID command / response
+        return AX25_MUX_PRI_UI;
+    }
+    if (ctrl == 0xE3u || ctrl == 0xE1u) {  // TEST command / response
+        return AX25_MUX_PRI_UI;
+    }
+
+    if ((ctrl & 0x01u) == 0u) {  // I-frame: bit 0 cleared
         return AX25_MUX_PRI_DATA;
     }
-    if ((ctrl & 0x03u) == 0x01u) { /* S-frame: bits 1-0 = 01 */
+    if ((ctrl & 0x03u) == 0x01u) {  // S-frame: bits 1-0 = 01
         return AX25_MUX_PRI_ACK;
     }
 
-    /* U-frame: bits 1-0 = 11. Distinguish management/UI (low) from control (urgent) */
-    if (ctrl == 0x03u || ctrl == 0x13u) { /* UI command / response */
-        return AX25_MUX_PRI_UI;
-    }
-    if (ctrl == 0xAFu || ctrl == 0xBFu) { /* XID command / response */
-        return AX25_MUX_PRI_UI;
-    }
-    if (ctrl == 0xE3u || ctrl == 0xE1u) { /* TEST command / response */
-        return AX25_MUX_PRI_UI;
-    }
-
-    /* All other U-frames (SABM/SABME/DISC/DM/UA/FRMR) are urgent */
+    // All other U-frames (SABM/SABME/DISC/DM/UA/FRMR) are urgent
     return AX25_MUX_PRI_URGENT;
 }
 
