@@ -31,13 +31,13 @@
  * @def LIBAX25V22_VERSION_MAYOR
  * @brief Indicate a really big change that can cause a incompatibilities with previous versions.
  */
-#define LIBAX25V22_VERSION_MAYOR 0
+#define LIBAX25V22_VERSION_MAYOR 1
 
 /**
  * @def LIBAX25V22_VERSION_MINOR
  * @brief Indicate some change on API or opcode or very important correction in functionality
  */
-#define LIBAX25V22_VERSION_MINOR 1
+#define LIBAX25V22_VERSION_MINOR 0
 
 /**
  * @def LIBAX25V22_VERSION_PATCH
