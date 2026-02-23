@@ -209,7 +209,9 @@ uint8_t ax25_segmenter_send(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
         if (seg->bytes_sent + this_len > len) {
             this_len = len - seg->bytes_sent;
         }
-        uint8_t segment[260];
+        // Use AX25_MAX_SEGMENT_BUF instead of the hardcoded 260 literal so
+        // the transmit buffer always matches ax25_segment_slot_t.data[] size.
+        uint8_t segment[AX25_MAX_SEGMENT_BUF];
         uint16_t offset = 0;
         segment[offset++] = header;
         if (seg->current_segment == 0) {

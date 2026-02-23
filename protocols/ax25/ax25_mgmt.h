@@ -146,46 +146,50 @@
  * @defgroup Class_of_Procedures_Bits Class of Procedures Bit Masks
  * @brief Bit definitions for XID_PI_CLASS_OF_PROCEDURES parameter (PI=2)
  *
- * The Class of Procedures parameter is a 2-octet bit field (Type E) that
- * negotiates the duplex mode of operation. Per AX.25 v2.2:
- * - Bit 0 is always set to 1
- * - Bits 1-4 and 7-15 are always zero
- * - Either bit 5 (half-duplex) OR bit 6 (full-duplex) must be set, not both
+ * The Class of Procedures parameter is a 2-octet field negotiating duplex mode.
+ * This library uses a private sequential bit layout assigned by
+ * ax25_xid_class_of_procedures_new (see ax25.h), NOT the ISO 8885 wire positions:
+ * - Bit 0 (0x01): half-duplex (a_flag)
+ * - Bit 1 (0x02): full-duplex (b_flag)
+ * - Bits 2-6: reserved flags (c through g)
+ * - Byte 1: reserved
  *
- * @see AX.25 v2.2 Section 6.7.2.1
+ * @see ax25_xid_class_of_procedures_new in ax25.h for the encoding details
+ * @see AX.25 v2.2 Section 6.7.2.1 for the ISO 8885 standard wire layout
  * @{
  */
 
 /**
  * @def XID_COP_HALF_DUPLEX
- * @brief Half-duplex operation bit (bit 5)
- * @details Set to select half-duplex operation. Mutually exclusive with
- *          XID_COP_FULL_DUPLEX. Default mode for AX.25.
- * @note In half-duplex, stations alternate transmission and reception.
+ * @brief Half-duplex operation flag (bit 0, a_flag in ax25_xid_class_of_procedures_new)
+ * @details Matches the private sequential encoding used by the XID constructor.
+ *          Set when half-duplex mode is offered or agreed.
+ * @note Value 0x01 = bit 0 in this library's COP byte layout.
  */
 #define XID_COP_HALF_DUPLEX  0x01
 
 /**
  * @def XID_COP_FULL_DUPLEX
- * @brief Full-duplex operation bit (bit 6, value 0x02 in shifted position)
- * @details Set to select full-duplex operation. Both stations may
- *          transmit simultaneously.
- * @warning Requires hardware capable of full-duplex operation.
+ * @brief Full-duplex operation flag (bit 1, b_flag in ax25_xid_class_of_procedures_new)
+ * @details Matches the private sequential encoding used by the XID constructor.
+ *          Set when full-duplex mode is offered or agreed.
+ * @note Value 0x02 = bit 1 in this library's COP byte layout.
  */
 #define XID_COP_FULL_DUPLEX  0x02
 
 /**
  * @def XID_COP_NORMAL_RESP
- * @brief Normal response mode bit (bit 6, 0x40)
- * @details Defined in ISO 8885 for unbalanced operation. Not used in AX.25
- *          balanced mode but reserved for compatibility.
+ * @brief Reserved flag area (bits 2-6).
+ * @details Defined for ISO 8885 compatibility reference only.
+ *          Not used in this library's COP encoding.
  */
 #define XID_COP_NORMAL_RESP  0x40
 
 /**
  * @def XID_COP_ASYNC_RESP
- * @brief Asynchronous response mode bit (bit 7, 0x80)
- * @details Defined in ISO 8885. Reserved for compatibility.
+ * @brief Reserved high bit area.
+ * @details Defined for ISO 8885 compatibility reference only.
+ *          Not used in this library's COP encoding.
  */
 #define XID_COP_ASYNC_RESP   0x80
 
@@ -358,7 +362,7 @@ typedef void (*ax25_mdl_error_cb_t)(ax25_mdl_error_t error, void *user_data);
  * - ifield_length: Minimum of local and remote values
  * - window_size: Minimum of local and remote values
  * - ack_timer: Maximum of local and remote values (more conservative)
- * - retries: Minimum of local and remote values
+ * - retries: Maximum of local and remote values (per AX.25 v2.2 Section 4.3.3.7 PI=10)
  * - response_delay_timer: Maximum of local and remote values
  *
  * @see AX.25 v2.2 Section 6.3.2, Appendix C5

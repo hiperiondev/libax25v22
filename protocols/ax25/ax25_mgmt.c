@@ -239,7 +239,10 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
     if (ctx->agreed_params.window_size > max_window)
         ctx->agreed_params.window_size = max_window;
     ctx->agreed_params.ack_timer = (ctx->local_params.ack_timer > remote.ack_timer) ? ctx->local_params.ack_timer : remote.ack_timer;
-    ctx->agreed_params.retries = (ctx->local_params.retries < remote.retries) ? ctx->local_params.retries : remote.retries;
+    // AX.25 v2.2 Section 4.3.3.7 PI=10: retries negotiation uses the GREATER value.
+    // Taking the minimum would cause premature link failure under noisy conditions.
+    ctx->agreed_params.retries = (ctx->local_params.retries > remote.retries) ? ctx->local_params.retries : remote.retries;
+
     // Negotiate T2: use maximum (safer) or match local policy. Similar to T1 logic here.
     ctx->agreed_params.response_delay_timer =
             (ctx->local_params.response_delay_timer > remote.response_delay_timer) ? ctx->local_params.response_delay_timer : remote.response_delay_timer;

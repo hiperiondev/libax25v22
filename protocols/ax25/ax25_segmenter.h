@@ -123,6 +123,14 @@
 #define AX25_MAX_OUT_OF_ORDER_SEGMENTS 8
 #endif
 
+// AX25_MAX_SEGMENT_BUF replaces the hardcoded 260-byte literal used in
+// ax25_segment_slot_t and in the transmit buffer inside ax25_segmenter_send().
+// Sized for maximum AX.25 N1 (256) + segment control byte (1) + original PID
+// byte (1) + 2-byte safety margin = 260. Override at compile time if needed.
+#ifndef AX25_MAX_SEGMENT_BUF
+#define AX25_MAX_SEGMENT_BUF 260u
+#endif
+
 /*============================================================================*/
 /* Error Codes                                                                  */
 /*============================================================================*/
@@ -134,10 +142,10 @@
  * correct segmentation errors. Errors are reported to Layer 3 for recovery.
  */
 typedef enum {
-    AX25_SEG_ERROR_TIMEOUT = 1,   /**< TR210 timer expired - incomplete reassembly */
-    AX25_SEG_ERROR_OVERFLOW = 2,  /**< Reassembly buffer overflow (payload > 4096 bytes) */
-    AX25_SEG_ERROR_SEQUENCE = 3,  /**< Sequence error - missing segment detected */
-    AX25_SEG_ERROR_INVALID = 4    /**< Invalid segment format or parameters */
+    AX25_SEG_ERROR_TIMEOUT = 1, /**< TR210 timer expired - incomplete reassembly */
+    AX25_SEG_ERROR_OVERFLOW = 2, /**< Reassembly buffer overflow (payload > 4096 bytes) */
+    AX25_SEG_ERROR_SEQUENCE = 3, /**< Sequence error - missing segment detected */
+    AX25_SEG_ERROR_INVALID = 4 /**< Invalid segment format or parameters */
 } ax25_seg_error_t;
 
 /*============================================================================*/
@@ -152,10 +160,10 @@ typedef enum {
  * This implementation combines the reassembler states into REASSEMBLING.
  */
 typedef enum {
-    SEG_STATE_IDLE = 0,           /**< No segmentation/reassembly in progress (Null state) */
-    SEG_STATE_SEGMENTING,         /**< Actively segmenting data for transmission */
-    SEG_STATE_AWAITING_ACK,       /**< Waiting for acknowledgment of segments (future use) */
-    SEG_STATE_REASSEMBLING        /**< Receiving and reassembling segments */
+    SEG_STATE_IDLE = 0, /**< No segmentation/reassembly in progress (Null state) */
+    SEG_STATE_SEGMENTING, /**< Actively segmenting data for transmission */
+    SEG_STATE_AWAITING_ACK, /**< Waiting for acknowledgment of segments (future use) */
+    SEG_STATE_REASSEMBLING /**< Receiving and reassembling segments */
 } ax25_seg_state_t;
 
 /*============================================================================*/
@@ -175,11 +183,11 @@ typedef enum {
  * - is_last preserves the END flag for proper reassembly completion detection
  */
 typedef struct {
-    uint8_t data[260];   /**< Segment payload data (max N1 + overhead) */
-    uint16_t length;     /**< Actual data length in bytes */
-    uint8_t sequence;    /**< 6-bit segment sequence number (0-63) */
-    bool valid;          /**< Slot in use flag */
-    bool is_last;        /**< Original END flag state for this segment */
+    uint8_t data[AX25_MAX_SEGMENT_BUF]; /**<  Segment payload (max N1 + overhead) */
+    uint16_t length; /**<  Actual data length in bytes */
+    uint8_t sequence; /**<  6-bit segment sequence number (0-63) */
+    bool valid; /**<  Slot in use flag */
+    bool is_last; /**<  Original END flag state for this segment */
 } ax25_segment_slot_t;
 
 /**
@@ -196,9 +204,9 @@ typedef struct {
  * The first segment additionally includes the original PID in octet 2.
  */
 typedef struct {
-    bool first_segment;     /**< True if this is the first segment (BEG flag) */
-    bool last_segment;      /**< True if this is the last segment (END flag) */
-    uint8_t sequence;       /**< 6-bit segment sequence number (0-63) */
+    bool first_segment; /**< True if this is the first segment (BEG flag) */
+    bool last_segment; /**< True if this is the last segment (END flag) */
+    uint8_t sequence; /**< 6-bit segment sequence number (0-63) */
 } ax25_segment_header_t;
 
 /**
@@ -221,39 +229,39 @@ typedef struct {
     /*------------------------------------------------------------------------*/
     /* State Machine                                                          */
     /*------------------------------------------------------------------------*/
-    ax25_seg_state_t state;      /**< Current segmenter/reassembler state */
+    ax25_seg_state_t state; /**< Current segmenter/reassembler state */
 
     /*------------------------------------------------------------------------*/
     /* Transmit Segmentation State                                            */
     /*------------------------------------------------------------------------*/
-    uint8_t *pending_data;           /**< Pointer to data being segmented (caller owned) */
-    uint16_t pending_length;         /**< Total length of data to segment */
-    uint16_t segment_size;           /**< Maximum data per segment (N1 - 2 octets overhead) */
-    uint8_t current_segment;         /**< Current segment being transmitted (0-63) */
-    uint8_t total_segments;          /**< Total number of segments calculated */
-    uint16_t bytes_sent;             /**< Bytes transmitted so far */
-    uint8_t pending_pid;             /**< Original PID for segmented data */
+    uint8_t *pending_data; /**< Pointer to data being segmented (caller owned) */
+    uint16_t pending_length; /**< Total length of data to segment */
+    uint16_t segment_size; /**< Maximum data per segment (N1 - 2 octets overhead) */
+    uint8_t current_segment; /**< Current segment being transmitted (0-63) */
+    uint8_t total_segments; /**< Total number of segments calculated */
+    uint16_t bytes_sent; /**< Bytes transmitted so far */
+    uint8_t pending_pid; /**< Original PID for segmented data */
 
     /*------------------------------------------------------------------------*/
     /* Receive Reassembly State                                               */
     /*------------------------------------------------------------------------*/
-    uint8_t rx_buffer[4096];         /**< Static reassembly buffer (4KB max payload) */
-    uint16_t rx_buffer_used;         /**< Bytes accumulated in rx_buffer */
-    uint8_t rx_expected_segment;     /**< Next expected sequence number (0-63) */
-    uint8_t rx_segment_bitmap[8];    /**< Bitmap of received segments (64 bits) */
-    bool rx_first_received;          /**< True if first segment (seq 0) received */
-    uint32_t rx_timeout_tick;        /**< TR210 timeout timestamp (10ms ticks) */
-    uint8_t rx_original_pid;         /**< Original PID extracted from first segment */
+    uint8_t rx_buffer[4096]; /**< Static reassembly buffer (4KB max payload) */
+    uint16_t rx_buffer_used; /**< Bytes accumulated in rx_buffer */
+    uint8_t rx_expected_segment; /**< Next expected sequence number (0-63) */
+    uint8_t rx_segment_bitmap[8]; /**< Bitmap of received segments (64 bits) */
+    bool rx_first_received; /**< True if first segment (seq 0) received */
+    uint32_t rx_timeout_tick; /**< TR210 timeout timestamp (10ms ticks) */
+    uint8_t rx_original_pid; /**< Original PID extracted from first segment */
 
     /*------------------------------------------------------------------------*/
     /* Out-of-Order Segment Handling                                          */
     /*------------------------------------------------------------------------*/
-    ax25_segment_slot_t ooo_buffer[AX25_MAX_OUT_OF_ORDER_SEGMENTS];  /**< Out-of-order buffer */
-    uint8_t ooo_count;                                               /**< Number of buffered segments */
-    uint8_t rx_highest_received;                                     /**< Highest sequence number seen */
-    bool rx_last_received;                                           /**< END flag seen for expected sequence */
-    uint8_t rx_gap_count;                                            /**< Segments received beyond gap */
-    uint8_t rx_gap_threshold;                                        /**< Threshold to trigger gap error */
+    ax25_segment_slot_t ooo_buffer[AX25_MAX_OUT_OF_ORDER_SEGMENTS]; /**< Out-of-order buffer */
+    uint8_t ooo_count; /**< Number of buffered segments */
+    uint8_t rx_highest_received; /**< Highest sequence number seen */
+    bool rx_last_received; /**< END flag seen for expected sequence */
+    uint8_t rx_gap_count; /**< Segments received beyond gap */
+    uint8_t rx_gap_threshold; /**< Threshold to trigger gap error */
 
     /*------------------------------------------------------------------------*/
     /* Callback Functions                                                     */

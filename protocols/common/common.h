@@ -74,21 +74,40 @@
 /**
  * @brief Maximum expected AX.25 frame size in bytes
  *
- * Defines the upper bound for frame buffer allocation. This value accounts
- * for:
- * - Maximum address field: 70 bytes (2 addresses + 8 repeaters)
- * - Control field: 2 bytes (modulo-128 mode)
- * - PID field: 1 byte
- * - Maximum I-field: 256 bytes (AX.25 v2.2 default N1)
- * - FCS field: 2 bytes
+ * Defines the upper bound for CRC computation and frame buffer allocation.
+ * Computed from the worst-case AX.25 v2.2 frame with all optional fields:
  *
- * @note This value may be adjusted based on specific system requirements
- * and negotiated N1 parameters. Typical AX.25 frames are under 256 bytes.
+ *   Destination address  :  7 bytes
+ *   Source address       :  7 bytes
+ *   8 digipeater addrs   : 56 bytes  (8 x 7, AX.25 v2.2 Section 3.12.3 maximum)
+ *   Control field        :  2 bytes  (modulo-128, 16-bit)
+ *   PID field            :  1 byte
+ *   I-field (default N1) : 256 bytes (AX.25 v2.2 default maximum)
+ *   FCS field            :  2 bytes
+ *   -------------------------
+ *   Exact maximum total  : 331 bytes
+ *   Safety margin        :   9 bytes
+ *   -------------------------
+ *   MAX_FRAME_SIZE       : 340 bytes
  *
- * @warning Frames exceeding this size may be rejected by ax25_frame_decode()
- * to prevent buffer overflow attacks.
+ * @warning Frames exceeding this size are rejected by CRC() with the error
+ *          sentinel 0xFFFF, which callers treat as a CRC failure.  Any value
+ *          smaller than 331 will cause silent, false CRC errors on fully-loaded
+ *          frames that are otherwise perfectly valid per AX.25 v2.2.
+ *
+ * @note On severely memory-constrained targets where 8-digipeater paths are
+ *       never used the minimum safe value is 280 bytes:
+ *       (14 addr + 2 ctrl + 1 PID + 256 data + 2 FCS + 5 margin).
+ *       Define AX25_NO_DIGIPEATER_PATH and rebuild to use that reduced limit.
  */
-#define MAX_FRAME_SIZE 256
+#ifdef AX25_NO_DIGIPEATER_PATH
+// Reduced limit for targets that never forward multi-hop digipeater frames:
+// 14 (2 addr) + 2 (ctrl) + 1 (PID) + 256 (I-field) + 2 (FCS) + 5 (margin)
+#define MAX_FRAME_SIZE 280u
+#else
+// Full AX.25 v2.2 limit: 70 (10 addr) + 2 (ctrl) + 1 (PID) + 256 (I-field) + 2 (FCS) + 9 (margin)
+#define MAX_FRAME_SIZE 340u
+#endif
 
 /**
  * @brief Minimum valid AX.25 frame size in bytes
