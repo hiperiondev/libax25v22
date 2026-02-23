@@ -58,6 +58,13 @@
 #define DEBUG_VAR(label, var) printf("\033[0;36m[DEBUG] %s: %u\033[0m\n", label, (unsigned int)var)
 #define DEBUG_VAR64(label, var) printf("\033[0;36m[DEBUG] %s: %lu\033[0m\n", label, (unsigned long)var)
 #define DEBUG_BOOL(label, var) printf("\033[0;36m[DEBUG] %s: %s\033[0m\n", label, var ? "true" : "false")
+#define DEBUG_HEX(label, val)      printf("  [DBG] %-45s = 0x%02X\n", (label), (unsigned)(val))
+#define DEBUG_BUF(label, buf, len) do {                                    \
+        printf("  [DBG] %-45s (%zu bytes): ", (label), (size_t)(len));       \
+        for (size_t _i = 0; _i < (size_t)(len); _i++)                        \
+            printf("%02X ", ((const uint8_t*)(buf))[_i]);                    \
+        printf("\n");                                                         \
+    } while(0)
 #else
 #define DEBUG_PRINT(fmt, ...)
 #define DEBUG_FRAME(label, data, len)
@@ -65,6 +72,8 @@
 #define DEBUG_VAR(label, var)
 #define DEBUG_VAR64(label, var)
 #define DEBUG_BOOL(label, var)
+#define DEBUG_HEX(label, val)      ((void)0)
+#define DEBUG_BUF(label, buf, len) ((void)0)
 #endif
 
 #endif /* TEST_COMMON_H_ */
