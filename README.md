@@ -533,12 +533,12 @@ This checklist documents the implementation status of all features defined in:
 - ❌ Type 1 translated encapsulation
 
 ### 15.3 KISS Interface Protocol
-- ❌ KISS framing (FEND, FESC encoding)
-- ❌ KISS command byte processing
-- ❌ TxDelay, Persistence, SlotTime, TxTail parameters
-- ❌ Full-duplex mode control
-- ❌ Hardware-specific commands
-- ❌ Multi-port TNC support
+- ✅ KISS framing (FEND, FESC encoding)
+- ✅ KISS command byte processing
+- ✅ TxDelay, Persistence, SlotTime, TxTail parameters
+- ✅ Full-duplex mode control
+- ✅ Hardware-specific commands
+- ✅ Multi-port TNC support
 
 ### 15.4 SMACK (CRC-enhanced KISS)
 - ❌ SMACK CRC-16 over KISS frames
