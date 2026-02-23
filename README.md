@@ -572,12 +572,12 @@ This checklist documents the implementation status of all features defined in:
 ## 17. UPPER LAYER INTERFACES
 
 ### 17.1 Data Link Service Access Point (DLSAP) Primitives
-- ⚠️ DL-CONNECT request/indication/confirm
-- ⚠️ DL-DISCONNECT request/indication/confirm
-- ⚠️ DL-DATA request/indication
-- ⚠️ DL-UNIT-DATA request/indication
-- ❌ DL-ERROR indication
-- ❌ DL-FLOW-OFF/ON request
+- ✅ DL-CONNECT request/indication/confirm
+- ✅ DL-DISCONNECT request/indication/confirm
+- ✅ DL-DATA request/indication
+- ✅ DL-UNIT-DATA request/indication
+- ✅ DL-ERROR indication
+- ✅ DL-FLOW-OFF/ON request
 
 ### 17.2 Management Data Link Primitives
 - ✅ MDL-NEGOTIATE request/confirm

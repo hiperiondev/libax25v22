@@ -1708,7 +1708,6 @@ ax25_segmented_info_t* ax25_segment_info_fields(const uint8_t *payload, size_t p
         if (segment_number == 0) {
             // Clearer comment about 16-bit safety
             // payload_len is guaranteed <= 0xFFFF from check above, safe for 16-bit encoding
-            // end modified part
             info_field[pos++] = (uint8_t) ((payload_len >> 8) & 0xFF);
             info_field[pos++] = (uint8_t) (payload_len & 0xFF);
         }

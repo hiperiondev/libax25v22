@@ -385,12 +385,15 @@ typedef struct {
 typedef struct {
     /**
      * @brief Connection established notification
-     * @param user_data Context pointer from connection initialization
+     * @param user_data         Context pointer from connection initialization
+     * @param initiated_locally true  = DL-CONNECT confirm  (active open, UA received)
+     *                          false = DL-CONNECT indication (passive open, SABM received)
      *
-     * Invoked when UA received in response to SABM/SABME, indicating
-     * successful link establishment and transition to CONNECTED state.
+     * Invoked on transition to CONNECTED state.  Layer 3 uses initiated_locally
+     * to distinguish confirm from indication per AX.25 v2.2 Section 5.3 / Appendix D.3.
+     * conn->peer_addr is valid and stable at callback time.
      */
-    void (*on_connect)(void *user_data);
+    void (*on_connect)(void *user_data, bool initiated_locally);
 
     /**
      * @brief Connection terminated notification
@@ -413,8 +416,10 @@ typedef struct {
      *
      * Delivers validated, in-sequence I-frame payload to Layer 3.
      * Data pointer is valid only during callback execution.
+     *  AX.25 v2.2 Appendix D.4 DL-DATA indication:
+     * Layer 3 must receive PID to demultiplex IP (0xCC), NET/ROM (0xCF), etc.
      */
-    void (*on_data)(void *user_data, uint8_t *data, size_t len);
+    void (*on_data)(void *user_data, uint8_t *data, size_t len, uint8_t pid);
 
     /**
      * @brief Remote busy state change
@@ -578,6 +583,7 @@ typedef struct {
     uint8_t srej_buffer[AX25_MAX_QUEUE_SIZE][256]; /**< Buffered out-of-seq frames */
     uint8_t srej_buffer_len[AX25_MAX_QUEUE_SIZE]; /**< Buffered frame lengths */
     uint8_t srej_buffer_ns[AX25_MAX_QUEUE_SIZE]; /**< Buffered frame N(S) values */
+    uint8_t srej_buffer_pid[AX25_MAX_QUEUE_SIZE]; /**< Buffered frame PID values - required for correct DL-DATA indication on reorder */
     uint8_t srej_buffer_count; /**< Number of buffered frames */
 
     /* FRMR state per Section 4.4.5 */
@@ -691,6 +697,7 @@ uint8_t ax25_disconnect(ax25_connection_t *conn);
  *         3 = window closed or queue full,
  *         4 = encoding failed,
  *         5 = peer busy (RNR received)
+ *         6 = recovery in progress (TIMER_RECOVERY state, retry later)
  *
  * @section Preconditions
  * - Connection in CONNECTED state
@@ -810,6 +817,22 @@ uint8_t ax25_clear_local_busy(ax25_connection_t *conn);
  * Frame is sent immediately without queueing or retransmission.
  */
 uint8_t ax25_send_ui(ax25_address_t *dest, ax25_address_t *src, uint8_t *data, size_t len, uint8_t pid, void (*transmit)(uint8_t*, size_t));
+
+/**
+ * @brief Send UI frame using connection context (DL-UNIT-DATA request)
+ *
+ * Connection-context variant of ax25_send_ui(). Uses the connection's
+ * own transmit callback and user_data, and updates uframe_sent statistics.
+ * Per AX.25 v2.2 Appendix D.4, UI frames are valid in all connection states.
+ *
+ * @param[in,out] conn Connection context (provides addresses and transmit callback)
+ * @param[in]     data Payload data
+ * @param[in]     len  Payload length (must be > 0)
+ * @param[in]     pid  Protocol Identifier
+ * @return 0 on success, 1 = invalid parameters or no transmit callback,
+ *         3 = encoding failed
+ */
+uint8_t ax25_send_ui_conn(ax25_connection_t *conn, uint8_t *data, size_t len, uint8_t pid);
 
 /*============================================================================*/
 /* Link Quality and Testing                                                   */
@@ -1005,6 +1028,7 @@ void ax25_reset_statistics(ax25_connection_t *conn);
  *         3 = window full or FX.25 encoding failed,
  *         4 = memory allocation failed,
  *         5 = peer busy
+ *         6 = recovery in progress (TIMER_RECOVERY state, retry later)
  *
  * @section FX25_Integration
  * FX.25 adds 8-byte correlation tag and Reed-Solomon parity bytes

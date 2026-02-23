@@ -121,7 +121,9 @@ static void dispatch_to_protocol(ax25_connection_t *conn, uint8_t *data, size_t 
 
     // Fall back to legacy on_data callback for backward compatibility
     if (conn->callbacks.on_data) {
-        conn->callbacks.on_data(conn->user_data, data, len);
+        // pid forwarded per AX.25 v2.2 Appendix D.4 DL-DATA indication.
+        // Layer 3 needs PID to demultiplex protocols (IP=0xCC, NET/ROM=0xCF, etc.).
+        conn->callbacks.on_data(conn->user_data, data, len, pid);
     }
 }
 
@@ -164,9 +166,10 @@ static void deliver_buffered_srej_frames(ax25_connection_t *conn) {
         for (uint8_t i = 0; i < conn->srej_buffer_count; i++) {
             if (conn->srej_buffer_ns[i] == conn->vars.vr) {
                 // Deliver this frame to upper layer
-                if (conn->callbacks.on_data) {
-                    conn->callbacks.on_data(conn->user_data, conn->srej_buffer[i], conn->srej_buffer_len[i]);
-                }
+                // Deliver via dispatch_to_protocol so registered PID handlers and
+                // default_handler are tried before on_data, and the correct PID
+                // stored at buffer time is passed up per AX.25 v2.2 Appendix D.4.
+                dispatch_to_protocol(conn, conn->srej_buffer[i], conn->srej_buffer_len[i], conn->srej_buffer_pid[i]);
 
                 // Advance V(R)
                 conn->vars.vr = INC_MOD(conn->vars.vr, conn->vars.mod);
@@ -178,6 +181,8 @@ static void deliver_buffered_srej_frames(ax25_connection_t *conn) {
                 for (uint8_t j = i; j < conn->srej_buffer_count - 1; j++) {
                     conn->srej_buffer_ns[j] = conn->srej_buffer_ns[j + 1];
                     conn->srej_buffer_len[j] = conn->srej_buffer_len[j + 1];
+                    // Shift PID alongside the other per-frame metadata.
+                    conn->srej_buffer_pid[j] = conn->srej_buffer_pid[j + 1];
                     memcpy(conn->srej_buffer[j], conn->srej_buffer[j + 1], conn->srej_buffer_len[j]);
                 }
                 conn->srej_buffer_count--;
@@ -201,17 +206,26 @@ static void deliver_buffered_srej_frames(ax25_connection_t *conn) {
 static void handle_ui_frame(ax25_connection_t *conn, ax25_unnumbered_information_frame_t *ui) {
     // AX.25 v2.2 Section 6.4.12: UI frames can be received in any state
     // No acknowledgment required, no connection needed
-    // Passed directly to upper layer if callback exists
-
-    if (conn->callbacks.on_data && ui->payload_len > 0 && ui->payload) {
-        // Deliver payload to upper layer
-        conn->callbacks.on_data(conn->user_data, ui->payload, ui->payload_len);
+    // Count UI frames received per connection statistics, even in DISCONNECTED
+    // state, since UI is valid in all states per AX.25 v2.2 Section 6.3.7
+    conn->stats.uframe_received++;
+    if (conn->stats.uframe_received == 0) {
+        conn->stats.uframe_received = 1;
     }
 
     // UI frames can also update peer address if not connected
     // This allows connectionless communication
     if (conn->state == AX25_STATE_DISCONNECTED) {
         conn->peer_addr = ui->base.base.header;
+    }
+
+    // DL-UNIT-DATA indication: per AX.25 v2.2 Appendix D.4 and Section 6.5,
+    // UI frames must be dispatched through the PID-based protocol multiplexer
+    // so registered handlers receive them. Falling back to on_data only when
+    // no registered handler exists maintains backward compatibility.
+    if (ui->payload_len > 0 && ui->payload) {
+        dispatch_to_protocol(conn, ui->payload, ui->payload_len, ui->pid);
+
     }
 }
 
@@ -288,6 +302,31 @@ static void send_sabm(ax25_connection_t *conn, bool extended) {
         conn->stats.uframe_sent++;
         if (conn->stats.uframe_sent == 0) {
             conn->stats.uframe_sent = 1;  // Prevent overflow
+        }
+    }
+    if (encoded != NULL) {
+        free(encoded);
+        encoded = NULL;
+    }
+}
+
+// send DISC command for retransmit
+static void send_disc(ax25_connection_t *conn) {
+    ax25_unnumbered_frame_t disc;
+    disc.base.header = conn->peer_addr;
+    disc.base.header.cr = true;   // command frame
+    disc.base.type = AX25_FRAME_UNNUMBERED_DISC;
+    disc.pf = true;               // P bit set per AX.25 v2.2 Section 4.3.3.3
+    disc.modifier = 0x43;         // DISC modifier per AX.25 v2.2 Table 3
+
+    size_t len;
+    uint8_t err;
+    uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &disc, &len, &err);
+    if (encoded && conn->callbacks.transmit) {
+        conn->callbacks.transmit(conn->user_data, encoded, len);
+        conn->stats.uframe_sent++;
+        if (conn->stats.uframe_sent == 0) {
+            conn->stats.uframe_sent = 1;
         }
     }
     if (encoded != NULL) {
@@ -423,6 +462,7 @@ static void handle_out_of_sequence_iframe(ax25_connection_t *conn, ax25_informat
             }
             conn->srej_buffer_len[buf_idx] = (uint8_t) copy_len;
             conn->srej_buffer_ns[buf_idx] = ns;
+            conn->srej_buffer_pid[buf_idx] = iframe->pid;  // store PID for DL-DATA indication on delivery
             conn->srej_buffer_count++;
         }
 
@@ -467,6 +507,7 @@ static void handle_out_of_sequence_iframe(ax25_connection_t *conn, ax25_informat
                 }
                 conn->srej_buffer_len[buf_idx] = (uint8_t) copy_len;
                 conn->srej_buffer_ns[buf_idx] = ns;
+                conn->srej_buffer_pid[buf_idx] = iframe->pid;  // store PID for DL-DATA indication on delivery
                 conn->srej_buffer_count++;
             }
             // SREJ bitmap unchanged - existing SREJ for missing frame stays pending
@@ -485,6 +526,7 @@ static void handle_out_of_sequence_iframe(ax25_connection_t *conn, ax25_informat
                     }
                     conn->srej_buffer_len[buf_idx] = (uint8_t) copy_len;
                     conn->srej_buffer_ns[buf_idx] = ns;
+                    conn->srej_buffer_pid[buf_idx] = iframe->pid;  // store PID for DL-DATA indication on delivery
                     conn->srej_buffer_count++;
                 }
                 conn->srej_count++;
@@ -966,8 +1008,11 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
 
 // Process received I-frame - AX.25 v2.2 Section 6.4.4
 void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *iframe, uint32_t current_tick_10ms) {
+    // DL-ERROR M: I-frame received while not in information-transfer state.
+    // Per AX.25 v2.2 Appendix C4 SDL, issue error indication and discard.
     if (conn->state != AX25_STATE_CONNECTED && conn->state != AX25_STATE_TIMER_RECOVERY) {
-        return;  // Ignore I-frames when not connected
+        FIRE_DL_ERROR(conn, AX25_DL_ERROR_M);
+        return;
     }
 
     uint8_t ns = iframe->ns;
@@ -1066,35 +1111,49 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
                 conn->callbacks.on_disconnect(conn->user_data, 3);  // 3 = timeout
             }
         } else {
-            // Enter timer recovery and retransmit per AX.25 v2.2 Section 6.7.1.1
-            conn->state = AX25_STATE_TIMER_RECOVERY;
-
-            // Retransmit all unacknowledged I-frames from V(A) to V(S)-1
-            if (conn->tx_queue.count > 0) {
-                uint8_t idx = conn->tx_queue.head;
-                for (uint8_t i = 0; i < conn->tx_queue.count; i++) {
-                    if (conn->callbacks.transmit) {
-                        // Retransmit frame
-                        conn->callbacks.transmit(conn->user_data, conn->tx_queue.frames[idx], conn->tx_queue.lengths[idx]);
-
-                        // Update statistics - I-frame retransmitted
-                        conn->stats.iframe_retransmitted++;
-                        if (conn->stats.iframe_retransmitted == 0) {
-                            conn->stats.iframe_retransmitted = 1;
-                        }
-                        conn->stats.retries++;
-                        if (conn->stats.retries == 0) {
-                            conn->stats.retries = 1;
-                        }
-                    }
-                    idx = (idx + 1) % AX25_MAX_QUEUE_SIZE;
-                }
+            // state-aware T1 retry handling
+            if (conn->state == AX25_STATE_AWAITING_CONNECTION) {
+                // Retransmit SABM/SABME per AX.25 v2.2 Section 6.3.1 and C4 SDL.
+                // Do NOT transition to TIMER_RECOVERY: stay in AWAITING_CONNECTION.
+                bool use_sabme = (conn->vars.mod == 128);
+                send_sabm(conn, use_sabme);
+                conn->t1_start_tick = current_tick_10ms ? current_tick_10ms : 1u;
+            } else if (conn->state == AX25_STATE_AWAITING_RELEASE) {
+                // Retransmit DISC per AX.25 v2.2 Section 6.3.4 and C4 SDL.
+                // Do NOT transition to TIMER_RECOVERY: stay in AWAITING_RELEASE.
+                send_disc(conn);
+                conn->t1_start_tick = current_tick_10ms ? current_tick_10ms : 1u;
             } else {
-                // No I-frames to retransmit, send RR with P=1 to poll
-                send_rr(conn, true);
-            }
+                // Enter timer recovery and retransmit per AX.25 v2.2 Section 6.7.1.1
+                conn->state = AX25_STATE_TIMER_RECOVERY;
 
-            conn->t1_start_tick = current_tick_10ms ? current_tick_10ms : 1;  // Restart T1, avoid 0
+                // Retransmit all unacknowledged I-frames from V(A) to V(S)-1
+                if (conn->tx_queue.count > 0) {
+                    uint8_t idx = conn->tx_queue.head;
+                    for (uint8_t i = 0; i < conn->tx_queue.count; i++) {
+                        if (conn->callbacks.transmit) {
+                            // Retransmit frame
+                            conn->callbacks.transmit(conn->user_data, conn->tx_queue.frames[idx], conn->tx_queue.lengths[idx]);
+
+                            // Update statistics - I-frame retransmitted
+                            conn->stats.iframe_retransmitted++;
+                            if (conn->stats.iframe_retransmitted == 0) {
+                                conn->stats.iframe_retransmitted = 1;
+                            }
+                            conn->stats.retries++;
+                            if (conn->stats.retries == 0) {
+                                conn->stats.retries = 1;
+                            }
+                        }
+                        idx = (idx + 1) % AX25_MAX_QUEUE_SIZE;
+                    }
+                } else {
+                    // No I-frames to retransmit, send RR with P=1 to poll
+                    send_rr(conn, true);
+                }
+
+                conn->t1_start_tick = current_tick_10ms ? current_tick_10ms : 1;  // Restart T1, avoid 0
+            }
         }
         conn->stats.t1_expirations++;
     }
@@ -1140,6 +1199,15 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
             }
 
             if (conn->state == AX25_STATE_AWAITING_CONNECTION) {
+                // AX.25 v2.2 Appendix C4 SDL: UA received in AWAITING_CONNECTION must
+                // have F=1 (responding to our SABM P=1). UA with F=0 is a protocol
+                // error - discard and issue DL-ERROR C per Section 17.2.
+                ax25_unnumbered_frame_t *ua_frame = (ax25_unnumbered_frame_t*) frame;
+                if (!ua_frame->pf) {
+                    FIRE_DL_ERROR(conn, AX25_DL_ERROR_C);
+                    break;  // Discard; remain in AWAITING_CONNECTION
+                }
+
                 // Connection established - transition to CONNECTED state
                 conn->vars.vs = conn->vars.vr = conn->vars.va = 0;
                 conn->state = AX25_STATE_CONNECTED;
@@ -1165,8 +1233,10 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                 conn->t3_start_tick = current_tick_10ms;
 
                 // Notify upper layer of connection establishment
+                // DL-CONNECT confirm: local station initiated (sent SABM), peer replied UA.
+                // initiated_locally = true per AX.25 v2.2 Section 5.3 / Appendix D.3.
                 if (conn->callbacks.on_connect) {
-                    conn->callbacks.on_connect(conn->user_data);
+                    conn->callbacks.on_connect(conn->user_data, true);
                 }
             } else if (conn->state == AX25_STATE_AWAITING_RELEASE) {
                 // Disconnect acknowledged - transition to DISCONNECTED
@@ -1199,8 +1269,10 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                 conn->frmr_retry_count = 0;
 
                 // Notify upper layer
-                if (conn->callbacks.on_disconnect) {
-                    conn->callbacks.on_disconnect(conn->user_data, 0);
+                // DL-CONNECT confirm: local station initiated (sent SABM), peer replied UA.
+                // initiated_locally = true per AX.25 v2.2 Section 5.3 / Appendix D.3.
+                if (conn->callbacks.on_connect) {
+                    conn->callbacks.on_connect(conn->user_data, true);
                 }
             }
             // UA frames in other states are ignored per AX.25 v2.2
@@ -1279,8 +1351,10 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
             // Start T3 for idle link monitoring using the authoritative current tick
             conn->t3_start_tick = current_tick_10ms;
 
+            // DL-CONNECT indication: remote station initiated (sent SABM), we replied UA.
+            // initiated_locally = false per AX.25 v2.2 Section 5.3 / Appendix D.3.
             if (conn->callbacks.on_connect) {
-                conn->callbacks.on_connect(conn->user_data);
+                conn->callbacks.on_connect(conn->user_data, false);
             }
             break;
         }
@@ -1502,7 +1576,63 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                 conn->stats.uframe_received = 1;
             }
 
-            // Disconnect request
+            // AX.25 v2.2 Appendix C4 SDL: DISC received in DISCONNECTED state must be
+            // answered with DM (not UA). UA would falsely imply an active connection
+            // was released. Per SDL state D0 (DISCONNECTED), the correct response to
+            // any command is DM with F=P bit mirrored from the received DISC.
+            if (conn->state == AX25_STATE_DISCONNECTED) {
+                ax25_unnumbered_frame_t dm;
+                dm.base.header = conn->peer_addr;
+                dm.base.header.cr = false;  // DM is a response frame
+                dm.base.type = AX25_FRAME_UNNUMBERED_DM;
+                dm.pf = ((ax25_unnumbered_frame_t*) frame)->pf;  // F = P from received DISC
+                dm.modifier = 0x0F;  // DM modifier per AX.25 v2.2 Table 3
+                uint8_t err;
+                size_t len;
+                // ax25_frame_encode includes address header + control byte for transmit
+                uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &dm, &len, &err);
+                if (encoded && conn->callbacks.transmit) {
+                    conn->callbacks.transmit(conn->user_data, encoded, len);
+                }
+                if (encoded != NULL) {
+                    free(encoded);
+                }
+                // Do NOT fire on_disconnect: Layer 3 was never in a connected state
+                break;
+            }
+
+            // DISC received while awaiting UA to our own SABM: remote refused or
+            // pre-empted the connection. Respond with DM, cancel T1, return to
+            // DISCONNECTED, notify Layer 3 with reason 1 (remote disconnect).
+            if (conn->state == AX25_STATE_AWAITING_CONNECTION) {
+                ax25_unnumbered_frame_t dm;
+                dm.base.header = conn->peer_addr;
+                dm.base.header.cr = false;  // DM is a response frame
+                dm.base.type = AX25_FRAME_UNNUMBERED_DM;
+                dm.pf = ((ax25_unnumbered_frame_t*) frame)->pf;
+                dm.modifier = 0x0F;  // DM modifier per AX.25 v2.2 Table 3
+                uint8_t err;
+                size_t len;
+                // ax25_frame_encode includes address header + control byte for transmit
+                uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &dm, &len, &err);
+                if (encoded && conn->callbacks.transmit) {
+                    conn->callbacks.transmit(conn->user_data, encoded, len);
+                }
+                if (encoded != NULL) {
+                    free(encoded);
+                }
+                conn->state = AX25_STATE_DISCONNECTED;
+                conn->t1_start_tick = 0;
+                conn->retry_count = 0;
+                // Report reason=1: remote refused or pre-empted connection
+                if (conn->callbacks.on_disconnect) {
+                    conn->callbacks.on_disconnect(conn->user_data, 1);
+                }
+                break;
+            }
+
+            // Normal DISC received while CONNECTED, TIMER_RECOVERY, AWAITING_RELEASE,
+            // or FRAME_REJECT: send UA and transition to DISCONNECTED.
             conn->state = AX25_STATE_DISCONNECTED;
 
             // Clear SREJ/REJ state on disconnect
@@ -1537,9 +1667,12 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                 encoded = NULL;
             }
 
+            // Use reason=1 (remote disconnect) to distinguish from locally-initiated
+            // disconnect (reason=0 from the AWAITING_RELEASE/UA-received path).
             if (conn->callbacks.on_disconnect) {
-                conn->callbacks.on_disconnect(conn->user_data, 0);  // Normal
+                conn->callbacks.on_disconnect(conn->user_data, 1);
             }
+
             break;
         }
 
@@ -1571,6 +1704,62 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
             break;
         }
 
+        case AX25_FRAME_UNNUMBERED_DM: {
+            // AX.25 v2.2 Appendix C4 SDL: DM received means the remote is in disconnected
+            // mode. Per Section 4.3.3.5, handle behavior depends on current state.
+            conn->stats.uframe_received++;
+            if (conn->stats.uframe_received == 0) {
+                conn->stats.uframe_received = 1;
+            }
+
+            if (conn->state == AX25_STATE_DISCONNECTED) {
+                break;  // Already disconnected, ignore DM
+            }
+
+            if (conn->state == AX25_STATE_AWAITING_CONNECTION) {
+                // Remote refused connection - cancel T1, notify Layer 3
+                conn->state = AX25_STATE_DISCONNECTED;
+                conn->t1_start_tick = 0;
+                conn->retry_count = 0;
+                if (conn->callbacks.on_disconnect) {
+                    conn->callbacks.on_disconnect(conn->user_data, 1);
+                }
+                break;
+            }
+
+            if (conn->state == AX25_STATE_CONNECTED || conn->state == AX25_STATE_TIMER_RECOVERY) {
+                // DL-ERROR D: DM received while connected - remote reset the link
+                FIRE_DL_ERROR(conn, AX25_DL_ERROR_D);
+                conn->state = AX25_STATE_DISCONNECTED;
+                conn->t1_start_tick = 0;
+                conn->t3_start_tick = 0;
+                conn->retry_count = 0;
+                conn->peer_busy = false;
+                conn->local_busy = false;
+                // Flush tx_queue on forced disconnect
+                while (conn->tx_queue.count > 0) {
+                    free(conn->tx_queue.frames[conn->tx_queue.head]);
+                    conn->tx_queue.frames[conn->tx_queue.head] = NULL;
+                    conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
+                    conn->tx_queue.count--;
+                }
+                if (conn->callbacks.on_disconnect) {
+                    conn->callbacks.on_disconnect(conn->user_data, 1);
+                }
+                break;
+            }
+
+            // AWAITING_RELEASE, FRAME_REJECT or other: DM confirms disconnected state
+            conn->state = AX25_STATE_DISCONNECTED;
+            conn->t1_start_tick = 0;
+            conn->retry_count = 0;
+            clear_srej_state(conn);
+            if (conn->callbacks.on_disconnect) {
+                conn->callbacks.on_disconnect(conn->user_data, 0);
+            }
+            break;
+        }
+
         default:
         break;
     }
@@ -1598,7 +1787,12 @@ uint8_t ax25_connect(ax25_connection_t *conn, ax25_address_t *dest, ax25_address
     send_sabm(conn, false);
     conn->state = AX25_STATE_AWAITING_CONNECTION;
     conn->retry_count = 0;
-    conn->t1_start_tick = 0;
+    // T1 MUST be started after sending SABM per AX.25 v2.2 Section 6.3.1 and C4 SDL.
+    // Use AX25_T1_PENDING sentinel so ax25_tick() arms it on the first call,
+    // avoiding a spurious immediate expiry when current_tick is near zero.
+    // Without this, AWAITING_CONNECTION never times out: no DL-ERROR N and no
+    // DL-DISCONNECT indication reach Layer 3 when the peer never responds.
+    conn->t1_start_tick = AX25_T1_PENDING;
 
     return 0;
 }
@@ -1647,10 +1841,15 @@ uint8_t ax25_disconnect(ax25_connection_t *conn) {
         conn->tx_queue.count--;
     }
 
-    // transition to awaiting release, stop timers per AX.25 v2.2 Section 4.3.3.3
+    // transition to awaiting release and arm T1 for UA timeout
     conn->state = AX25_STATE_AWAITING_RELEASE;
-    conn->t1_start_tick = 0;
     conn->retry_count = 0;
+
+    // T1 MUST be started after sending DISC per AX.25 v2.2 Section 6.3.4 and
+    // C4 SDL. If UA or DM is never received, T1 expiry drives N2 retries and
+    // ultimately issues DL-ERROR N + DL-DISCONNECT indication to Layer 3.
+    // Use AX25_T1_PENDING sentinel to let ax25_tick() arm it safely on first call.
+    conn->t1_start_tick = AX25_T1_PENDING;
 
     return 0;
 }
@@ -1658,6 +1857,14 @@ uint8_t ax25_disconnect(ax25_connection_t *conn) {
 uint8_t ax25_send_data(ax25_connection_t *conn, uint8_t *data, size_t len, uint8_t pid) {
     if (!conn || !data)
         return 1;
+
+    // DL-DATA request: per AX.25 v2.2 Section 6.4.11 and C4 SDL, new I-frames
+    // must not be sent in TIMER_RECOVERY state (retransmission in progress).
+    // Return code 6 ("recovery in progress") instead of 2 ("not connected") so
+    // Layer 3 knows the link is alive but temporarily flow-controlled, not down.
+    if (conn->state == AX25_STATE_TIMER_RECOVERY)
+        return 6;  // Recovery in progress - retry later
+
     if (conn->state != AX25_STATE_CONNECTED)
         return 2;
 
@@ -1704,6 +1911,12 @@ uint8_t ax25_send_data(ax25_connection_t *conn, uint8_t *data, size_t len, uint8
         conn->callbacks.transmit(conn->user_data, encoded, frame_len);
     }
 
+    // Update statistics - S-frame sent (was missing in original)
+    conn->stats.sframe_sent++;
+    if (conn->stats.sframe_sent == 0) {
+        conn->stats.sframe_sent = 1;
+    }
+
     // Update statistics - I-frame sent
     conn->stats.iframe_sent++;
     if (conn->stats.iframe_sent == 0) {
@@ -1740,6 +1953,14 @@ uint8_t ax25_send_rnr(ax25_connection_t *conn) {
     if (!conn || conn->state != AX25_STATE_CONNECTED)
         return 1;
 
+    // DL-FLOW-OFF: permitted in CONNECTED and TIMER_RECOVERY per AX.25 v2.2
+    // Section 6.4.10. Both are information-transfer states where local busy
+    // can occur. Reject any other state.
+    if (!conn)
+        return 1;
+    if (conn->state != AX25_STATE_CONNECTED && conn->state != AX25_STATE_TIMER_RECOVERY)
+        return 1;
+
     conn->local_busy = true;
 
     ax25_supervisory_frame_t rnr;
@@ -1766,16 +1987,25 @@ uint8_t ax25_send_rnr(ax25_connection_t *conn) {
 
 // Clear local busy condition - AX.25 v2.2 Section 6.4.10
 uint8_t ax25_clear_local_busy(ax25_connection_t *conn) {
+    // DL-FLOW-ON: guard against invalid states and choose correct response
+    // frame per AX.25 v2.2 Section 6.4.10:
+    //   - REJ if an implicit-reject exception is outstanding (last I-frame
+    //     was out of sequence and REJ was not yet sent or not yet answered)
+    //   - RR otherwise (all received I-frames were in order)
     if (!conn || !conn->local_busy)
+        return 1;
+    if (conn->state != AX25_STATE_CONNECTED && conn->state != AX25_STATE_TIMER_RECOVERY)
         return 1;
 
     conn->local_busy = false;
 
-    // Send RR to indicate we're ready - per Section 6.4.10
-    // Use REJ if last frame was not properly received, RR if it was
-    // For simplicity, we use RR assuming frames were received properly
-    // A more complete implementation would track if REJ is needed
-    send_rr(conn, false);
+    if (conn->rej_exception && can_use_rej(conn)) {
+        // REJ required: missing frames need retransmission from V(R)
+        send_rej(conn, false);
+    } else {
+        // RR: all frames in order, peer may resume sending
+        send_rr(conn, false);
+    }
 
     return 0;
 }
@@ -1819,6 +2049,48 @@ uint8_t ax25_send_ui(ax25_address_t *dest, ax25_address_t *src, uint8_t *data, s
     }
 
     return 0;  // Success
+}
+
+// ax25_send_ui_conn: DL-UNIT-DATA request through connection context.
+// Preferred over ax25_send_ui() because it updates statistics and uses
+// the connection's own transmit callback and user_data context.
+// Per AX.25 v2.2 Appendix D.4: UI frames valid in all connection states.
+uint8_t ax25_send_ui_conn(ax25_connection_t *conn, uint8_t *data, size_t len, uint8_t pid) {
+    if (!conn || !data || len == 0)
+        return 1;
+    if (!conn->callbacks.transmit)
+        return 1;
+
+    ax25_unnumbered_information_frame_t ui;
+    ui.base.base.header = conn->peer_addr;
+    ui.base.base.header.cr = true;
+    ui.base.base.type = AX25_FRAME_UNNUMBERED_INFORMATION;
+    ui.base.pf = false;
+    ui.base.modifier = 0x03;
+    ui.pid = pid;
+    ui.payload = data;
+    ui.payload_len = len;
+
+    size_t encoded_len;
+    uint8_t err;
+    uint8_t *encoded = ax25_unnumbered_information_frame_encode(&ui, &encoded_len, &err);
+    if (!encoded)
+        return 3;
+
+    conn->callbacks.transmit(conn->user_data, encoded, encoded_len);
+
+    // Update statistics for UI frames sent
+    conn->stats.uframe_sent++;
+    if (conn->stats.uframe_sent == 0) {
+        conn->stats.uframe_sent = 1;
+    }
+
+    if (encoded != NULL) {
+        free(encoded);
+        encoded = NULL;
+    }
+
+    return 0;
 }
 
 // Send TEST command - AX.25 v2.2 Section 6.4.13
@@ -2117,6 +2389,14 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
     if (!use_fx25) {
         return ax25_send_data(conn, data, len, pid);
     }
+
+    // DL-DATA request: per AX.25 v2.2 Section 6.4.11 and C4 SDL, new I-frames
+    // must not be sent in TIMER_RECOVERY state (retransmission in progress).
+    // Return code 6 ("recovery in progress") instead of allowing transmission so
+    // Layer 3 knows the link is alive but temporarily flow-controlled, not down.
+    // This check is required here because the FX.25 path bypasses ax25_send_data().
+    if (conn->state == AX25_STATE_TIMER_RECOVERY)
+        return 6;  // Recovery in progress - retry later
 
     // Gate 1: enforce send window BEFORE any encoding or transmission.
     // Previously these checks appeared after transmit, allowing frames to be

@@ -86,7 +86,10 @@ static void srej_cb_transmit(void *user_data, uint8_t *frame, size_t len) {
 }
 
 // on_connect callback
-static void srej_cb_connect(void *user_data) {
+//   initiated_locally = true  -> DL-CONNECT confirm  (we sent SABM, peer replied UA)
+//   initiated_locally = false -> DL-CONNECT indication (peer sent SABM, we replied UA)
+static void srej_cb_connect(void *user_data, bool initiated_locally) {
+    (void) initiated_locally;  // test does not inspect direction, suppress unused-parameter warning
     srej_harness_t *h = (srej_harness_t*) user_data;
     h->connected = true;
 }
@@ -99,7 +102,9 @@ static void srej_cb_disconnect(void *user_data, uint8_t reason) {
 }
 
 // on_data callback: stores last received payload for verification
-static void srej_cb_data(void *user_data, uint8_t *data, size_t len) {
+// pid parameter added to match updated ax25_callbacks_t on_data signature
+// per AX.25 v2.2 Appendix D.4 DL-DATA indication. PID unused in this harness.
+static void srej_cb_data(void *user_data, uint8_t *data, size_t len, uint8_t pid) {
     srej_harness_t *h = (srej_harness_t*) user_data;
     size_t copy_len = (len > 255) ? 255 : len;
     // Store in per-call buffer for ordered delivery tests
