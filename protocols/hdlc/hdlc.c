@@ -30,6 +30,12 @@ void hdlc_frame_encode(unsigned char *frame, int frameLen, unsigned char *encode
     int bitIndex = 0;         // Current bit position in byte (0=LSB, 7=MSB)
     unsigned char byte = 0;   // Current output byte being constructed
     int encodedIndex = 0;     // Output buffer index
+    // maxEncodedLen: worst-case output size for frameLen input bytes.
+    // Used by OUTPUT_BIT to prevent writing past the end of encodedFrame.
+    // overflow: set to 1 by OUTPUT_BIT if a write would exceed maxEncodedLen.
+    // On overflow *encodedLen is set to 0 to signal failure to the caller.
+    int maxEncodedLen = hdlc_encoded_size_max(frameLen);
+    int overflow = 0;
 
     // Output HDLC start flag (0x7E = 01111110)
     encodedFrame[encodedIndex++] = 0x7E;
@@ -42,27 +48,57 @@ void hdlc_frame_encode(unsigned char *frame, int frameLen, unsigned char *encode
         for (int bit_pos = 0; bit_pos < 8; bit_pos++) {
             unsigned char bit = (currentByte >> bit_pos) & 0x01;
             OUTPUT_BIT(bit);
+            if (overflow)
+                break;
         }
+        if (overflow)
+            break;
     }
 
     // Process CRC low byte (transmitted first, LSB-first)
-    for (int bit_pos = 0; bit_pos < 8; bit_pos++) {
-        unsigned char bit = (crcLow >> bit_pos) & 0x01;
-        OUTPUT_BIT(bit);
+    if (!overflow) {
+        for (int bit_pos = 0; bit_pos < 8; bit_pos++) {
+            unsigned char bit = (crcLow >> bit_pos) & 0x01;
+            OUTPUT_BIT(bit);
+            if (overflow)
+                break;
+        }
     }
 
     // Process CRC high byte (transmitted second, LSB-first)
-    for (int bit_pos = 0; bit_pos < 8; bit_pos++) {
-        unsigned char bit = (crcHigh >> bit_pos) & 0x01;
-        OUTPUT_BIT(bit);
+    if (!overflow) {
+        for (int bit_pos = 0; bit_pos < 8; bit_pos++) {
+            unsigned char bit = (crcHigh >> bit_pos) & 0x01;
+            OUTPUT_BIT(bit);
+            if (overflow)
+                break;
+        }
     }
 
     // Output end flag (0x7E)
     // If there's a partial byte, output it first
-    if (bitIndex > 0) {
-        encodedFrame[encodedIndex++] = byte;
+    if (!overflow) {
+        if (bitIndex > 0) {
+            if (encodedIndex < maxEncodedLen) {
+                encodedFrame[encodedIndex++] = byte;
+            } else {
+                overflow = 1;
+            }
+        }
+        if (!overflow) {
+            if (encodedIndex < maxEncodedLen) {
+                encodedFrame[encodedIndex++] = 0x7E;
+            } else {
+                overflow = 1;
+            }
+        }
     }
-    encodedFrame[encodedIndex++] = 0x7E;
+
+    if (overflow) {
+        // Signal buffer overflow to caller: 0 is an unambiguously invalid HDLC length.
+        *encodedLen = 0;
+        return;
+    }
 
     *encodedLen = encodedIndex;
 }

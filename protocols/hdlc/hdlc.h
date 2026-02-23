@@ -181,15 +181,22 @@ typedef enum HDLC_ERROR_E {
  * 2. Tracks consecutive 1-bits
  * 3. Inserts a stuffing 0-bit after 5 consecutive 1-bits
  * 4. Handles byte boundary transitions correctly
+ * uses maxEncodedLen and overflow local variables
+ * that must be declared in the enclosing function (hdlc_frame_encode).
+ * Sets overflow=1 and aborts the macro body if the output buffer is full.
+ * Callers must declare: int maxEncodedLen = hdlc_encoded_size_max(frameLen);
+ *                       int overflow = 0;
+ * and check 'overflow' after each loop that calls OUTPUT_BIT.
  */
 #define OUTPUT_BIT(bit_val) do { \
+    if (overflow) break; \
     if ((bit_val)) { \
-        byte |= (1 << bitIndex); \
+        byte |= (1u << bitIndex); \
         cnt++; \
         if (cnt == 5) { \
-            /* After 5 consecutive 1s, insert a stuffing 0 bit */ \
             bitIndex++; \
             if (bitIndex > 7) { \
+                if (encodedIndex >= maxEncodedLen) { overflow = 1; break; } \
                 encodedFrame[encodedIndex++] = byte; \
                 byte = 0; \
                 bitIndex = 0; \
@@ -201,11 +208,20 @@ typedef enum HDLC_ERROR_E {
     } \
     bitIndex++; \
     if (bitIndex > 7) { \
+        if (encodedIndex >= maxEncodedLen) { overflow = 1; break; } \
         encodedFrame[encodedIndex++] = byte; \
         byte = 0; \
         bitIndex = 0; \
     } \
 } while(0)
+
+// Returns the minimum output buffer size required by hdlc_frame_encode
+// for a raw input frame of frameLen bytes (before CRC or bit stuffing).
+// Formula: worst-case bit-stuffed (frameLen+2 CRC bytes)*9 bits / 8, rounded
+// up to bytes, plus 2 flag bytes.
+static inline int hdlc_encoded_size_max(int frameLen) {
+    return (((frameLen + 2) * 9 + 7) / 8) + 2;
+}
 
 /*============================================================================*/
 /* HDLC Encoding/Decoding Functions                                           */

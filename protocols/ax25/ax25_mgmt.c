@@ -26,7 +26,9 @@ uint8_t ax25_mgmt_init(ax25_mgmt_context_t *ctx) {
     ctx->local_params.implicit_reject = true;
     ctx->local_params.modulo128 = true;
     ctx->local_params.ifield_length = 256;
-    ctx->local_params.window_size = 7;
+    // AX.25 v2.2 Appendix C Table C1: default window is 32 for modulo-128,
+    // 7 for modulo-8. Using 7 here with modulo-128 caps throughput unnecessarily.
+    ctx->local_params.window_size = 32;
     ctx->local_params.ack_timer = 3000;
     ctx->local_params.retries = 10;
     ctx->local_params.response_delay_timer = 500;
@@ -71,8 +73,10 @@ static bool ax25_mgmt_send_xid_command(ax25_mgmt_context_t *ctx) {
     false, false, false, false, false, false, false, 0,
     false, &err);
 
+    // ifield_length is stored in bytes internally; AX.25 v2.2 §4.3.3.7
+    // requires the PI=6 wire value to be in bits, so multiply by 8.
     params[num_params++] = ax25_xid_big_endian_new(
-    XID_PI_IFIELD_LENGTH_RX, ctx->local_params.ifield_length, 2, &err);
+    XID_PI_IFIELD_LENGTH_RX, (uint32_t) ctx->local_params.ifield_length * 8u, 2, &err);
 
     params[num_params++] = ax25_xid_big_endian_new(
     XID_PI_WINDOW_SIZE_RX, ctx->local_params.window_size, 1, &err);
@@ -185,8 +189,11 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
             break;
 
             case XID_PI_IFIELD_LENGTH_RX:  // 6
+                // Wire value is in bits per AX.25 v2.2 §4.3.3.7; convert to bytes.
+                // Guard against zero to avoid a zero ifield_length in agreed params.
                 if (raw->pv_len == 2) {
-                    remote.ifield_length = (raw->pv[0] << 8) | raw->pv[1];
+                    uint16_t bits = (uint16_t) ((raw->pv[0] << 8) | raw->pv[1]);
+                    remote.ifield_length = (bits > 0u) ? (bits / 8u) : 256u;
                 }
             break;
 
@@ -224,7 +231,13 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
     ctx->agreed_params.implicit_reject = ctx->local_params.implicit_reject && remote.implicit_reject;
     ctx->agreed_params.modulo128 = ctx->local_params.modulo128 && remote.modulo128;
     ctx->agreed_params.ifield_length = (ctx->local_params.ifield_length < remote.ifield_length) ? ctx->local_params.ifield_length : remote.ifield_length;
+    // Negotiate window: take minimum of the two offered values, then cap to the
+    // protocol maximum for the agreed modulo (127 for mod-128, 7 for mod-8).
+    // modulo128 is already agreed above so the cap uses the final negotiated value.
     ctx->agreed_params.window_size = (ctx->local_params.window_size < remote.window_size) ? ctx->local_params.window_size : remote.window_size;
+    uint8_t max_window = ctx->agreed_params.modulo128 ? 127u : 7u;
+    if (ctx->agreed_params.window_size > max_window)
+        ctx->agreed_params.window_size = max_window;
     ctx->agreed_params.ack_timer = (ctx->local_params.ack_timer > remote.ack_timer) ? ctx->local_params.ack_timer : remote.ack_timer;
     ctx->agreed_params.retries = (ctx->local_params.retries < remote.retries) ? ctx->local_params.retries : remote.retries;
     // Negotiate T2: use maximum (safer) or match local policy. Similar to T1 logic here.
@@ -278,8 +291,9 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
                 &err);
 
         // I-field length Rx (PI=6)
+        // agreed_params.ifield_length is in bytes; AX.25 v2.2 §4.3.3.7 wire value is bits.
         params[num_params++] = ax25_xid_big_endian_new(
-        XID_PI_IFIELD_LENGTH_RX, ctx->agreed_params.ifield_length, 2,  // 2 bytes
+        XID_PI_IFIELD_LENGTH_RX, (uint32_t) ctx->agreed_params.ifield_length * 8u, 2,  // 2 bytes
                 &err);
 
         // Window size Rx (PI=8)
