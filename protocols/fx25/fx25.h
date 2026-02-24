@@ -286,42 +286,6 @@ typedef struct {
 } fx25_frame_t;
 
 /*============================================================================*/
-/* Galois Field Arithmetic Tables                                             */
-/*============================================================================*/
-
-/**
- * @defgroup GFTables Galois Field GF(2^8) Arithmetic Tables
- * @brief Precomputed lookup tables for Reed-Solomon operations
- *
- * Reed-Solomon encoding and decoding require arithmetic in GF(2^8).
- * Multiplication and division are implemented using log/antilog tables
- * to avoid complex polynomial arithmetic on resource-constrained systems.
- *
- * The primitive element alpha generates the multiplicative group.
- * gf_exp[i] = alpha^i (exponentiation table, 512 entries for overflow)
- * gf_log[x] = log_alpha(x) (discrete logarithm table, 256 entries)
- *
- * Multiplication: a * b = gf_exp[gf_log[a] + gf_log[b]]
- * Division: a / b = gf_exp[gf_log[a] - gf_log[b] + 255]
- */
-
-/**
- * @brief GF(2^8) exponentiation table
- * @details exp[i] = alpha^i for i = 0..511
- * @note Table is duplicated (512 entries) to handle overflow in addition
- * @note Generator polynomial: x^8 + x^4 + x^3 + x^2 + 1 (0x11D)
- */
-extern const uint8_t fx25_gf_exp[512];
-
-/**
- * @brief GF(2^8) discrete logarithm table
- * @details log[x] = i such that alpha^i = x, for x = 0..255
- * @note gf_log[0] = 0xFF (undefined, zero has no logarithm)
- * @note Index 0 is unused in valid codewords (RS is systematic)
- */
-extern const uint8_t fx25_gf_log[256];
-
-/*============================================================================*/
 /* Mode Information and Selection                                             */
 /*============================================================================*/
 

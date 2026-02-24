@@ -7,7 +7,6 @@
  */
 
 //#define RS_DEBUG
-
 #include <string.h>
 #include <stdio.h>
 
@@ -44,7 +43,7 @@ void rs_generate_genpoly(const rs_params_t *params, uint8_t *gen_poly) {
 
     for (uint8_t i = 0; i < params->nroots; i++) {
         uint8_t root = (params->fcr + i) % 255;
-        uint8_t alpha_root = fx25_gf_exp[root];
+        uint8_t alpha_root = gf_exp[root];
 
         DEBUG_PRINT("[RS_DEBUG] Root %u: alpha^%u = 0x%02X\n", i, root, alpha_root);
 
@@ -132,8 +131,7 @@ void rs_encode(const rs_params_t *params, const uint8_t *data, uint8_t *parity) 
             DEBUG_PRINT("\n                          ");DEBUG_PRINT("%02X ", parity[i]);
 
         }
-    }
-    DEBUG_PRINT("\n[RS_DEBUG] === RS ENCODE END ===\n\n");
+    }DEBUG_PRINT("\n[RS_DEBUG] === RS ENCODE END ===\n\n");
 }
 
 int rs_decode(const rs_params_t *params, uint8_t *codeword) {
@@ -164,11 +162,13 @@ int rs_decode(const rs_params_t *params, uint8_t *codeword) {
     for (int s_idx = 0; s_idx < params->nroots; s_idx++) {
         uint8_t root_exp = params->fcr + s_idx;
         uint8_t s = 0;
-        uint32_t init_pow = ((uint32_t) (actual_len - 1) * root_exp) % 255;
-        uint8_t alpha_power = fx25_gf_exp[init_pow];
+        // uint16_t sufficient: max (254*64)=16256 < 65535; no mod needed for gf_exp index
+        uint16_t init_pow = (uint16_t) ((actual_len - 1) * root_exp) % 255u;
+        uint8_t alpha_power = gf_exp[init_pow];  // canonical table
         for (int j = 0; j < actual_len; j++) {
             s = gf_add(s, gf_mul(codeword[j], alpha_power));
-            alpha_power = gf_mul(alpha_power, fx25_gf_exp[(255 - root_exp) % 255]);
+            // 255u - root_exp always in [191,254] so no mod needed
+            alpha_power = gf_mul(alpha_power, gf_exp[255u - root_exp]);  // canonical table
         }
         S[s_idx] = s;
         if (s_idx < 8)
@@ -256,8 +256,7 @@ int rs_decode(const rs_params_t *params, uint8_t *codeword) {
     DEBUG_PRINT("[RS_DEBUG] === Chien Search ===\n");
     for (int j = 0; j < actual_len && err_count < nerrs; j++) {
         int full_pos = actual_len - 1 - j; /* <-- THIS IS THE FIX */
-        uint8_t X = (full_pos == 0) ? 1 : fx25_gf_exp[255 - full_pos];
-
+        uint8_t X = (full_pos == 0) ? 1u : gf_exp[255u - full_pos]; // canonical table
         uint8_t eval = Lambda[0];
         uint8_t xp = X;
         for (int i = 1; i <= nerrs; i++) {
@@ -279,8 +278,7 @@ int rs_decode(const rs_params_t *params, uint8_t *codeword) {
     for (int i = 0; i < err_count; i++) {
         uint8_t pos = err_pos[i];
         int full_pos = actual_len - 1 - pos;
-        uint8_t X = (full_pos == 0) ? 1 : fx25_gf_exp[255 - full_pos]; /* root of Lambda */
-
+        uint8_t X = (full_pos == 0) ? 1u : gf_exp[255u - full_pos]; // root of Lambda - canonical table
         uint8_t omega_val = 0;
         uint8_t xp = 1;
         for (int j = 0; j < params->nroots; j++) {

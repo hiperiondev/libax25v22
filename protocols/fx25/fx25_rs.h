@@ -62,8 +62,8 @@
  * 4. Parity bytes follow the AX.25 frame, ignored by legacy equipment
  *
  * @section Implementation_Notes
- * - Galois Field tables (fx25_gf_exp and fx25_gf_log) must be initialized
- *   before calling RS functions
+ * - Galois Field tables (gf_exp and gf_log from fx25_gf256.h) are pre-computed
+ *   constants; no runtime initialization is required
  * - All operations are performed in GF(2^8) using lookup tables for efficiency
  * - Shortened codes are handled by virtual zero padding during encoding/decoding
  * - Systematic encoding preserves original data, appending parity check bytes
@@ -81,49 +81,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-/**
- * @defgroup GF256Tables Galois Field GF(2^8) Lookup Tables
- * @brief Externally defined Galois Field arithmetic tables
- *
- * These tables provide efficient multiplication and division in GF(2^8)
- * using the primitive polynomial x^8 + x^7 + x^2 + x + 1 (0x11D).
- *
- * Table structure:
- * - fx25_gf_exp: Exponential table (alpha^i) for multiplication, size 512
- *                (doubled for overflow handling in multiplication)
- * - fx25_gf_log: Logarithm table (log_alpha(x)) for division, size 256
- *
- * @section GF_Arithmetic
- * Multiplication: a * b = alpha^(log(a) + log(b))
- * Division: a / b = alpha^(log(a) - log(b))
- * Addition/Subtraction: XOR operation (identical in GF(2^8))
- *
- * @note Table indices 0-255 represent field elements 0x00-0xFF
- * @note fx25_gf_exp has 512 entries to handle index overflow without modulo
- */
-extern const uint8_t fx25_gf_exp[512];
-extern const uint8_t fx25_gf_log[256];
-
-/**
- * @defgroup GFOperations Galois Field Arithmetic Macros
- * @brief Optimized macros for GF(2^8) arithmetic operations
- */
-
-/**
- * @brief Galois Field multiplication macro
- *
- * Computes the product of two field elements using log/antilog tables.
- * Returns 0 if either operand is zero (special case in GF).
- * Otherwise: GF_MUL(a,b) = alpha^(log(a) + log(b))
- *
- * @param[in] a First multiplicand (GF(2^8) element, 0x00-0xFF)
- * @param[in] b Second multiplicand (GF(2^8) element, 0x00-0xFF)
- * @return Product a*b in GF(2^8)
- *
- * @note Uses fx25_gf_log and fx25_gf_exp tables
- * @note No overflow check needed due to 512-entry exp table
- */
-#define GF_MUL(a, b) ((a) == 0 || (b) == 0 ? 0 : fx25_gf_exp[fx25_gf_log[a] + fx25_gf_log[b]])
+#include "fx25_gf256.h"
 
 /**
  * @brief Reed-Solomon Code Parameters Structure
