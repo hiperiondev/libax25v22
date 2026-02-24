@@ -141,28 +141,6 @@ extern const uint8_t gf_exp[512]; /**< Anti-logarithm table: α^n for n in [0,51
 extern const uint8_t gf_log[256]; /**< Discrete logarithm table: log_α(x) for x in [0,255] */
 
 /*============================================================================*/
-/* Initialization Functions                                                   */
-/*============================================================================*/
-
-/**
- * @brief Initialize GF(256) arithmetic tables
- *
- * Performs any required runtime initialization of GF(256) tables.
- * In this implementation, tables are pre-computed and stored in ROM,
- * so this function exists for API compatibility only.
- *
- * @section Calling_Convention
- * Call once at system startup before using any gf_* functions.
- * Safe to call multiple times (idempotent operation).
- *
- * @section Implementation_Notes
- * - Tables are computed for primitive polynomial 0x11D
- * - Generator element α = 2 (0x02)
- * - Tables cover full multiplicative cycle (255 elements)
- */
-void gf_init_tables(void);
-
-/*============================================================================*/
 /* GF(256) Arithmetic Operations                                              */
 /*============================================================================*/
 
