@@ -10,14 +10,18 @@
 
 #include "fx25.h"
 #include "hdlc.h"
+#include "fx25_hdlc.h"
 
 // FX.25 preamble and postamble (configurable, default 32 bits each)
-#define FX25_PREAMBLE_BITS 32
+#define FX25_PREAMBLE_BITS  32
 #define FX25_POSTAMBLE_BITS 32
 
-uint8_t fx25_hdlc_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mode_id, uint8_t channel_quality, uint8_t *output, size_t *output_len) {
+// Return type changed from uint8_t to fx25_hdlc_err_t.
+// All return statements updated to use named enum constants instead of
+// raw integers, eliminating the overlap with decode error codes.
+fx25_hdlc_err_t fx25_hdlc_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mode_id, uint8_t channel_quality, uint8_t *output, size_t *output_len) {
     if (!ax25_frame || !output || !output_len || ax25_len == 0)
-        return 1;
+        return FX25_HDLC_ERR_INVALID_PARAM;
 
     // Step 1: Encode AX.25 to HDLC
     uint8_t hdlc_frame[512];
@@ -26,7 +30,7 @@ uint8_t fx25_hdlc_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mod
     hdlc_frame_encode((unsigned char*) ax25_frame, ax25_len, hdlc_frame, &hdlc_len);
 
     if (hdlc_len <= 0)
-        return 2;  // HDLC encoding failed
+        return FX25_HDLC_ERR_HDLC_ENCODE;
 
     // Step 2: Select or validate FX.25 mode
     const fx25_mode_t *selected_mode = NULL;
@@ -35,27 +39,27 @@ uint8_t fx25_hdlc_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mod
         // Auto-select mode based on HDLC frame length and channel quality
         mode_id = fx25_select_mode_for_conditions(hdlc_len, channel_quality);
         if (mode_id == 0)
-            return 3;  // Frame too large for any FX.25 mode
+            return FX25_HDLC_ERR_AUTO_SELECT;
+
         selected_mode = fx25_get_mode(mode_id);
         if (!selected_mode)
-            return 4;  // Invalid mode ID returned by auto-select
+            return FX25_HDLC_ERR_BAD_MODE;
     } else {
         // User specified mode - validate it exists and fits the HDLC frame
         selected_mode = fx25_get_mode(mode_id);
         if (!selected_mode)
-            return 4;  // Invalid mode ID
+            return FX25_HDLC_ERR_BAD_MODE;
 
         // Validate HDLC frame fits in selected mode's data capacity
         if ((size_t) hdlc_len > selected_mode->data_bytes)
-            return 5;  // Frame too large for selected mode
+            return FX25_HDLC_ERR_FRAME_LARGE;
     }
 
     // Step 3: Apply FX.25 RS encoding
     fx25_frame_t fx25;
     uint8_t err = fx25_encode(hdlc_frame, hdlc_len, mode_id, &fx25);
-    if (err != 0) {
-        return 6;  // FX.25 encoding failed
-    }
+    if (err != 0)
+        return FX25_HDLC_ERR_RS_ENCODE;
 
     // Step 4: Build complete FX.25 transmission frame
     size_t idx = 0;
@@ -83,19 +87,18 @@ uint8_t fx25_hdlc_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mod
     // Clean up FX.25 frame resources
     fx25_frame_free(&fx25);
 
-    return 0;
+    return FX25_HDLC_OK;
 }
 
-uint8_t fx25_hdlc_decode(const uint8_t *rx_data, size_t rx_len, uint8_t *ax25_frame, size_t *ax25_len, uint8_t *corrected_errors) {
+fx25_hdlc_err_t fx25_hdlc_decode(const uint8_t *rx_data, size_t rx_len, uint8_t *ax25_frame, size_t *ax25_len, uint8_t *corrected_errors) {
     if (!rx_data || !ax25_frame || !ax25_len || !corrected_errors)
-        return 1;
+        return FX25_HDLC_ERR_INVALID_PARAM;
 
     size_t preamble_bytes = FX25_PREAMBLE_BITS / 8;
     size_t postamble_bytes = FX25_POSTAMBLE_BITS / 8;
 
-    if (rx_len < preamble_bytes + 8 + postamble_bytes) {
-        return 1;
-    }
+    if (rx_len < preamble_bytes + 8 + postamble_bytes)
+        return FX25_HDLC_ERR_INVALID_PARAM;
 
     rx_data += preamble_bytes;
     rx_len -= preamble_bytes + postamble_bytes;
@@ -104,13 +107,13 @@ uint8_t fx25_hdlc_decode(const uint8_t *rx_data, size_t rx_len, uint8_t *ax25_fr
     fx25_frame_t fx25;
     uint8_t err = fx25_decode(rx_data, rx_len, &fx25, corrected_errors);
     if (err != 0) {
-        return 2;  // FX.25 decoding failed
+        return FX25_HDLC_ERR_RS_DECODE;
     }
 
     const fx25_mode_t *mode = fx25_get_mode(fx25.mode_id);
     if (!mode) {
         fx25_frame_free(&fx25);
-        return 3;  // Invalid mode ID in decoded frame
+        return FX25_HDLC_ERR_BAD_MODE_ID;
     }
 
     // Step 2: Find actual HDLC frame within RS data portion
@@ -126,7 +129,7 @@ uint8_t fx25_hdlc_decode(const uint8_t *rx_data, size_t rx_len, uint8_t *ax25_fr
 
     if (hdlc_start < 0) {
         fx25_frame_free(&fx25);
-        return 4;  // No HDLC start flag found in decoded data
+        return FX25_HDLC_ERR_NO_FLAG;
     }
 
     // Step 3: Decode HDLC frame starting from found flag
@@ -140,15 +143,14 @@ uint8_t fx25_hdlc_decode(const uint8_t *rx_data, size_t rx_len, uint8_t *ax25_fr
 
     fx25_frame_free(&fx25);
 
-    if (hdlc_err != HDLC_OK) {
-        return 5;  // HDLC decoding failed
-    }
+    if (hdlc_err != HDLC_OK)
+        return FX25_HDLC_ERR_HDLC_DECODE;
 
     if (hdlc_len > 0) {
         memcpy(ax25_frame, hdlc_frame, hdlc_len);
         *ax25_len = (size_t) hdlc_len;
-        return 0;  // Success
+        return FX25_HDLC_OK;
     }
 
-    return 6;  // Empty frame decoded
+    return FX25_HDLC_ERR_EMPTY;
 }

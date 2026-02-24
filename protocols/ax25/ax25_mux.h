@@ -35,14 +35,13 @@
 
 /** Maximum simultaneous links per multiplexer (configurable). */
 #define AX25_MUX_MAX_LINKS 8
-#define AX25_MUX_FRAME_BUF 512
+#ifndef AX25_MUX_FRAME_BUF
+#define AX25_MUX_FRAME_BUF  MAX_FRAME_SIZE  /**< 340 bytes, matches common.h MAX_FRAME_SIZE */
+#endif
 #define AX25_MUX_PRI_UI     0u   /**< UI, XID, TEST, management frames - lowest priority */
 #define AX25_MUX_PRI_DATA   100u /**< I-frames - normal data priority */
 #define AX25_MUX_PRI_ACK    200u /**< S-frames (RR/RNR/REJ/SREJ) - acknowledgment priority */
 #define AX25_MUX_PRI_URGENT 255u /**< U-frames (SABM/SABME/DISC/DM/UA/FRMR) - urgent link control */
-#ifndef AX25_MUX_FRAME_BUF
-#define AX25_MUX_FRAME_BUF  MAX_FRAME_SIZE  // 340 bytes — matches common.h MAX_FRAME_SIZE
-#endif
 #define AX25_MUX_NO_SEIZED  0xFF
 
 typedef void (*ax25_lm_seize_confirm_t)(void *user_data, uint8_t *frame, size_t len);

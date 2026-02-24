@@ -561,7 +561,6 @@ typedef struct {
     uint32_t rnr_start_tick; /**< Time when peer busy was detected */
 
     /* Address and negotiation */
-    ax25_address_t peer; /**< Peer address (redundant with peer_addr) */
     ax25_negotiated_params_t params; /**< XID negotiated parameters */
     uint16_t t3_timeout; /**< T3 timeout value (10ms units) */
 

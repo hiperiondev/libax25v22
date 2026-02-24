@@ -58,7 +58,8 @@
  *
  * @section Implementation_Notes
  * - Uses shortened Reed-Solomon codes over GF(2^8)
- * - Primitive polynomial: x^8 + x^7 + x^2 + x + 1
+ * - Primitive polynomial: x^8 + x^4 + x^3 + x^2 + 1  (= 0x11D)
+ *   Note: the form x^8+x^7+x^2+x+1 would be 0x187, which is incorrect here.
  * - Maximum frame size: 255 bytes total (data + parity)
  * - Supports 11 distinct operating modes via correlation tags
  * - Auto-mode selection based on frame size and channel quality
@@ -124,39 +125,33 @@
 /* Error Return Codes                                                           */
 /*============================================================================*/
 
-/**
- * @defgroup FX25ErrorCodes FX.25 HDLC Error Return Codes
- * @brief Error codes returned by fx25_hdlc_encode() and fx25_hdlc_decode()
- *
- * @subsection Encode_Error_Codes
- * - 0: Success
- * - 1: Invalid input parameters (NULL pointers or zero length)
- * - 2: HDLC encoding failed (AX.25 to HDLC conversion error)
- * - 3: Auto mode selection failed (frame too large for any FX.25 mode)
- * - 4: Invalid mode ID specified or returned by auto-select
- * - 5: Frame too large for explicitly selected mode
- * - 6: FX.25 Reed-Solomon encoding failed
- *
- * @subsection Decode_Error_Codes
- * - 0: Success
- * - 1: Invalid input parameters or insufficient data length
- * - 2: FX.25 decoding failed (correlation tag not found or RS decode error)
- * - 3: Invalid mode ID in decoded frame (corruption or unsupported tag)
- * - 4: No HDLC start flag found in RS data portion
- * - 5: HDLC decoding failed (bit destuffing or FCS error)
- * - 6: Empty frame decoded (zero length payload)
- */
-#define FX25_HDLC_ERR_SUCCESS           0  /**< Operation completed successfully */
-#define FX25_HDLC_ERR_INVALID_PARAM     1  /**< NULL pointer or invalid length parameter */
-#define FX25_HDLC_ERR_HDLC_ENCODE_FAIL  2  /**< HDLC layer encoding failure */
-#define FX25_HDLC_ERR_AUTO_SELECT_FAIL  3  /**< Automatic mode selection failed */
-#define FX25_HDLC_ERR_INVALID_MODE      4  /**< Invalid FX.25 mode identifier */
-#define FX25_HDLC_ERR_FRAME_TOO_LARGE   5  /**< AX.25 frame exceeds selected mode capacity */
-#define FX25_HDLC_ERR_FX25_ENCODE_FAIL  6  /**< Reed-Solomon encoding failure */
-#define FX25_HDLC_ERR_FX25_DECODE_FAIL  2  /**< Reed-Solomon decoding failure */
-#define FX25_HDLC_ERR_NO_HDLC_FLAG      4  /**< HDLC start flag (0x7E) not found in data */
-#define FX25_HDLC_ERR_HDLC_DECODE_FAIL  5  /**< HDLC layer decoding failure */
-#define FX25_HDLC_ERR_EMPTY_FRAME       6  /**< Decoded frame has zero length */
+// Unified error code enum covering both encode and decode directions.
+// Previously, both fx25_hdlc_encode and fx25_hdlc_decode returned uint8_t
+// with overlapping numeric values (e.g., both used 2, 4, 5, 6) making
+// debug logs ambiguous without external context about which function was called.
+typedef enum {
+    FX25_HDLC_OK = 0,  // Success
+    // Shared errors
+    FX25_HDLC_ERR_INVALID_PARAM = 1,  // NULL pointer or zero-length input
+    // Encode-specific errors
+    FX25_HDLC_ERR_HDLC_ENCODE = 2,  // HDLC layer encoding failure
+    FX25_HDLC_ERR_AUTO_SELECT = 3,  // Auto mode selection failed (frame too large)
+    FX25_HDLC_ERR_BAD_MODE = 4,  // Invalid or unknown FX.25 mode identifier
+    FX25_HDLC_ERR_FRAME_LARGE = 5,  // Frame exceeds selected mode capacity
+    FX25_HDLC_ERR_RS_ENCODE = 6,  // Reed-Solomon encoding failure
+    // Decode-specific errors
+    FX25_HDLC_ERR_RS_DECODE = 7,  // FX.25 RS decoding failed (uncorrectable errors)
+    FX25_HDLC_ERR_BAD_MODE_ID = 8,  // Invalid mode ID in decoded frame
+    FX25_HDLC_ERR_NO_FLAG = 9,  // No HDLC 0x7E start flag found in decoded data
+    FX25_HDLC_ERR_HDLC_DECODE = 10,  // HDLC layer decoding failure
+    FX25_HDLC_ERR_EMPTY = 11  // Empty frame after decode
+} fx25_hdlc_err_t;
+
+// Function signatures updated from uint8_t to fx25_hdlc_err_t return type
+// so callers can distinguish encode vs decode errors by name, not just number.
+fx25_hdlc_err_t fx25_hdlc_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mode_id, uint8_t channel_quality, uint8_t *output, size_t *output_len);
+
+fx25_hdlc_err_t fx25_hdlc_decode(const uint8_t *rx_data, size_t rx_len, uint8_t *ax25_frame, size_t *ax25_len, uint8_t *corrected_errors);
 
 /*============================================================================*/
 /* Channel Quality Indicators                                                   */
@@ -268,8 +263,7 @@
  * @see fx25_select_mode_for_conditions()
  * @see hdlc_frame_encode()
  */
-uint8_t fx25_hdlc_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mode_id,
-                         uint8_t channel_quality, uint8_t *output, size_t *output_len);
+fx25_hdlc_err_t fx25_hdlc_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mode_id, uint8_t channel_quality, uint8_t *output, size_t *output_len);
 
 /**
  * @brief Decode FX.25 frame and extract AX.25 data
@@ -358,7 +352,6 @@ uint8_t fx25_hdlc_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mod
  * @see fx25_decode()
  * @see hdlc_frame_decode()
  */
-uint8_t fx25_hdlc_decode(const uint8_t *rx_data, size_t rx_len, uint8_t *ax25_frame,
-                         size_t *ax25_len, uint8_t *corrected_errors);
+fx25_hdlc_err_t fx25_hdlc_decode(const uint8_t *rx_data, size_t rx_len, uint8_t *ax25_frame, size_t *ax25_len, uint8_t *corrected_errors);
 
 #endif /* FX25_HDLC_H_ */

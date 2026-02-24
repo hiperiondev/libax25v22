@@ -36,7 +36,10 @@
  *
  * @section Reed_Solomon_Implementation
  * This implementation uses shortened Reed-Solomon codes over GF(2^8):
- * - Field: GF(2^8) with primitive polynomial 0x11D (x^8 + x^7 + x^2 + x + 1)
+ * - Field: GF(2^8) with primitive polynomial 0x11D (x^8 + x^4 + x^3 + x^2 + 1)
+ *   Note: 0x11D = x^8+x^4+x^3+x^2+1; the wrong form x^8+x^7+x^2+x+1 = 0x187.
+ *   Verified against GF_PRIMITIVE_POLY in fx25_gf256.h and the gf_exp/gf_log
+ *   lookup tables in fx25_gf256.c.
  * - Generator polynomial roots: consecutive powers of alpha starting at fcr
  * - Code structure: Systematic encoding with parity appended
  * - Error correction capability: t = nroots/2 symbol errors
