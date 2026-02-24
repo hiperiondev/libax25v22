@@ -66,7 +66,7 @@
  * The Protocol Identifier field identifies the layer 3 protocol or special
  * handling required for the frame payload.
  */
-#define AX25_PID_SEGMENT_FRAGMENT  0x08   /**< Segmentation fragment per AX.25 v2.2 Section 6.5.3 */
+#define AX25_PID_SEGMENT_FRAGMENT  0x08u  /**< Segmentation Fragment — AX.25 v2.2 Section 3.4, Figure 3.2 */
 #define AX25_PID_ESCAPE_CHARACTER  0xFF   /**< Escape for extended PID (next byte contains extended PID) */
 
 /*============================================================================*/
@@ -241,6 +241,7 @@ typedef struct {
     uint8_t total_segments; /**< Total number of segments calculated */
     uint16_t bytes_sent; /**< Bytes transmitted so far */
     uint8_t pending_pid; /**< Original PID for segmented data */
+    uint8_t tx_segment_buf[AX25_MAX_SEGMENT_BUF]; /**< Reusable transmit segment buffer - lives in struct (BSS/static) instead of the stack, preventing stack overflow on Cortex-M0/M0+ with 4KB RAM. */
 
     /*------------------------------------------------------------------------*/
     /* Receive Reassembly State                                               */
@@ -251,6 +252,7 @@ typedef struct {
     uint8_t rx_segment_bitmap[8]; /**< Bitmap of received segments (64 bits) */
     bool rx_first_received; /**< True if first segment (seq 0) received */
     uint32_t rx_timeout_tick; /**< TR210 timeout timestamp (10ms ticks) */
+    bool rx_timer_armed; /**< true when rx_timeout_tick is valid (armed) */
     uint8_t rx_original_pid; /**< Original PID extracted from first segment */
 
     /*------------------------------------------------------------------------*/

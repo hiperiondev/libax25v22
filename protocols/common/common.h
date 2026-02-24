@@ -68,35 +68,40 @@
  * @section Maximum_Frame_Size
  * The maximum frame size is implementation-dependent but typically limited
  * by the maximum I-field length (N1) of 256 octets plus overhead.
- * Total maximum: 7 + 7 + (7*8) + 1 + 1 + 256 + 2 = 330 bytes (with max repeaters)
+ * Total maximum: 7 + 7 + (2*7) + 2 + 1 + 256 + 2 = 289 bytes (AX.25 v2.2 max, 2 digipeaters)
  */
 
 /**
  * @brief Maximum expected AX.25 frame size in bytes
  *
  * Defines the upper bound for CRC computation and frame buffer allocation.
- * Computed from the worst-case AX.25 v2.2 frame with all optional fields:
+ * AX.25 v2.2 Section 3.12.5 limits repeater subfields to a maximum of TWO.
+ * Maximum frame composition:
  *
  *   Destination address  :  7 bytes
  *   Source address       :  7 bytes
- *   8 digipeater addrs   : 56 bytes  (8 x 7, AX.25 v2.2 Section 3.12.3 maximum)
+ *   2 digipeater addrs   : 14 bytes  (AX.25 v2.2 Section 3.12.5: max 2 hops)
  *   Control field        :  2 bytes  (modulo-128, 16-bit)
  *   PID field            :  1 byte
  *   I-field (default N1) : 256 bytes (AX.25 v2.2 default maximum)
  *   FCS field            :  2 bytes
  *   -------------------------
- *   Exact maximum total  : 331 bytes
- *   Safety margin        :   9 bytes
+ *   Exact maximum total  : 289 bytes
+ *   Safety margin        :  51 bytes  (accommodates non-standard extensions)
  *   -------------------------
  *   MAX_FRAME_SIZE       : 340 bytes
  *
  * @warning Frames exceeding this size are rejected by CRC() with the error
- *          sentinel 0xFFFF, which callers treat as a CRC failure.  Any value
- *          smaller than 331 will cause silent, false CRC errors on fully-loaded
+ *          sentinel 0xFFFF, which callers treat as a CRC failure. Any value
+ *          smaller than 289 will cause silent, false CRC errors on fully-loaded
  *          frames that are otherwise perfectly valid per AX.25 v2.2.
+ *          The 340-byte value is retained for compatibility with legacy
+ *          implementations that may pass more than 2 digipeater subfields
+ *          (e.g., AX.25 v2.0 paths with up to 8 repeaters). No valid
+ *          AX.25 v2.2 frame can exceed 289 bytes.
  *
- * @note On severely memory-constrained targets where 8-digipeater paths are
- *       never used the minimum safe value is 280 bytes:
+ * @note On memory-constrained targets where digipeater forwarding is unused,
+ *       the minimum safe value is 280 bytes:
  *       (14 addr + 2 ctrl + 1 PID + 256 data + 2 FCS + 5 margin).
  *       Define AX25_NO_DIGIPEATER_PATH and rebuild to use that reduced limit.
  */
@@ -105,7 +110,7 @@
 // 14 (2 addr) + 2 (ctrl) + 1 (PID) + 256 (I-field) + 2 (FCS) + 5 (margin)
 #define MAX_FRAME_SIZE 280u
 #else
-// Full AX.25 v2.2 limit: 70 (10 addr) + 2 (ctrl) + 1 (PID) + 256 (I-field) + 2 (FCS) + 9 (margin)
+// Full limit (v2.2 max 289 bytes true; 340 retained for legacy v2.0 8-repeater compatibility)
 #define MAX_FRAME_SIZE 340u
 #endif
 

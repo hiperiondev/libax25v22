@@ -18,11 +18,20 @@ static bool address_equals(const ax25_address_t *a, const ax25_address_t *b) {
 static bool is_broadcast_address(const ax25_address_t *addr) {
     const char *c = addr->callsign;
 
-    if (strncmp(c, "CQ", 2) == 0 && (c[2] == ' ' || c[2] == '\0'))
+    // Use direct character comparisons to avoid strncmp dependency on null
+    // termination and to prevent c[6] out-of-bounds access for "BEACON"
+    // (callsign field is exactly 6 chars, may not be null-terminated).
+
+    // "CQ    " — 2 chars + 4 spaces
+    if (c[0] == 'C' && c[1] == 'Q' && (c[2] == ' ' || c[2] == '\0'))
         return true;
-    if (strncmp(c, "APRS", 4) == 0 && (c[4] == ' ' || c[4] == '\0'))
+
+    // "APRS  " — 4 chars + 2 spaces
+    if (c[0] == 'A' && c[1] == 'P' && c[2] == 'R' && c[3] == 'S' && (c[4] == ' ' || c[4] == '\0'))
         return true;
-    if (strncmp(c, "BEACON", 6) == 0 && (c[6] == ' ' || c[6] == '\0'))
+
+    // "BEACON" — exactly 6 chars, no indexing beyond the field boundary
+    if (c[0] == 'B' && c[1] == 'E' && c[2] == 'A' && c[3] == 'C' && c[4] == 'O' && c[5] == 'N')
         return true;
 
     return false;

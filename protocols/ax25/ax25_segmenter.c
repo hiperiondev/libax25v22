@@ -16,9 +16,12 @@ static void set_segment_received(ax25_segmenter_t *seg, uint8_t sequence) {
     if (sequence >= 64) {
         return;  // Invalid sequence
     }
-    uint8_t byte_index = sequence / 8;
-    uint8_t bit_index = sequence % 8;
-    seg->rx_segment_bitmap[byte_index] |= (1U << bit_index);
+    // Division/modulo with explicit bit-shift and bit-mask.
+    // Guarantees fast code at all optimisation levels including -O0 debug builds.
+    // Any compiler already does this for power-of-2 constants at -O1+, but
+    // making it explicit removes the dependency on optimiser behaviour.
+    seg->rx_segment_bitmap[sequence >> 3u] |= (uint8_t) (1u << (sequence & 0x07u));
+
 }
 
 static bool buffer_out_of_order_segment(ax25_segmenter_t *seg, uint8_t *payload, uint16_t payload_len, uint8_t sequence,
@@ -109,6 +112,7 @@ uint8_t ax25_segmenter_init(ax25_segmenter_t *seg, uint16_t max_iframe_size) {
 
     memset(seg, 0, sizeof(ax25_segmenter_t));
     seg->state = SEG_STATE_IDLE;
+    seg->rx_timer_armed = false;  // explicitly disarm TR210 timer
 
     // Calculate segment size: N1 - 2 bytes overhead (1 for seg header + 1 for original PID)
     if (max_iframe_size > 2) {
@@ -134,8 +138,7 @@ void ax25_segmenter_tick(ax25_segmenter_t *seg, uint32_t current_tick) {
         return;
     }
 
-    // Skip timeout check if timer not initialized
-    if (seg->rx_timeout_tick == 0) {
+    if (!seg->rx_timer_armed) {
         return;
     }
 
@@ -156,6 +159,7 @@ void ax25_segmenter_tick(ax25_segmenter_t *seg, uint32_t current_tick) {
         memset(seg->rx_segment_bitmap, 0, sizeof(seg->rx_segment_bitmap));
         seg->rx_first_received = false;
         seg->rx_timeout_tick = 0;
+        seg->rx_timer_armed = false;
         seg->rx_last_received = false;
 
         // Clear out-of-order segment buffer
@@ -191,11 +195,27 @@ uint8_t ax25_segmenter_send(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
     seg->bytes_sent = 0;
     seg->current_segment = 0;
     uint16_t segment_data_size = seg->segment_size;
-    seg->total_segments = (len + segment_data_size - 1) / segment_data_size;
-    if (seg->total_segments > 64) {
+    // Guard against division by zero (segment_size should never be 0 after
+    // ax25_segmenter_init(), but defend anyway).
+    if (segment_data_size == 0) {
+        seg->state = SEG_STATE_IDLE;
+        return 1;
+    }
+
+    // Use uint32_t for the intermediate calculation.
+    // Both len and segment_data_size are uint16_t; their sum can reach
+    // 4096 + 65535 = 69631 which overflows uint16_t.  Promote to uint32_t
+    // before the arithmetic to prevent wrap-around on 16-bit MCUs.
+    // The result is validated against the uint8_t field limit (max 64
+    // segments per AX.25 v2.2 segmentation) before the narrowing cast.
+    uint32_t num = (uint32_t) len + (uint32_t) segment_data_size - 1u;
+    uint32_t denom = (uint32_t) segment_data_size;
+    uint32_t result = num / denom;
+    if (result > 64u) {
         seg->state = SEG_STATE_IDLE;
         return 2;  // Too many segments
     }
+    seg->total_segments = (uint8_t) result;
 
     while (seg->bytes_sent < len) {
         uint8_t header = seg->current_segment & 0x3F;
@@ -209,9 +229,9 @@ uint8_t ax25_segmenter_send(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
         if (seg->bytes_sent + this_len > len) {
             this_len = len - seg->bytes_sent;
         }
-        // Use AX25_MAX_SEGMENT_BUF instead of the hardcoded 260 literal so
-        // the transmit buffer always matches ax25_segment_slot_t.data[] size.
-        uint8_t segment[AX25_MAX_SEGMENT_BUF];
+        // Use struct-resident buffer instead of a 260-byte stack array to
+        // prevent stack overflow on Cortex-M0/M0+ targets with 4KB total RAM.
+        uint8_t *segment = seg->tx_segment_buf;
         uint16_t offset = 0;
         segment[offset++] = header;
         if (seg->current_segment == 0) {
@@ -278,7 +298,14 @@ void ax25_segmenter_receive(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
         }
     } else {
         if (seg->state != SEG_STATE_REASSEMBLING) {
-            return;
+            // Non-first segment (BEG=0) received while reassembler is in Null/Idle
+            // state — orphaned or out-of-order segment with no matching first segment.
+            // Per AX.25 v2.2 Appendix C6.3.2, report to Layer 3 so it can take
+            // corrective action (e.g., request retransmission from segment 0).
+            // Silent discard is replaced by an explicit protocol error notification.
+            if (seg->on_reassembly_error)
+                seg->on_reassembly_error(AX25_SEG_ERROR_SEQUENCE, seg->user_data);
+
         }
     }
     if (hdr.sequence >= 64) {
@@ -287,14 +314,26 @@ void ax25_segmenter_receive(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
         }
         return;
     }
-    uint8_t byte_index = hdr.sequence / 8;
-    uint8_t bit_index = hdr.sequence % 8;
-    if (seg->rx_segment_bitmap[byte_index] & (1U << bit_index)) {
+
+    // First segment must contain at least the original PID byte (original len >= 2)
+    if (hdr.first_segment && payload_len < 1u) {
+        if (seg->on_reassembly_error) {
+            seg->on_reassembly_error(AX25_SEG_ERROR_INVALID, seg->user_data);
+            seg->rx_timer_armed = false;
+        }
+        seg->state = SEG_STATE_IDLE;
         return;
     }
-    if (hdr.sequence > seg->rx_highest_received) {
-        seg->rx_highest_received = hdr.sequence;
+
+    // Same shift/mask substitution as set_segment_received() — explicit fast path
+    // for duplicate segment detection, correct at all optimization levels.
+    uint8_t byte_index = hdr.sequence >> 3u;
+    uint8_t bit_index = hdr.sequence & 0x07u;
+
+    if (seg->rx_segment_bitmap[byte_index] & (1u << bit_index)) {
+        return;
     }
+
     if (hdr.sequence == seg->rx_expected_segment) {
         seg->rx_gap_count = 0;  // Reset gap count on valid progress
         if (hdr.first_segment) {
@@ -302,6 +341,7 @@ void ax25_segmenter_receive(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
             payload++;
             payload_len--;
         }
+
         if (seg->rx_buffer_used + payload_len > sizeof(seg->rx_buffer)) {
             seg->state = SEG_STATE_IDLE;
             if (seg->on_reassembly_error) {
@@ -309,13 +349,21 @@ void ax25_segmenter_receive(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
             }
             return;
         }
+
         memcpy(&seg->rx_buffer[seg->rx_buffer_used], payload, payload_len);
         seg->rx_buffer_used += payload_len;
         set_segment_received(seg, hdr.sequence);
         seg->rx_expected_segment = (seg->rx_expected_segment + 1) & 0x3F;
+
+        // update rx_highest_received after successful in-order storage
+        if (hdr.sequence > seg->rx_highest_received) {
+            seg->rx_highest_received = hdr.sequence;
+        }
+
         if (hdr.last_segment) {
             seg->rx_last_received = true;
         }
+
         bool progress = true;
         while (progress) {
             progress = false;
@@ -325,6 +373,7 @@ void ax25_segmenter_receive(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
                         seg->state = SEG_STATE_IDLE;
                         if (seg->on_reassembly_error) {
                             seg->on_reassembly_error(AX25_SEG_ERROR_OVERFLOW, seg->user_data);
+                            seg->rx_timer_armed = false;
                         }
                         return;
                     }
@@ -336,13 +385,18 @@ void ax25_segmenter_receive(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
                         seg->rx_last_received = true;
                     }
                     seg->ooo_buffer[i].valid = false;
-                    seg->ooo_count--;
+                    // Guard: prevent uint8_t underflow if ooo_count is
+                    // somehow already zero (single-threaded design makes
+                    // this unreachable, but the check costs nothing)
+                    if (seg->ooo_count > 0)
+                        seg->ooo_count--;
                     progress = true;
                     break;
                 }
             }
         }
         seg->rx_timeout_tick = current_tick + SEG_TIMEOUT_TICKS;
+        seg->rx_timer_armed = true;
     } else if (hdr.sequence > seg->rx_expected_segment) {
         uint8_t gap_size = hdr.sequence - seg->rx_expected_segment;
         if (gap_size <= 4 && seg->on_request_retransmit) {
@@ -359,7 +413,12 @@ void ax25_segmenter_receive(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
                 }
             }
         }
-        if (!buffer_out_of_order_segment(seg, payload, payload_len, hdr.sequence, hdr.last_segment)) {
+        // update rx_highest_received ONLY on successful out-of-order buffering
+        if (buffer_out_of_order_segment(seg, payload, payload_len, hdr.sequence, hdr.last_segment)) {
+            if (hdr.sequence > seg->rx_highest_received) {
+                seg->rx_highest_received = hdr.sequence;
+            }
+        } else {
             if (seg->on_reassembly_error) {
                 seg->on_reassembly_error(AX25_SEG_ERROR_SEQUENCE, seg->user_data);
             }
@@ -373,7 +432,9 @@ void ax25_segmenter_receive(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
             seg->rx_first_received = false;
             seg->rx_timeout_tick = 0;
             seg->rx_last_received = false;
+            seg->rx_timer_armed = false;
             seg->ooo_count = 0;
+            seg->rx_timer_armed = true;
             seg->rx_gap_count = 0;
             if (seg->on_reassembly_error) {
                 seg->on_reassembly_error(AX25_SEG_ERROR_SEQUENCE, seg->user_data);
@@ -381,6 +442,7 @@ void ax25_segmenter_receive(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
             return;
         }
         seg->rx_timeout_tick = current_tick + SEG_TIMEOUT_TICKS;
+        seg->rx_timer_armed = true;
     }
 
     if (seg->rx_last_received && seg->ooo_count == 0 && seg->rx_expected_segment == ((seg->rx_highest_received + 1) & 0x3F)) {
