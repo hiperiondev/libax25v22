@@ -49,6 +49,7 @@
 #include "ax25.h"
 #include "ax25_mgmt.h"
 #include "ax25_physical.h"
+#include "ax25_segmenter.h"
 
 /*============================================================================*/
 /* Timer Constants and Sentinel Values                                        */
@@ -609,6 +610,11 @@ typedef struct {
 
     // optional MDL context pointer for FRMR-to-MDL error bridging
     ax25_mgmt_context_t *mgmt_ctx;  // NULL = MDL bridging disabled
+
+    // Segmenter/reassembler per AX.25 v2.2 Section 2.4 / Appendix C6
+    // Automatically applied: ax25_send_data uses it when len > N1,
+    // and received PID=0x08 frames are routed through it for reassembly.
+    ax25_segmenter_t segmenter;
 } ax25_connection_t;
 
 /*============================================================================*/

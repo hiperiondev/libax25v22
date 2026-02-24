@@ -11,6 +11,7 @@
 
 #include "fx25.h"
 #include "ax25_state_machine.h"
+#include "ax25_segmenter.h"
 
 // EST frame handler - AX.25 v2.2 Section 4.3.3.8 and 6.4.13
 #define TEST_FRAME_MAX_PAYLOAD 256  // Maximum test payload for static buffer
@@ -156,7 +157,7 @@ static bool can_use_rej(ax25_connection_t *conn) {
 }
 
 // Deliver buffered SREJ frames in sequence
-static void deliver_buffered_srej_frames(ax25_connection_t *conn) {
+static void deliver_buffered_srej_frames(ax25_connection_t *conn, uint32_t current_tick) {
     bool delivered = true;
 
     while (delivered && conn->srej_buffer_count > 0) {
@@ -165,11 +166,13 @@ static void deliver_buffered_srej_frames(ax25_connection_t *conn) {
         // Look for frame with N(S) = V(R)
         for (uint8_t i = 0; i < conn->srej_buffer_count; i++) {
             if (conn->srej_buffer_ns[i] == conn->vars.vr) {
-                // Deliver this frame to upper layer
-                // Deliver via dispatch_to_protocol so registered PID handlers and
-                // default_handler are tried before on_data, and the correct PID
-                // stored at buffer time is passed up per AX.25 v2.2 Appendix D.4.
-                dispatch_to_protocol(conn, conn->srej_buffer[i], conn->srej_buffer_len[i], conn->srej_buffer_pid[i]);
+                // Route segment fragments to reassembler; all others to L3 directly.
+                // PID stored at buffer time is authoritative per DL-DATA indication.
+                if (conn->srej_buffer_pid[i] == AX25_PID_SEGMENT_FRAGMENT) {
+                    ax25_segmenter_receive(&conn->segmenter, conn->srej_buffer[i], conn->srej_buffer_len[i], conn->srej_buffer_pid[i], current_tick);
+                } else {
+                    dispatch_to_protocol(conn, conn->srej_buffer[i], conn->srej_buffer_len[i], conn->srej_buffer_pid[i]);
+                }
 
                 // Advance V(R)
                 conn->vars.vr = INC_MOD(conn->vars.vr, conn->vars.mod);
@@ -548,12 +551,16 @@ static void handle_out_of_sequence_iframe(ax25_connection_t *conn, ax25_informat
     }
 }
 
-// Process expected I-frame (N(S) == V(R)) - modified to use protocol dispatch
-static void process_expected_iframe(ax25_connection_t *conn, ax25_information_frame_t *iframe) {
-    // Deliver frame to upper layer via protocol multiplexer
-    // AX.25 v2.2 Section 6.5: Use PID to demultiplex to correct handler
+// Process expected I-frame (N(S) == V(R)) - routes PID=0x08 to reassembler
+static void process_expected_iframe(ax25_connection_t *conn, ax25_information_frame_t *iframe, uint32_t current_tick) {
+    // Route segment fragments to the built-in reassembler per AX.25 v2.2 Appendix C6.
+    // All other PIDs go directly to the L3 protocol multiplexer (Section 6.5).
     if (iframe->payload_len > 0 && iframe->payload) {
-        dispatch_to_protocol(conn, iframe->payload, iframe->payload_len, iframe->pid);
+        if (iframe->pid == AX25_PID_SEGMENT_FRAGMENT) {
+            ax25_segmenter_receive(&conn->segmenter, iframe->payload, (uint16_t) iframe->payload_len, iframe->pid, current_tick);
+        } else {
+            dispatch_to_protocol(conn, iframe->payload, iframe->payload_len, iframe->pid);
+        }
     }
 
     // Advance V(R)
@@ -568,7 +575,7 @@ static void process_expected_iframe(ax25_connection_t *conn, ax25_information_fr
         clear_srej_pending(conn, prev_ns);
 
         // Deliver any buffered frames that are now in sequence
-        deliver_buffered_srej_frames(conn);
+        deliver_buffered_srej_frames(conn, current_tick);
     }
 
     // Clear REJ exception if we received the expected frame
@@ -945,6 +952,112 @@ static void handle_received_frmr(ax25_connection_t *conn, ax25_frame_reject_fram
     }
 }
 
+// Raw single-I-frame sender - used internally by the segmenter callback and by
+// ax25_send_data for payloads that already fit within N1. Does NOT invoke the
+// segmenter, preventing infinite recursion. All window/state checks are kept so
+// each segment from the segmenter is properly gated before transmission.
+static uint8_t ax25_send_data_raw(ax25_connection_t *conn, uint8_t *data, size_t len, uint8_t pid) {
+    if (!conn || !data)
+        return 1;
+
+    if (conn->state == AX25_STATE_TIMER_RECOVERY)
+        return 6;
+
+    if (conn->state != AX25_STATE_CONNECTED)
+        return 2;
+
+    if (conn->peer_busy)
+        return 5;
+
+    // Check window not exceeded
+    uint8_t outstanding = AX25_OUTSTANDING(conn->vars.vs, conn->vars.va, conn->vars.mod);
+    if (outstanding >= conn->timers.k)
+        return 3;
+
+    if (conn->tx_queue.count >= AX25_MAX_QUEUE_SIZE)
+        return 3;
+
+    // Build I-frame; clamp to N1 as safety guard (callers ensure len <= n1)
+    ax25_information_frame_t iframe;
+    iframe.base.header = conn->peer_addr;
+    iframe.base.type = (conn->vars.mod == 128) ? AX25_FRAME_INFORMATION_16BIT : AX25_FRAME_INFORMATION_8BIT;
+    iframe.ns = conn->vars.vs;
+    iframe.nr = conn->vars.vr;
+    iframe.pf = false;
+    iframe.pid = pid;
+    iframe.payload_len = len > conn->timers.n1 ? conn->timers.n1 : len;
+    iframe.payload = data;
+
+    size_t frame_len;
+    uint8_t err;
+    uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &iframe, &frame_len, &err);
+    if (!encoded)
+        return 4;
+
+    // Queue for retransmission
+    uint8_t tail = conn->tx_queue.tail;
+    conn->tx_queue.frames[tail] = encoded;
+    conn->tx_queue.lengths[tail] = frame_len;
+    conn->tx_queue.ns[tail] = conn->vars.vs;
+    conn->tx_queue.tail = (tail + 1) % AX25_MAX_QUEUE_SIZE;
+    conn->tx_queue.count++;
+
+    // Send immediately
+    if (conn->callbacks.transmit)
+        conn->callbacks.transmit(conn->user_data, encoded, frame_len);
+
+    // Update statistics - S-frame sent
+    conn->stats.sframe_sent++;
+    if (conn->stats.sframe_sent == 0)
+        conn->stats.sframe_sent = 1;
+
+    // Update statistics - I-frame sent
+    conn->stats.iframe_sent++;
+    if (conn->stats.iframe_sent == 0)
+        conn->stats.iframe_sent = 1;
+
+    // Update bytes sent
+    conn->stats.bytes_sent += iframe.payload_len;
+    if (conn->stats.bytes_sent < iframe.payload_len)
+        conn->stats.bytes_sent = iframe.payload_len;
+
+    // Cancel T2 timer - ACK is piggybacked in N(R) of this I-frame
+    cancel_t2(conn);
+
+    conn->vars.vs = INC_MOD(conn->vars.vs, conn->vars.mod);
+
+    // Start T1 timer for acknowledgment
+    if (conn->t1_start_tick == 0)
+        conn->t1_start_tick = AX25_T1_PENDING;
+    conn->retry_count = 0;
+
+    // Stop T3 while T1 is running
+    conn->t3_start_tick = 0;
+
+    return 0;
+}
+
+// Segmenter transmit callback - invoked by ax25_segmenter_send for each produced
+// segment frame. user_data is the owning ax25_connection_t (set in ax25_connection_init).
+// Errors (window full, peer busy) are silently tolerated: the peer's TR210 timer
+// detects missing segments and drives SREJ/REJ recovery per Appendix C6.
+static void seg_transmit_cb(uint8_t *data, uint16_t len, uint8_t pid, void *user_data) {
+    ax25_connection_t *conn = (ax25_connection_t*) user_data;
+    if (!conn)
+        return;
+    ax25_send_data_raw(conn, data, (size_t) len, pid);
+}
+
+// Segmenter reassembly-complete callback - invoked when all segments have arrived
+// and the original payload is fully rebuilt. Delivers to L3 via PID multiplexer.
+// user_data is the owning ax25_connection_t (set in ax25_connection_init).
+static void seg_reassembly_complete_cb(uint8_t *data, uint16_t len, uint8_t pid, void *user_data) {
+    ax25_connection_t *conn = (ax25_connection_t*) user_data;
+    if (!conn)
+        return;
+    dispatch_to_protocol(conn, data, (size_t) len, pid);
+}
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void *user_data) {
@@ -1003,6 +1116,14 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     // initialize MDL context pointer
     conn->mgmt_ctx = NULL;  // caller sets if MDL error bridging is needed
 
+    // Initialize segmenter/reassembler per AX.25 v2.2 Section 2.4 / Appendix C6.
+    // segment_size = N1 - 2 (1-byte segment header + 1-byte original-PID overhead).
+    // Callbacks wire automatic segmentation on TX and reassembly delivery on RX.
+    ax25_segmenter_init(&conn->segmenter, conn->timers.n1);
+    conn->segmenter.transmit_iframe = seg_transmit_cb;
+    conn->segmenter.on_reassembly_complete = seg_reassembly_complete_cb;
+    conn->segmenter.user_data = conn;
+
     return 0;
 }
 
@@ -1053,7 +1174,8 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
     // Process received N(S): classify as in-order, out-of-order, or duplicate
     if (ns == conn->vars.vr) {
         // In-order: expected sequence number - process normally
-        process_expected_iframe(conn, iframe);
+        // Pass tick so segment fragments reach the TR210 reassembly timer
+        process_expected_iframe(conn, iframe, current_tick_10ms);
 
     } else if (ax25_in_window(ns, conn->vars.vr, conn->timers.k, conn->vars.mod)) {
         // Out-of-order: N(S) is ahead of V(R) and within receive window k.
@@ -1080,6 +1202,10 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
 void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
     if (!conn)
         return;
+
+    // Tick the TR210 reassembly timer per AX.25 v2.2 Section 6.7.1.13 / Appendix C6.3.
+    // ax25_segmenter_tick is a no-op when no reassembly is in progress.
+    ax25_segmenter_tick(&conn->segmenter, current_tick_10ms);
 
     // Initialize T1 timer with actual tick value if using sentinel
     // Never set to 0 since 0 means "timer not active"
@@ -1860,92 +1986,41 @@ uint8_t ax25_send_data(ax25_connection_t *conn, uint8_t *data, size_t len, uint8
 
     // DL-DATA request: per AX.25 v2.2 Section 6.4.11 and C4 SDL, new I-frames
     // must not be sent in TIMER_RECOVERY state (retransmission in progress).
-    // Return code 6 ("recovery in progress") instead of 2 ("not connected") so
-    // Layer 3 knows the link is alive but temporarily flow-controlled, not down.
     if (conn->state == AX25_STATE_TIMER_RECOVERY)
         return 6;  // Recovery in progress - retry later
 
     if (conn->state != AX25_STATE_CONNECTED)
         return 2;
 
-    // Check if peer is busy - cannot send I frames when peer sent RNR
-    // Per AX.25 v2.2 Section 6.4.9: stop transmission of I frames until busy clears
+    // Per AX.25 v2.2 Section 6.4.9: stop I-frame transmission while peer is busy
     if (conn->peer_busy)
         return 5;  // Peer busy
 
-    // Check window not exceeded
-    uint8_t outstanding = AX25_OUTSTANDING(conn->vars.vs, conn->vars.va, conn->vars.mod);
-    if (outstanding >= conn->timers.k)
-        return 3;  // Window closed - (V(S)-V(A)) mod modulo >= k
+    // Segment automatically when payload exceeds negotiated N1 per Section 6.6 / Appendix C6.
+    // Previously the payload was silently truncated to N1 (data loss); now the segmenter
+    // splits the data into multiple I-frames and the peer reassembles them transparently.
+    if (len > conn->timers.n1) {
+        // Require at least one open window slot before starting segmentation.
+        // If the window fills mid-burst, the peer's TR210 timer detects the gap
+        // and drives SREJ/REJ recovery per AX.25 v2.2 Appendix C6.
+        uint8_t outstanding = AX25_OUTSTANDING(conn->vars.vs, conn->vars.va, conn->vars.mod);
+        if (outstanding >= conn->timers.k || conn->tx_queue.count >= AX25_MAX_QUEUE_SIZE)
+            return 3;  // Window closed - caller must retry
 
-    if (conn->tx_queue.count >= AX25_MAX_QUEUE_SIZE)
-        return 3;  // Queue physically full - secondary guard against overflow
-
-    // Create I-frame
-    ax25_information_frame_t iframe;
-    iframe.base.header = conn->peer_addr;
-    iframe.base.type = (conn->vars.mod == 128) ? AX25_FRAME_INFORMATION_16BIT : AX25_FRAME_INFORMATION_8BIT;
-    iframe.ns = conn->vars.vs;
-    iframe.nr = conn->vars.vr;
-    iframe.pf = false;
-    iframe.pid = pid;
-    iframe.payload_len = len > conn->timers.n1 ? conn->timers.n1 : len;
-    iframe.payload = data;  // Note: user must keep data valid until acked
-
-    size_t frame_len;
-    uint8_t err;
-    uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &iframe, &frame_len, &err);
-    if (!encoded)
-        return 4;
-
-    // Queue for retransmission
-    uint8_t tail = conn->tx_queue.tail;
-    conn->tx_queue.frames[tail] = encoded;
-    conn->tx_queue.lengths[tail] = frame_len;
-    conn->tx_queue.ns[tail] = conn->vars.vs;
-    conn->tx_queue.tail = (tail + 1) % AX25_MAX_QUEUE_SIZE;
-    conn->tx_queue.count++;
-
-    // Send immediately
-    if (conn->callbacks.transmit) {
-        conn->callbacks.transmit(conn->user_data, encoded, frame_len);
+        // Clamp to segmenter maximum of 4096 bytes (64 segments x 64-byte data max)
+        uint16_t seg_len = (uint16_t) (len > 4096u ? 4096u : len);
+        uint8_t result = ax25_segmenter_send(&conn->segmenter, data, seg_len, pid);
+        // Map segmenter codes to ax25_send_data conventions:
+        //   0=success, 1=invalid param, 2=too large, 3=no tx callback, 4=busy
+        if (result == 4)
+            return 3;  // Segmenter busy -> window full equivalent
+        if (result != 0)
+            return 1;  // Invalid parameters or oversized data
+        return 0;
     }
 
-    // Update statistics - S-frame sent (was missing in original)
-    conn->stats.sframe_sent++;
-    if (conn->stats.sframe_sent == 0) {
-        conn->stats.sframe_sent = 1;
-    }
-
-    // Update statistics - I-frame sent
-    conn->stats.iframe_sent++;
-    if (conn->stats.iframe_sent == 0) {
-        conn->stats.iframe_sent = 1;  // Prevent overflow
-    }
-    // Update bytes sent
-    conn->stats.bytes_sent += iframe.payload_len;
-    if (conn->stats.bytes_sent < iframe.payload_len) {
-        // Overflow occurred
-        conn->stats.bytes_sent = iframe.payload_len;
-    }
-
-    // Cancel T2 timer when sending I-frame (ACK is piggybacked in N(R))
-    cancel_t2(conn);
-
-    conn->vars.vs = INC_MOD(conn->vars.vs, conn->vars.mod);
-
-    // Start T1 timer for acknowledgment (use sentinel value 1 to start on next tick)
-    if (conn->t1_start_tick == 0) {
-        // Use AX25_T1_PENDING (UINT32_MAX) not 1; avoids off-by-one on MCUs
-        // that boot with tick counter near zero (see fix 1.3).
-        conn->t1_start_tick = AX25_T1_PENDING;
-    }
-    conn->retry_count = 0;
-
-    // Stop T3 while T1 is running (T3 only runs when no outstanding frames)
-    conn->t3_start_tick = 0;
-
-    return 0;
+    // Payload fits within N1: use raw single-frame path (no segmentation)
+    return ax25_send_data_raw(conn, data, len, pid);
 }
 
 // Send RNR when local buffers full - AX.25 v2.2 Section 6.4.10
@@ -2249,6 +2324,14 @@ uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connect
 
     // Apply maximum I-field length
     conn->timers.n1 = mgmt_ctx->agreed_params.ifield_length;
+
+    // Reinitialize segmenter with the newly negotiated N1 value.
+    // segment_size = N1 - 2 (1-byte segment header + 1-byte original-PID overhead).
+    // Re-wires callbacks because ax25_segmenter_init zeroes the entire struct.
+    ax25_segmenter_init(&conn->segmenter, conn->timers.n1);
+    conn->segmenter.transmit_iframe = seg_transmit_cb;
+    conn->segmenter.on_reassembly_complete = seg_reassembly_complete_cb;
+    conn->segmenter.user_data = conn;
 
     return 0;  // Success
 }

@@ -390,7 +390,6 @@ This checklist documents the implementation status of all features defined in:
 - ✅ PID preservation across segments
 - ✅ Segment transmission sequencing
 - ✅ Next segment timer TR210
-- ⚠️ **LIMITATION:** Segmentation is NOT automatically applied by state machine; application layer responsible for calling segmentation functions
 
 ### 8.2 Reassembler State Machine
 - ✅ Segment reception and buffering
