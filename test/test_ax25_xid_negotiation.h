@@ -13,9 +13,9 @@
  * GNU General Public License for more details.
  */
 
-#ifndef TEST_HDLC_FRAME_STRUCTURE_H_
-#define TEST_HDLC_FRAME_STRUCTURE_H_
+#ifndef TEST_AX25_XID_NEGOTIATION_H_
+#define TEST_AX25_XID_NEGOTIATION_H_
 
-int test_hdlc_frame_structure_main(void);
+int test_ax25_xid_params_edge2_main(void);
 
-#endif /* TEST_HDLC_FRAME_STRUCTURE_H_ */
+#endif /* TEST_AX25_XID_NEGOTIATION_H_ */

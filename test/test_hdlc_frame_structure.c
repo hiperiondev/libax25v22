@@ -18,18 +18,16 @@
 //   - HDLC Frame Abort Sequence (AX.25 v2.2 Section 3.10): 15+ contiguous 1s
 //   - NRZI Encoding / Decoding (AX.25 v2.2 Section 3.8)
 //   - Idle Pattern Generation (continuous flag / mark-hold patterns)
-#define DEBUG_ENABLE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
 
-// start modified part - new test includes
 #include "test_common.h"
 #include "hdlc.h"
 #include "common.h"
-// end modified part
 
 // Counter required by TEST_ASSERT macro in test_common.h
 static uint32_t assert_count = 0;
@@ -86,17 +84,16 @@ static int max_consecutive_ones_msb(const unsigned char *buf, int byte_len) {
 // Initial state: line starts HIGH (mark).
 // ===========================================================================
 
-// start modified part - NRZI encode/decode helpers (software model for test)
-
 // nrzi_encode: convert NRZ bit stream (byte array, LSB-first per AX.25) to
 // NRZI signal levels. Returns allocated buffer of same length. Caller frees.
 // Each element is 0 (space) or 1 (mark).
-static uint8_t *nrzi_encode(const unsigned char *nrz_bytes, int byte_len, int *out_bit_count) {
+static uint8_t* nrzi_encode(const unsigned char *nrz_bytes, int byte_len, int *out_bit_count) {
     int total_bits = byte_len * 8;
-    uint8_t *levels = (uint8_t *)malloc(total_bits);
-    if (!levels) return NULL;
+    uint8_t *levels = (uint8_t*) malloc(total_bits);
+    if (!levels)
+        return NULL;
 
-    uint8_t current_level = 1; // start HIGH (mark)
+    uint8_t current_level = 1;  // start HIGH (mark)
     int idx = 0;
     for (int i = 0; i < byte_len; i++) {
         for (int bit = 0; bit < 8; bit++) {
@@ -115,38 +112,31 @@ static uint8_t *nrzi_encode(const unsigned char *nrz_bytes, int byte_len, int *o
 
 // nrzi_decode: recover NRZ bit stream from NRZI signal levels.
 // Returns allocated byte array. Caller frees.
-static unsigned char *nrzi_decode(const uint8_t *levels, int bit_count, int *out_byte_len) {
-    // start modified part - guard non-positive bit_count; use size_t so calloc
-    // receives an unsigned value and the compiler can prove it is in range
+static unsigned char* nrzi_decode(const uint8_t *levels, int bit_count, int *out_byte_len) {
     if (bit_count <= 0) {
         *out_byte_len = 0;
         return NULL;
     }
-    size_t byte_len = ((size_t)bit_count + 7u) / 8u;
-    // end modified part
-    unsigned char *nrz = (unsigned char *)calloc(byte_len, 1);
-    if (!nrz) return NULL;
+    size_t byte_len = ((size_t) bit_count + 7u) / 8u;
+    unsigned char *nrz = (unsigned char*) calloc(byte_len, 1);
+    if (!nrz)
+        return NULL;
 
-    uint8_t prev_level = 1; // initial state HIGH
+    uint8_t prev_level = 1;  // initial state HIGH
     for (int i = 0; i < bit_count; i++) {
         uint8_t nrz_bit;
         if (levels[i] != prev_level) {
-            nrz_bit = 0; // transition -> 0
+            nrz_bit = 0;  // transition -> 0
         } else {
-            nrz_bit = 1; // no transition -> 1
+            nrz_bit = 1;  // no transition -> 1
         }
         prev_level = levels[i];
-        // start modified part - size_t index and explicit cast silence sign/shift warnings
-        nrz[(size_t)i / 8u] |= (unsigned char)(nrz_bit << (i % 8));
-        // end modified part
+        nrz[(size_t) i / 8u] |= (unsigned char) (nrz_bit << (i % 8));
     }
-    // start modified part - byte_len <= INT_MAX because bit_count <= INT_MAX
-    *out_byte_len = (int)byte_len;
-    // end modified part
+    *out_byte_len = (int) byte_len;
+
     return nrz;
 }
-
-// end modified part - NRZI helpers
 
 // ===========================================================================
 // TEST GROUP 1: HDLC ABORT SEQUENCE
@@ -167,20 +157,16 @@ static int test_abort_output_format(void) {
 
     hdlc_frame_abort(abort_buf, &abort_len);
 
-    DEBUG_VAR("abort_len (should be 2)", abort_len);
-    DEBUG_FRAME("abort bytes", abort_buf, abort_len);
+    DEBUG_VAR("abort_len (should be 2)", abort_len); DEBUG_FRAME("abort bytes", abort_buf, abort_len);
 
-    // start modified part - test abort length and byte values
     TEST_ASSERT(abort_len == 2, "Abort sequence length == 2", 0);
     TEST_ASSERT(abort_buf[0] == 0xFF, "Abort byte[0] == 0xFF", abort_buf[0]);
     TEST_ASSERT(abort_buf[1] == 0xFF, "Abort byte[1] == 0xFF", abort_buf[1]);
-    // end modified part
 
     // Count raw consecutive ones in the abort buffer
     int max_ones = max_consecutive_ones_msb(abort_buf, abort_len);
     DEBUG_VAR("Max consecutive 1-bits (MSB-first count)", max_ones);
-    TEST_ASSERT(max_ones >= HDLC_ABORT_MIN_ONES,
-                "Abort sequence has >= 15 consecutive 1-bits (AX.25 v2.2 Section 3.10)", max_ones);
+    TEST_ASSERT(max_ones >= HDLC_ABORT_MIN_ONES, "Abort sequence has >= 15 consecutive 1-bits (AX.25 v2.2 Section 3.10)", max_ones);
 
     return 0;
 }
@@ -194,7 +180,7 @@ static int test_abort_null_safety(void) {
 
     // NULL abortLen - should not crash
     unsigned char abort_buf[4];
-    hdlc_frame_abort(abort_buf, NULL); // must not segfault
+    hdlc_frame_abort(abort_buf, NULL);  // must not segfault
 
     // NULL abortSeq - abortLen should be set to 0
     int abort_len = 99;
@@ -220,7 +206,7 @@ static int test_abort_detection_in_decoder(void) {
     // Bytes 1-2: 0xFF 0xFF (16 ones - abort, no bit stuffing applied)
     // This simulates a transmitter sending abort mid-frame.
     unsigned char abort_stream[] = { 0x7E, 0xFF, 0xFF };
-    int stream_len = (int)sizeof(abort_stream);
+    int stream_len = (int) sizeof(abort_stream);
 
     DEBUG_FRAME("abort_stream input to decoder", abort_stream, stream_len);
 
@@ -228,11 +214,9 @@ static int test_abort_detection_in_decoder(void) {
     int decoded_len = 0;
     hdlc_error_t err = hdlc_frame_decode(abort_stream, stream_len, decoded_buf, &decoded_len);
 
-    DEBUG_VAR("hdlc_frame_decode result (should be HDLC_ERR_ABORT)", (unsigned)err);
-    DEBUG_VAR("HDLC_ERR_ABORT constant value", (unsigned)HDLC_ERR_ABORT);
+    DEBUG_VAR("hdlc_frame_decode result (should be HDLC_ERR_ABORT)", (unsigned)err); DEBUG_VAR("HDLC_ERR_ABORT constant value", (unsigned)HDLC_ERR_ABORT);
 
-    TEST_ASSERT(err == HDLC_ERR_ABORT,
-                "Decoder returns HDLC_ERR_ABORT for 16 consecutive 1-bits", (unsigned)err);
+    TEST_ASSERT(err == HDLC_ERR_ABORT, "Decoder returns HDLC_ERR_ABORT for 16 consecutive 1-bits", (unsigned )err);
 
     return 0;
 }
@@ -249,7 +233,7 @@ static int test_abort_at_seven_ones(void) {
     // LSB-first: bit0=0,bit1=1,bit2=1,bit3=1,bit4=1,bit5=1,bit6=1,bit7=1 -> after bit0=0
     // we get 7 ones from bits 1-7. That triggers abort.
     unsigned char abort_stream7[] = { 0x7E, 0xFE };
-    int stream_len = (int)sizeof(abort_stream7);
+    int stream_len = (int) sizeof(abort_stream7);
 
     DEBUG_FRAME("abort_stream7 input (7 ones LSB-first in byte 0xFE)", abort_stream7, stream_len);
 
@@ -259,8 +243,7 @@ static int test_abort_at_seven_ones(void) {
 
     DEBUG_VAR("hdlc_frame_decode result (should be HDLC_ERR_ABORT=6)", (unsigned)err);
 
-    TEST_ASSERT(err == HDLC_ERR_ABORT,
-                "Decoder returns HDLC_ERR_ABORT for 7 contiguous 1-bits", (unsigned)err);
+    TEST_ASSERT(err == HDLC_ERR_ABORT, "Decoder returns HDLC_ERR_ABORT for 7 contiguous 1-bits", (unsigned )err);
 
     return 0;
 }
@@ -278,14 +261,14 @@ static int test_abort_injected_mid_frame(void) {
     unsigned char frame_data[15];
     memset(frame_data, 0xAA, sizeof(frame_data));
     int encoded_len = 0;
-    int max_enc = hdlc_encoded_size_max((int)sizeof(frame_data));
-    unsigned char *encoded = (unsigned char *)malloc(max_enc + 4);
+    int max_enc = hdlc_encoded_size_max((int) sizeof(frame_data));
+    unsigned char *encoded = (unsigned char*) malloc(max_enc + 4);
     if (!encoded) {
         printf("  SKIP: malloc failed\n");
         return 0;
     }
 
-    hdlc_frame_encode(frame_data, (int)sizeof(frame_data), encoded, &encoded_len);
+    hdlc_frame_encode(frame_data, (int) sizeof(frame_data), encoded, &encoded_len);
     DEBUG_FRAME("valid encoded frame", encoded, encoded_len);
 
     // Overwrite bytes 2-3 with 0xFF 0xFF to simulate mid-frame abort injection
@@ -302,8 +285,7 @@ static int test_abort_injected_mid_frame(void) {
 
     DEBUG_VAR("hdlc_frame_decode result (expect HDLC_ERR_ABORT)", (unsigned)err);
 
-    TEST_ASSERT(err == HDLC_ERR_ABORT,
-                "Mid-frame abort injection detected by decoder", (unsigned)err);
+    TEST_ASSERT(err == HDLC_ERR_ABORT, "Mid-frame abort injection detected by decoder", (unsigned )err);
 
     free(encoded);
     return 0;
@@ -324,12 +306,10 @@ static int test_abort_bit_count_lsb(void) {
     int max_ones_lsb = max_consecutive_ones_lsb(abort_buf, abort_len);
     DEBUG_VAR("Max consecutive 1-bits (LSB-first)", max_ones_lsb);
 
-    TEST_ASSERT(max_ones_lsb >= HDLC_ABORT_MIN_ONES,
-                "Abort sequence >= 15 ones in LSB-first bit order", max_ones_lsb);
+    TEST_ASSERT(max_ones_lsb >= HDLC_ABORT_MIN_ONES, "Abort sequence >= 15 ones in LSB-first bit order", max_ones_lsb);
 
     // Specifically: 2 bytes of 0xFF = 16 ones regardless of bit order
-    TEST_ASSERT(max_ones_lsb == 16,
-                "2 x 0xFF = exactly 16 consecutive 1-bits", max_ones_lsb);
+    TEST_ASSERT(max_ones_lsb == 16, "2 x 0xFF = exactly 16 consecutive 1-bits", max_ones_lsb);
 
     return 0;
 }
@@ -353,10 +333,10 @@ static int test_nrzi_roundtrip_flag(void) {
 
     uint8_t *levels = nrzi_encode(input, 1, &bit_count);
     TEST_ASSERT(levels != NULL, "nrzi_encode returned non-NULL", 0);
-    if (!levels) return 1;
+    if (!levels)
+        return 1;
 
-    DEBUG_VAR("Encoded bit_count", bit_count);
-    DEBUG_PRINT("NRZI levels (0=space/transition, 1=mark/no-transition):");
+    DEBUG_VAR("Encoded bit_count", bit_count); DEBUG_PRINT("NRZI levels (0=space/transition, 1=mark/no-transition):");
     for (int i = 0; i < bit_count; i++) {
         printf("%d", levels[i]);
     }
@@ -392,10 +372,10 @@ static int test_nrzi_roundtrip_abort(void) {
     int bit_count = 0;
     uint8_t *levels = nrzi_encode(abort_buf, abort_len, &bit_count);
     TEST_ASSERT(levels != NULL, "nrzi_encode abort: non-NULL", 0);
-    if (!levels) return 1;
+    if (!levels)
+        return 1;
 
-    DEBUG_VAR("NRZI bit_count for abort", bit_count);
-    DEBUG_PRINT("NRZI levels for 0xFF 0xFF:");
+    DEBUG_VAR("NRZI bit_count for abort", bit_count); DEBUG_PRINT("NRZI levels for 0xFF 0xFF:");
     for (int i = 0; i < bit_count; i++) {
         printf("%d", levels[i]);
     }
@@ -410,10 +390,8 @@ static int test_nrzi_roundtrip_abort(void) {
             all_mark = 0;
             break;
         }
-    }
-    DEBUG_BOOL("All NRZI levels are HIGH/mark (no transition for 1s)", all_mark);
-    TEST_ASSERT(all_mark == 1,
-                "NRZI abort (0xFF 0xFF): all levels HIGH - no transitions for 1-bits", 0);
+    } DEBUG_BOOL("All NRZI levels are HIGH/mark (no transition for 1s)", all_mark);
+    TEST_ASSERT(all_mark == 1, "NRZI abort (0xFF 0xFF): all levels HIGH - no transitions for 1-bits", 0);
 
     int out_byte_len = 0;
     unsigned char *decoded = nrzi_decode(levels, bit_count, &out_byte_len);
@@ -422,8 +400,7 @@ static int test_nrzi_roundtrip_abort(void) {
     if (decoded) {
         DEBUG_FRAME("NRZI decoded abort", decoded, out_byte_len);
         TEST_ASSERT(out_byte_len == abort_len, "NRZI abort round-trip length matches", out_byte_len);
-        TEST_ASSERT(memcmp(decoded, abort_buf, abort_len) == 0,
-                    "NRZI abort round-trip bytes match 0xFF 0xFF", 0);
+        TEST_ASSERT(memcmp(decoded, abort_buf, abort_len) == 0, "NRZI abort round-trip bytes match 0xFF 0xFF", 0);
         free(decoded);
     }
 
@@ -441,20 +418,19 @@ static int test_nrzi_roundtrip_full_frame(void) {
     // Minimal valid AX.25 payload: 15 bytes of known data
     unsigned char payload[15];
     for (int i = 0; i < 15; i++) {
-        payload[i] = (unsigned char)(i + 0x41); // 'A', 'B', ...
+        payload[i] = (unsigned char) (i + 0x41);  // 'A', 'B', ...
     }
 
     int enc_len = 0;
     int max_enc = hdlc_encoded_size_max(15);
-    unsigned char *encoded = (unsigned char *)malloc(max_enc + 8);
+    unsigned char *encoded = (unsigned char*) malloc(max_enc + 8);
     if (!encoded) {
         printf("  SKIP: malloc failed\n");
         return 0;
     }
 
     hdlc_frame_encode(payload, 15, encoded, &enc_len);
-    DEBUG_FRAME("HDLC encoded frame", encoded, enc_len);
-    DEBUG_VAR("enc_len", enc_len);
+    DEBUG_FRAME("HDLC encoded frame", encoded, enc_len); DEBUG_VAR("enc_len", enc_len);
 
     TEST_ASSERT(enc_len > 0, "Frame encoded successfully (enc_len > 0)", enc_len);
     if (enc_len == 0) {
@@ -480,8 +456,7 @@ static int test_nrzi_roundtrip_full_frame(void) {
 
     if (recovered) {
         DEBUG_FRAME("NRZI recovered frame", recovered, recovered_len);
-        TEST_ASSERT(recovered_len == enc_len,
-                    "NRZI full frame round-trip length matches", recovered_len);
+        TEST_ASSERT(recovered_len == enc_len, "NRZI full frame round-trip length matches", recovered_len);
         int match = (memcmp(recovered, encoded, enc_len) == 0);
         DEBUG_BOOL("NRZI byte-level match", match);
         TEST_ASSERT(match, "NRZI full frame round-trip bytes match exactly", 0);
@@ -506,17 +481,17 @@ static int test_nrzi_differential_transitions(void) {
     int bit_count = 0;
     uint8_t *levels = nrzi_encode(zeros, 1, &bit_count);
     TEST_ASSERT(levels != NULL, "nrzi_encode 0x00: non-NULL", 0);
-    if (!levels) return 1;
+    if (!levels)
+        return 1;
 
     int transition_count = 0;
-    uint8_t prev = 1; // initial mark
+    uint8_t prev = 1;  // initial mark
     for (int i = 0; i < bit_count; i++) {
-        if (levels[i] != prev) transition_count++;
+        if (levels[i] != prev)
+            transition_count++;
         prev = levels[i];
-    }
-    DEBUG_VAR("Transition count for 0x00 (8 zeros, expect 8 transitions)", transition_count);
-    TEST_ASSERT(transition_count == 8,
-                "0x00 (8 zero-bits) causes 8 NRZI transitions", transition_count);
+    } DEBUG_VAR("Transition count for 0x00 (8 zeros, expect 8 transitions)", transition_count);
+    TEST_ASSERT(transition_count == 8, "0x00 (8 zero-bits) causes 8 NRZI transitions", transition_count);
     free(levels);
 
     // 0xFF = 8 ones = 0 transitions
@@ -524,17 +499,17 @@ static int test_nrzi_differential_transitions(void) {
     bit_count = 0;
     levels = nrzi_encode(ones, 1, &bit_count);
     TEST_ASSERT(levels != NULL, "nrzi_encode 0xFF: non-NULL", 0);
-    if (!levels) return 1;
+    if (!levels)
+        return 1;
 
     transition_count = 0;
     prev = 1;
     for (int i = 0; i < bit_count; i++) {
-        if (levels[i] != prev) transition_count++;
+        if (levels[i] != prev)
+            transition_count++;
         prev = levels[i];
-    }
-    DEBUG_VAR("Transition count for 0xFF (8 ones, expect 0 transitions)", transition_count);
-    TEST_ASSERT(transition_count == 0,
-                "0xFF (8 one-bits) causes 0 NRZI transitions", transition_count);
+    } DEBUG_VAR("Transition count for 0xFF (8 ones, expect 0 transitions)", transition_count);
+    TEST_ASSERT(transition_count == 0, "0xFF (8 one-bits) causes 0 NRZI transitions", transition_count);
     free(levels);
 
     // 0xAA = 10101010 LSB-first = 0,1,0,1,0,1,0,1 = alternating, 4 transitions
@@ -543,23 +518,25 @@ static int test_nrzi_differential_transitions(void) {
     bit_count = 0;
     levels = nrzi_encode(alt, 1, &bit_count);
     TEST_ASSERT(levels != NULL, "nrzi_encode 0xAA: non-NULL", 0);
-    if (!levels) return 1;
+    if (!levels)
+        return 1;
 
     DEBUG_PRINT("NRZI levels for 0xAA:");
-    for (int i = 0; i < bit_count; i++) printf("%d", levels[i]);
+    for (int i = 0; i < bit_count; i++)
+        printf("%d", levels[i]);
     printf("\n");
 
     transition_count = 0;
     prev = 1;
     for (int i = 0; i < bit_count; i++) {
-        if (levels[i] != prev) transition_count++;
+        if (levels[i] != prev)
+            transition_count++;
         prev = levels[i];
     }
     // 0xAA LSB-first: bit0=0(trans), bit1=1(no), bit2=0(trans), bit3=1(no),
     //                 bit4=0(trans), bit5=1(no), bit6=0(trans), bit7=1(no) = 4 transitions
     DEBUG_VAR("Transition count for 0xAA (expect 4)", transition_count);
-    TEST_ASSERT(transition_count == 4,
-                "0xAA (alternating bits LSB-first) causes 4 NRZI transitions", transition_count);
+    TEST_ASSERT(transition_count == 4, "0xAA (alternating bits LSB-first) causes 4 NRZI transitions", transition_count);
     free(levels);
 
     return 0;
@@ -579,21 +556,22 @@ static int test_nrzi_flag_transitions(void) {
     int bit_count = 0;
     uint8_t *levels = nrzi_encode(flag, 1, &bit_count);
     TEST_ASSERT(levels != NULL, "nrzi_encode 0x7E: non-NULL", 0);
-    if (!levels) return 1;
+    if (!levels)
+        return 1;
 
     DEBUG_PRINT("NRZI levels for 0x7E (01111110 LSB-first = 0,1,1,1,1,1,1,0):");
-    for (int i = 0; i < bit_count; i++) printf("%d", levels[i]);
+    for (int i = 0; i < bit_count; i++)
+        printf("%d", levels[i]);
     printf("\n");
 
     int transition_count = 0;
     uint8_t prev = 1;
     for (int i = 0; i < bit_count; i++) {
-        if (levels[i] != prev) transition_count++;
+        if (levels[i] != prev)
+            transition_count++;
         prev = levels[i];
-    }
-    DEBUG_VAR("Transition count for 0x7E flag (expect 2)", transition_count);
-    TEST_ASSERT(transition_count == 2,
-                "HDLC flag 0x7E (LSB-first 0,1,1,1,1,1,1,0) causes 2 NRZI transitions", transition_count);
+    } DEBUG_VAR("Transition count for 0x7E flag (expect 2)", transition_count);
+    TEST_ASSERT(transition_count == 2, "HDLC flag 0x7E (LSB-first 0,1,1,1,1,1,1,0) causes 2 NRZI transitions", transition_count);
 
     free(levels);
     return 0;
@@ -611,7 +589,8 @@ static int test_nrzi_flag_transitions(void) {
 // transmit a continuous series of flag sequences."
 // ---------------------------------------------------------------------------
 static int generate_idle_flags(unsigned char *buf, int buf_size, int count) {
-    if (!buf || count <= 0 || count > buf_size) return 0;
+    if (!buf || count <= 0 || count > buf_size)
+        return 0;
     for (int i = 0; i < count; i++) {
         buf[i] = HDLC_FLAG_BYTE;
     }
@@ -623,7 +602,8 @@ static int generate_idle_flags(unsigned char *buf, int buf_size, int count) {
 // Some TNC implementations use mark-hold (0xFF) as channel idle.
 // ---------------------------------------------------------------------------
 static int generate_idle_mark(unsigned char *buf, int buf_size, int count) {
-    if (!buf || count <= 0 || count > buf_size) return 0;
+    if (!buf || count <= 0 || count > buf_size)
+        return 0;
     memset(buf, 0xFF, count);
     return count;
 }
@@ -637,10 +617,9 @@ static int test_idle_flags_pattern(void) {
 
     unsigned char idle_buf[16];
     memset(idle_buf, 0, sizeof(idle_buf));
-    int generated = generate_idle_flags(idle_buf, (int)sizeof(idle_buf), 8);
+    int generated = generate_idle_flags(idle_buf, (int) sizeof(idle_buf), 8);
 
-    DEBUG_FRAME("idle flags buffer (8 x 0x7E)", idle_buf, generated);
-    DEBUG_VAR("generated count", generated);
+    DEBUG_FRAME("idle flags buffer (8 x 0x7E)", idle_buf, generated); DEBUG_VAR("generated count", generated);
 
     TEST_ASSERT(generated == 8, "Generate 8 idle flag bytes", generated);
 
@@ -679,9 +658,7 @@ static int test_idle_flags_not_data(void) {
 
     // The first 0x7E is the start flag; the second 0x7E is immediately the end flag
     // with nothing in between - should fail as HDLC_ERR_TOO_SHORT
-    TEST_ASSERT(err != HDLC_OK,
-                "Idle flag stream is NOT decoded as a valid frame", (unsigned)err);
-    DEBUG_VAR("Specific error code for idle stream", (unsigned)err);
+    TEST_ASSERT(err != HDLC_OK, "Idle flag stream is NOT decoded as a valid frame", (unsigned )err); DEBUG_VAR("Specific error code for idle stream", (unsigned)err);
 
     return 0;
 }
@@ -695,7 +672,7 @@ static int test_idle_mark_pattern(void) {
 
     unsigned char mark_buf[8];
     memset(mark_buf, 0, sizeof(mark_buf));
-    int generated = generate_idle_mark(mark_buf, (int)sizeof(mark_buf), 6);
+    int generated = generate_idle_mark(mark_buf, (int) sizeof(mark_buf), 6);
 
     DEBUG_FRAME("mark-hold idle buffer (6 x 0xFF)", mark_buf, generated);
     TEST_ASSERT(generated == 6, "Generate 6 mark-hold bytes", generated);
@@ -734,8 +711,7 @@ static int test_idle_mark_triggers_abort(void) {
     hdlc_error_t err = hdlc_frame_decode(stream, 3, decoded_buf, &decoded_len);
 
     DEBUG_VAR("decode result (expect HDLC_ERR_ABORT)", (unsigned)err);
-    TEST_ASSERT(err == HDLC_ERR_ABORT,
-                "Mark-hold 0xFF stream after start flag is detected as abort", (unsigned)err);
+    TEST_ASSERT(err == HDLC_ERR_ABORT, "Mark-hold 0xFF stream after start flag is detected as abort", (unsigned )err);
 
     return 0;
 }
@@ -755,10 +731,12 @@ static int test_idle_flags_nrzi_pattern(void) {
     int bit_count = 0;
     uint8_t *levels = nrzi_encode(flags, count, &bit_count);
     TEST_ASSERT(levels != NULL, "NRZI encode idle flags: non-NULL", 0);
-    if (!levels) return 1;
+    if (!levels)
+        return 1;
 
     DEBUG_PRINT("NRZI levels for 4 x 0x7E:");
-    for (int i = 0; i < bit_count; i++) printf("%d", levels[i]);
+    for (int i = 0; i < bit_count; i++)
+        printf("%d", levels[i]);
     printf("\n");
 
     // The NRZI pattern for 0x7E (LSB-first: 0,1,1,1,1,1,1,0) repeats every 8 bits.
@@ -768,15 +746,14 @@ static int test_idle_flags_nrzi_pattern(void) {
     int total_transitions = 0;
     uint8_t prev = 1;
     for (int i = 0; i < bit_count; i++) {
-        if (levels[i] != prev) total_transitions++;
+        if (levels[i] != prev)
+            total_transitions++;
         prev = levels[i];
-    }
-    DEBUG_VAR("Total NRZI transitions for 4 idle flags", total_transitions);
+    } DEBUG_VAR("Total NRZI transitions for 4 idle flags", total_transitions);
     // Each 0x7E has 2 transitions, but the state carries over from byte to byte.
     // The NRZI transition count depends on carry-over state, so we just assert > 0
     // and that round-trip works.
-    TEST_ASSERT(total_transitions > 0,
-                "Idle flag NRZI encoding produces at least one transition", total_transitions);
+    TEST_ASSERT(total_transitions > 0, "Idle flag NRZI encoding produces at least one transition", total_transitions);
 
     // Verify round-trip
     int recovered_len = 0;
@@ -785,8 +762,7 @@ static int test_idle_flags_nrzi_pattern(void) {
     if (recovered) {
         DEBUG_FRAME("NRZI recovered idle flags", recovered, recovered_len);
         TEST_ASSERT(recovered_len == count, "Idle flags NRZI round-trip length OK", recovered_len);
-        TEST_ASSERT(memcmp(recovered, flags, count) == 0,
-                    "Idle flags NRZI round-trip bytes match exactly", 0);
+        TEST_ASSERT(memcmp(recovered, flags, count) == 0, "Idle flags NRZI round-trip bytes match exactly", 0);
         free(recovered);
     }
 
@@ -808,12 +784,11 @@ static int test_preamble_postamble(void) {
     // The decoder looks for the FIRST 0x7E byte as start flag; anything before it
     // needs to be stripped by the framing layer. Here we test that the raw decoder
     // fails gracefully on a preamble-prefixed stream (since it uses index 0 as start).
-
     unsigned char payload[15];
-    memset(payload, 0x61, sizeof(payload)); // 'a' * 15
+    memset(payload, 0x61, sizeof(payload));  // 'a' * 15
     int enc_len = 0;
     int max_enc = hdlc_encoded_size_max(15);
-    unsigned char *encoded = (unsigned char *)malloc(max_enc + 16);
+    unsigned char *encoded = (unsigned char*) malloc(max_enc + 16);
     if (!encoded) {
         printf("  SKIP: malloc failed\n");
         return 0;
@@ -825,7 +800,7 @@ static int test_preamble_postamble(void) {
 
     // Prepend 3 idle flags to simulate preamble
     int total_len = 3 + enc_len;
-    unsigned char *stream = (unsigned char *)malloc(total_len + 4);
+    unsigned char *stream = (unsigned char*) malloc(total_len + 4);
     if (!stream) {
         free(encoded);
         printf("  SKIP: malloc failed\n");
@@ -844,16 +819,15 @@ static int test_preamble_postamble(void) {
     hdlc_error_t err = hdlc_frame_decode(stream, total_len, decoded_buf, &decoded_len);
     DEBUG_VAR("decode with preamble (first 0x7E = start, second = end flag)", (unsigned)err);
     // With consecutive 0x7E bytes, the second flag immediately ends the frame -> too short
-    TEST_ASSERT(err == HDLC_ERR_TOO_SHORT || err == HDLC_ERR_CRC_FAIL || err != HDLC_OK,
-                "Preamble stream: decoder does not pass empty frame as valid data", (unsigned)err);
+    TEST_ASSERT(err == HDLC_ERR_TOO_SHORT || err == HDLC_ERR_CRC_FAIL || err != HDLC_OK, "Preamble stream: decoder does not pass empty frame as valid data",
+            (unsigned )err);
 
     // Now decode the encoded frame directly (no preamble) - must succeed
     memset(decoded_buf, 0, sizeof(decoded_buf));
     decoded_len = 0;
     hdlc_error_t err2 = hdlc_frame_decode(encoded, enc_len, decoded_buf, &decoded_len);
-    DEBUG_VAR("decode without preamble (should be HDLC_OK)", (unsigned)err2);
-    DEBUG_FRAME("decoded payload", decoded_buf, decoded_len);
-    TEST_ASSERT(err2 == HDLC_OK, "Frame without preamble decodes successfully", (unsigned)err2);
+    DEBUG_VAR("decode without preamble (should be HDLC_OK)", (unsigned)err2); DEBUG_FRAME("decoded payload", decoded_buf, decoded_len);
+    TEST_ASSERT(err2 == HDLC_OK, "Frame without preamble decodes successfully", (unsigned )err2);
     TEST_ASSERT(decoded_len == 15, "Decoded payload length == 15", decoded_len);
     TEST_ASSERT(memcmp(decoded_buf, payload, 15) == 0, "Decoded payload matches original", 0);
 
@@ -881,21 +855,22 @@ static int test_abort_nrzi_is_dc_mark(void) {
     int bit_count = 0;
     uint8_t *levels = nrzi_encode(abort_buf, abort_len, &bit_count);
     TEST_ASSERT(levels != NULL, "NRZI encode abort: non-NULL", 0);
-    if (!levels) return 1;
+    if (!levels)
+        return 1;
 
     DEBUG_PRINT("NRZI abort levels:");
-    for (int i = 0; i < bit_count; i++) printf("%d", levels[i]);
+    for (int i = 0; i < bit_count; i++)
+        printf("%d", levels[i]);
     printf("\n");
 
     int transition_count = 0;
     uint8_t prev = 1;
     for (int i = 0; i < bit_count; i++) {
-        if (levels[i] != prev) transition_count++;
+        if (levels[i] != prev)
+            transition_count++;
         prev = levels[i];
-    }
-    DEBUG_VAR("NRZI transitions for abort 0xFF 0xFF (expect 0)", transition_count);
-    TEST_ASSERT(transition_count == 0,
-                "NRZI-encoded abort (0xFF 0xFF) has 0 transitions = DC mark signal", transition_count);
+    } DEBUG_VAR("NRZI transitions for abort 0xFF 0xFF (expect 0)", transition_count);
+    TEST_ASSERT(transition_count == 0, "NRZI-encoded abort (0xFF 0xFF) has 0 transitions = DC mark signal", transition_count);
 
     free(levels);
     return 0;
@@ -908,7 +883,6 @@ static int test_abort_nrzi_is_dc_mark(void) {
 // ---------------------------------------------------------------------------
 static int test_crc_embed_and_verify(void) {
     printf("\n--- test_crc_embed_and_verify ---\n");
-    // start modified part - updated to match corrected CRC_verify residue 0x0F47
     printf("CRC-CCITT: check value 0x906E and CRC_verify residue 0x0F47\n");
 
     unsigned char data[] = { '1', '2', '3', '4', '5', '6', '7', '8', '9' };
@@ -918,14 +892,13 @@ static int test_crc_embed_and_verify(void) {
     printf("  CRC check value: 0x%04X (AX.25/X.25 check = 0x906E)\n", crc);
 
     // AX.25 CRC-CCITT check value for "123456789" = 0x906E
-    TEST_ASSERT(crc == 0x906E,
-                "CRC(\"123456789\") == 0x906E (CRC-CCITT check value)", crc);
+    TEST_ASSERT(crc == 0x906E, "CRC(\"123456789\") == 0x906E (CRC-CCITT check value)", crc);
 
     // Build frame with CRC appended as [lo, hi] (low byte first per AX.25)
     unsigned char frame_with_fcs[11];
     memcpy(frame_with_fcs, data, 9);
-    frame_with_fcs[9]  = (unsigned char)(crc & 0xFF);
-    frame_with_fcs[10] = (unsigned char)((crc >> 8) & 0xFF);
+    frame_with_fcs[9] = (unsigned char) (crc & 0xFF);
+    frame_with_fcs[10] = (unsigned char) ((crc >> 8) & 0xFF);
 
     DEBUG_FRAME("data + FCS [lo, hi]", frame_with_fcs, 11);
 
@@ -934,13 +907,11 @@ static int test_crc_embed_and_verify(void) {
     // bit-reversed FCS bytes). common.c CRC_verify was corrected to check 0x0F47.
     uint16_t residue = CRC(frame_with_fcs, 11);
     DEBUG_VAR("CRC residue over data+FCS (should be 0x0F47)", residue);
-    TEST_ASSERT(residue == 0x0F47,
-                "CRC residue == 0x0F47 for data+[lo,hi] (implementation residue)", residue);
+    TEST_ASSERT(residue == 0x0F47, "CRC residue == 0x0F47 for data+[lo,hi] (implementation residue)", residue);
 
     bool valid = CRC_verify(frame_with_fcs, 11);
     DEBUG_BOOL("CRC_verify(data + FCS) must be true (0x0F47)", valid);
     TEST_ASSERT(valid, "CRC_verify returns true for data+FCS (corrected residue 0x0F47)", 0);
-    // end modified part
 
     return 0;
 }
@@ -985,8 +956,7 @@ int test_hdlc_frame_structure_main(void) {
     result |= test_crc_embed_and_verify();
 
     printf("\n==================================================================================\n");
-    printf("HDLC Frame Structure Tests Completed. %s\n",
-           result == 0 ? "All tests PASSED" : "Some tests FAILED");
+    printf("HDLC Frame Structure Tests Completed. %s\n", result == 0 ? "All tests PASSED" : "Some tests FAILED");
     printf("Total asserts: %u\n", assert_count);
     printf("==================================================================================\n\n");
 

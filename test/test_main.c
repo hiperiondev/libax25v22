@@ -33,6 +33,7 @@
 #include "test_ax25_mux.h"
 #include "test_ax25_kiss.h"
 #include "test_hdlc_frame_structure.h"
+#include "test_ax25_xid_negotiation.h"
 
 int errors = 0;
 
@@ -49,6 +50,7 @@ int main() {
     errors += test_ax25_mux_main();
     errors += test_ax25_kiss_main();
     errors += test_hdlc_frame_structure_main();
+    errors += test_ax25_xid_params_edge2_main();
 
     printf("\n----------------------------------------------------------------------------------\n");
     printf("All tests Completed. %s\n", errors == 0 ? "All tests passed" : "Some tests failed");
