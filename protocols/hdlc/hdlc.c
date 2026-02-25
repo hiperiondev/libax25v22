@@ -109,8 +109,9 @@ hdlc_error_t hdlc_frame_decode(unsigned char *encodedFrame, int encodedLen, unsi
     int bitIndex = 0;  // Bit position in current output byte (0=LSB, 7=MSB)
     unsigned char byte = 0;  // Current byte being assembled
     int decodedIndex = 0;
-
+    int pending_stuffing = 0;
     int byteIndex = 0;
+
     if (encodedLen < 2 || encodedFrame[0] != 0x7E) {
         return HDLC_ERR_NO_START_FLAG;  // Must start with flag
     }
@@ -144,14 +145,24 @@ hdlc_error_t hdlc_frame_decode(unsigned char *encodedFrame, int encodedLen, unsi
                 cnt = 0;
             }
 
-            if (cnt >= 7) {
-                // Abort sequence detected (>=7 contiguous ones)
-                return HDLC_ERR_ABORT;
+            // cnt==6 must not return immediately; we defer to allow cnt to reach
+            // 7+ for ABORT. A pending_stuffing flag records the 6-ones state.
+            // Next iteration: if bit==1 -> cnt==7 -> ABORT; if bit==0 -> STUFFING.
+            if (pending_stuffing) {
+                if (bit == 1) {
+                    // 7th consecutive one -> abort sequence
+                    return HDLC_ERR_ABORT;
+                } else {
+                    // 6 ones then a zero: stuffing violation (no zero-bit stuffing at cnt=6)
+                    pending_stuffing = 0;
+                    return HDLC_ERR_STUFFING;
+                }
             }
 
             if (cnt == 6) {
-                // Exactly 6 contiguous ones inside frame data - invalid (bit stuffing violation)
-                return HDLC_ERR_STUFFING;
+                /// 6 contiguous ones: defer decision to next bit
+                pending_stuffing = 1;
+                continue;
             }
 
             // Assemble byte LSB-first

@@ -32,6 +32,7 @@
 #include "test_ax25_fullduplex.h"
 #include "test_ax25_mux.h"
 #include "test_ax25_kiss.h"
+#include "test_hdlc_frame_structure.h"
 
 int errors = 0;
 
@@ -47,6 +48,7 @@ int main() {
     errors += test_ax25_fullduplex_main();
     errors += test_ax25_mux_main();
     errors += test_ax25_kiss_main();
+    errors += test_hdlc_frame_structure_main();
 
     printf("\n----------------------------------------------------------------------------------\n");
     printf("All tests Completed. %s\n", errors == 0 ? "All tests passed" : "Some tests failed");
