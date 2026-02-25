@@ -229,8 +229,7 @@ typedef struct {
     /*------------------------------------------------------------------------*/
     /* State Machine                                                          */
     /*------------------------------------------------------------------------*/
-    ax25_seg_state_t state; /**< TX segmenter state: IDLE or SEGMENTING */
-    ax25_seg_state_t rx_state; /**< RX reassembler state: IDLE or REASSEMBLING (independent of TX) */
+    ax25_seg_state_t state; /**< Current segmenter/reassembler state */
 
     /*------------------------------------------------------------------------*/
     /* Transmit Segmentation State                                            */

@@ -397,7 +397,6 @@ This checklist documents the implementation status of all features defined in:
 - ✅ Segment timeout detection
 - ✅ Delivery of complete payload to Layer 3
 - ✅ Out-of-order segment handling
-- ⚠️ **LIMITATION:** Reassembly functions exist but integration with state machine not automatic; application layer must call reassembly functions
 
 ---
 

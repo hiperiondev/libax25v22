@@ -1048,6 +1048,41 @@ static void seg_transmit_cb(uint8_t *data, uint16_t len, uint8_t pid, void *user
     ax25_send_data_raw(conn, data, (size_t) len, pid);
 }
 
+// Segmenter reassembly-error callback - maps ax25_seg_error_t to DL-ERROR indications.
+// Wired automatically in ax25_connection_init so TR210 timeouts, sequence errors and
+// overflow are propagated to the upper layer without application intervention.
+static void seg_reassembly_error_cb(ax25_seg_error_t error, void *user_data) {
+    ax25_connection_t *conn = (ax25_connection_t*) user_data;
+    if (!conn)
+        return;
+    switch (error) {
+        case AX25_SEG_ERROR_TIMEOUT:
+            FIRE_DL_ERROR(conn, AX25_DL_ERROR_A);
+        break;
+        case AX25_SEG_ERROR_OVERFLOW:
+            FIRE_DL_ERROR(conn, AX25_DL_ERROR_G);
+        break;
+        case AX25_SEG_ERROR_SEQUENCE:
+            FIRE_DL_ERROR(conn, AX25_DL_ERROR_A);
+        break;
+        case AX25_SEG_ERROR_INVALID:
+            FIRE_DL_ERROR(conn, AX25_DL_ERROR_L);
+        break;
+        default:
+        break;
+    }
+}
+
+// Segmenter retransmit-request callback - fires DL-ERROR-A when a segment gap is
+// detected so the upper layer is informed; actual L2 frame recovery is handled by SREJ/REJ.
+static void seg_request_retransmit_cb(uint8_t sequence, void *user_data) {
+    ax25_connection_t *conn = (ax25_connection_t*) user_data;
+    if (!conn)
+        return;
+    (void) sequence;
+    FIRE_DL_ERROR(conn, AX25_DL_ERROR_A);
+}
+
 // Segmenter reassembly-complete callback - invoked when all segments have arrived
 // and the original payload is fully rebuilt. Delivers to L3 via PID multiplexer.
 // user_data is the owning ax25_connection_t (set in ax25_connection_init).
@@ -1123,6 +1158,10 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     conn->segmenter.transmit_iframe = seg_transmit_cb;
     conn->segmenter.on_reassembly_complete = seg_reassembly_complete_cb;
     conn->segmenter.user_data = conn;
+
+    // Wire error/retransmit callbacks: completes automatic Appendix C6 integration
+    conn->segmenter.on_reassembly_error = seg_reassembly_error_cb;
+    conn->segmenter.on_request_retransmit = seg_request_retransmit_cb;
 
     return 0;
 }
@@ -2332,6 +2371,10 @@ uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connect
     conn->segmenter.transmit_iframe = seg_transmit_cb;
     conn->segmenter.on_reassembly_complete = seg_reassembly_complete_cb;
     conn->segmenter.user_data = conn;
+
+    // Restore error/retransmit callbacks after re-init (ax25_segmenter_init zeroes struct)
+    conn->segmenter.on_reassembly_error = seg_reassembly_error_cb;
+    conn->segmenter.on_request_retransmit = seg_request_retransmit_cb;
 
     return 0;  // Success
 }
