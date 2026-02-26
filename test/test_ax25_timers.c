@@ -461,6 +461,13 @@ static int test_t100_axhang_timer(void) {
 
     // Transmit frame
     DEBUG_PRINT("Transmitting frame");
+
+    // Drive ticks until tx_active becomes true before waiting for it to end.
+    while (!phys.tx_active && tick < 50) {
+        ax25_physical_tick(&phys, tick++);
+        DEBUG_VAR("Tick (waiting TX start)", tick);
+    }
+
     while (phys.tx_active && tick < 50) {
         ax25_physical_tick(&phys, tick++);
         DEBUG_VAR("Tick", tick);DEBUG_BOOL("PTT state", ptt_state);DEBUG_STATE("Physical state", phys.state);
@@ -645,6 +652,15 @@ static int test_t104_axdelay_timer(void) {
 
     // Transmit normal frame
     DEBUG_PRINT("Transmitting normal frame");
+
+    // tx_active starts false so the
+    // original while(tx_active) loop never runs. Drive ticks until tx_active goes true
+    // first, then wait for it to go false (end of first transmission).
+    while (!phys.tx_active && tick < 50) {
+        ax25_physical_tick(&phys, tick++);
+        DEBUG_VAR("Tick (waiting TX start)", tick);
+    }
+
     while (phys.tx_active && tick < 100) {
         ax25_physical_tick(&phys, tick++);
         DEBUG_VAR("Tick", tick);DEBUG_STATE("Physical state", phys.state);
@@ -873,6 +889,18 @@ static int test_t108_receiver_startup(void) {
 
     uint32_t tick = 0;
     DEBUG_PRINT("Transmitting first frame");DEBUG_PRINT("=== Starting transmission loop ===");
+
+    // tx_active is false before the
+    // first tick. The original loop exited immediately (break on !tx_active) before
+    // transmission began. First drive ticks until tx_active goes true (TX starts),
+    // then wait for it to go false (TX ends) to capture the correct first_tx_end tick
+    // and ensure rx_warmup_required is set by the physical layer.
+    while (!phys.tx_active && tick < 50) {
+        DEBUG_VAR("Loop tick (waiting TX start)", tick);
+        ax25_physical_tick(&phys, tick);
+        tick++;
+    }
+
     while (tick < 50) {
         DEBUG_VAR("Loop tick", tick);DEBUG_STATE("State before tick", phys.state);DEBUG_BOOL("TX active before tick", phys.tx_active);DEBUG_BOOL("RX warmup required before tick", phys.rx_warmup_required);DEBUG_VAR("Next action tick", phys.next_action_tick_10ms);DEBUG_VAR("Last unkey tick", phys.last_unkey_tick_10ms);
 

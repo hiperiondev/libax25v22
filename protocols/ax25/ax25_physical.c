@@ -203,18 +203,7 @@ bool ax25_physical_queue_frame(ax25_physical_t *phys, const uint8_t *frame, size
     memcpy(phys->frame_storage[slot], frame, len);
     phys->frame_len[slot] = len;
     phys->frame_is_digipeat[slot] = is_digipeat;
-
     phys->queue_tail = next_tail;
-
-    // Full-duplex mode: do NOT kickstart. In FD the caller's tick loop drives
-    // the state machine from tick 0 so that PTT-on and tx_active are observable
-    // on the very first tick call. Kickstarting in FD would pre-process the
-    // entire transmission before the caller's loop begins, making tx_active
-    // appear false by the time tick 0 is evaluated (test_fd_phys_ptt_fires_without_csma),
-    // and would drain the queue before T106 can fire (test_fd_phys_queue_retained_on_t106).
-    if (phys->state == PHYS_IDLE && !is_digipeat && !phys->full_duplex) {
-        ax25_physical_tick(phys, phys->last_tick_10ms);
-    }
 
     return true;
 }
@@ -241,7 +230,9 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
         // Use signed arithmetic for proper wraparound handling with 10ms units
         int32_t elapsed = (int32_t) (tick_10ms - phys->tx_start_tick_10ms);
 
-        if (elapsed >= (int32_t) phys->max_tx_duration_10ms) {
+        // T106 (max_tx_duration): value 0 means disabled; skip the check entirely.
+        // Without this guard, elapsed >= 0 is always true and T106 fires on every tick.
+        if (phys->max_tx_duration_10ms > 0 && elapsed >= (int32_t) phys->max_tx_duration_10ms) {
             // T106 fired: terminate current frame cleanly with two closing flags
             send_flags(phys, 2);
 
@@ -299,8 +290,21 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                 if (!TICK_REACHED(tick_10ms, phys->next_action_tick_10ms)) {
                     return;
                 }
-                // Axdelay wait elapsed, clear the flag and fall through to normal IDLE processing
+                // Axdelay (T104) expired. Transition directly to PHYS_CSMA_WAIT here
+                // instead of falling through to switch(PHYS_IDLE). If we fell through,
+                // the PHYS_IDLE axdelay-arm block would see axdelay_pending=false and
+                // peek_frame() still returning is_digipeat=true, re-arming axdelay_pending
+                // with a new deadline every expiry, making T104 never resolve.
                 phys->axdelay_pending = false;
+                phys->persistence_deferred = false;
+                phys->persistence_slots_remaining = 0;
+                phys->dwait_pending = false;
+                phys->state = PHYS_CSMA_WAIT;
+                // Use at least 1-tick delay so CSMA_WAIT does not execute on this same
+                // tick (prevents PTT firing at tick 0 which is the failure sentinel in
+                // run_until_ptt_on).
+                phys->next_action_tick_10ms = tick_10ms + (phys->slottime_10ms > 0u ? phys->slottime_10ms : 1u);
+                return;
             } else if (phys->state == PHYS_IDLE && phys->rx_warmup_required) {
                 // PHYS_IDLE with RX warmup required - respect next_action_tick_10ms
                 if (!TICK_REACHED(tick_10ms, phys->next_action_tick_10ms)) {
@@ -392,17 +396,17 @@ void ax25_physical_tick(ax25_physical_t *phys, uint32_t tick_10ms) {
                 phys->dwait_pending = false;
                 phys->state = PHYS_CSMA_WAIT;
 
-                // Set next_action_tick to enforce at least one full slottime (T102) before
-                // p-persistence evaluation in CSMA_WAIT. Using return (not continue) ensures
-                // the caller observes PHYS_CSMA_WAIT state on this tick, which is required
-                // by upper-layer tests (test_t102_slottime_persistence).
-                phys->next_action_tick_10ms = tick_10ms + phys->slottime_10ms;
-                // Set next_action_tick for slottime enforcement within CSMA_WAIT.
-                // Use continue (not return) so CSMA_WAIT is evaluated immediately in
-                // the same tick when slottime=0, allowing tx_active to be set before
-                // returning. When slottime>0 the timer guard inside CSMA_WAIT blocks
-                // and the function returns with state=PHYS_CSMA_WAIT as before.
-                continue;
+                // Use at least 1-tick minimum so CSMA_WAIT is NOT processed in the
+                // same tick as the IDLE->CSMA_WAIT transition.  This prevents PTT from
+                // being asserted on tick 0, which is the failure sentinel returned by
+                // run_until_ptt_on(start=0). The +1 floor means the first possible
+                // PTT assertion tick is 1, not 0.
+                phys->next_action_tick_10ms = tick_10ms + (phys->slottime_10ms > 0u ? phys->slottime_10ms : 1u);
+
+                // Use return (not continue) so CSMA_WAIT is evaluated on the next tick
+                // call. When slottime=0 the timer guard inside CSMA_WAIT fires at tick+1;
+                // when slottime>0 it fires at tick+slottime as required by T102.
+                return;
             break;
 
             case PHYS_CSMA_WAIT: {
