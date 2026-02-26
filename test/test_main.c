@@ -38,6 +38,7 @@
 #include "test_ax25_advanced.h"
 #include "test_ax25_timers_advanced .h"
 #include "test_ax25_segmenter2.h"
+#include "test_fx25_channel.h"
 
 int errors = 0;
 
@@ -59,6 +60,7 @@ int main() {
     errors += test_ax25_advanced_main();
     errors += test_ax25_timers_advanced_main();
     errors += test_ax25_segmenter2_main();
+    errors += test_fx25_channel_main();
 
     printf("\n----------------------------------------------------------------------------------\n");
     printf("All tests Completed. %s\n", errors == 0 ? "All tests passed" : "Some tests failed");
