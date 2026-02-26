@@ -539,9 +539,9 @@ This checklist documents the implementation status of all features defined in:
 - ✅ Multi-port TNC support
 
 ### 15.4 SMACK (CRC-enhanced KISS)
-- ❌ SMACK CRC-16 over KISS frames
-- ❌ Automatic KISS/SMACK mode detection
-- ❌ RS-232 error protection
+- ✅ SMACK CRC-16 over KISS frames
+- ✅ Automatic KISS/SMACK mode detection
+- ✅ RS-232 error protection
 
 ---
 

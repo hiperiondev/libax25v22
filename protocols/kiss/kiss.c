@@ -301,15 +301,18 @@ static void kiss_dispatch_frame(ax25_kiss_ctx_t *ctx) {
         return;
     }
 
-    // SMACK detection gated on variant; prevents port 8-14
-    // DATA frames (type byte has bit 7 set naturally) from being misread as SMACK
-    // in standard KISS mode.
+    // SMACK detection: check bit-7 of type byte for SMACK and AUTO variants.
+    // In AUTO mode we must check unconditionally (regardless of smack_active)
+    // so the very first SMACK frame can trigger the latch.
+    // In STANDARD mode bit-7 belongs to the port nibble and must NOT be
+    // treated as a CRC flag (ports 8-14 have bit-7 set naturally).
     is_smack = false;
-    if (ctx->variant == KISS_VARIANT_SMACK || (ctx->variant == KISS_VARIANT_AUTO && ctx->smack_active)) {
+
+    if (ctx->variant == KISS_VARIANT_SMACK || ctx->variant == KISS_VARIANT_AUTO) {
         is_smack = ((ctx->rx_type & KISS_SMACK_CRC_FLAG) != 0u);
     }
 
-    // Auto-negotiate: latch SMACK TX on first received SMACK frame
+    // Auto-negotiate: latch SMACK TX on first received SMACK frame in AUTO mode
     if (is_smack && (ctx->variant == KISS_VARIANT_AUTO) && !ctx->smack_active) {
         ctx->smack_active = true;
     }
