@@ -37,6 +37,7 @@
 #include "test_ax25_dl_state_machine.h"
 #include "test_ax25_advanced.h"
 #include "test_ax25_timers_advanced .h"
+#include "test_ax25_segmenter2.h"
 
 int errors = 0;
 
@@ -56,7 +57,8 @@ int main() {
     errors += test_ax25_xid_params_edge2_main();
     errors += test_ax25_dl_state_machine_main();
     errors += test_ax25_advanced_main();
-    errors +=  test_ax25_timers_advanced_main();
+    errors += test_ax25_timers_advanced_main();
+    errors += test_ax25_segmenter2_main();
 
     printf("\n----------------------------------------------------------------------------------\n");
     printf("All tests Completed. %s\n", errors == 0 ? "All tests passed" : "Some tests failed");

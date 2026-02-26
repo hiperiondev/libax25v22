@@ -18,9 +18,9 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#ifndef TEST_AX25_DL_STATE_MACHINE_H_
-#define TEST_AX25_DL_STATE_MACHINE_H_
+#ifndef TEST_AX25_SEGMENTER2_H_
+#define TEST_AX25_SEGMENTER2_H_
 
-int test_ax25_dl_state_machine_main();
+int test_ax25_segmenter2_main(void);
 
-#endif /* TEST_AX25_DL_STATE_MACHINE_H_ */
+#endif /* TEST_AX25_SEGMENTER2_H_ */
