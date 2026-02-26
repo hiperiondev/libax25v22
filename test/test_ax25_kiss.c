@@ -42,6 +42,7 @@
 //   - Section: Error codes - NULL, no-serial, port range, frame size
 //   - Section: Kiss mode flag - transitions on enter/return
 //   - Section: Round-trip - encode then decode a frame
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

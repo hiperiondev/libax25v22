@@ -204,7 +204,11 @@
  */
 #define KISS_MAX_PORTS         16u    /**< Maximum logical ports per multi-port TNC (port 0xF reserved) */
 #define KISS_MAX_FRAME_SIZE    128u   /**< Maximum raw AX.25 payload in bytes (increase for host use) */
-#define KISS_TX_BUF_SIZE       (KISS_MAX_FRAME_SIZE * 2u + 4u) /**< Worst-case escaped+framed TX buffer */
+#define KISS_MAX_PORTS         16u    /**< Maximum logical ports per multi-port TNC (port 0xF reserved) */
+#define KISS_MAX_FRAME_SIZE    128u   /**< Maximum raw AX.25 payload in bytes (increase for host use) */
+// KISS_TX_BUF_SIZE enlarged for SMACK CRC trailer
+// SMACK appends 2 CRC bytes each potentially SLIP-escaped to 2 bytes = 4 extra
+#define KISS_TX_BUF_SIZE       (KISS_MAX_FRAME_SIZE * 2u + 8u) /**< Worst-case escaped+framed TX buffer including SMACK CRC */
 #define KISS_SMACK_CRC_SIZE    2u     /**< Bytes appended by SMACK: 16-bit CRC (LSB first) */
 #define KISS_G8BPQ_CRC_SIZE    1u     /**< Bytes appended by G8BPQ KISS: 8-bit XOR checksum */
 #define KISS_HARDWARE_BUF_SIZE 64u    /**< Maximum SetHardware parameter byte storage */
@@ -417,8 +421,8 @@ typedef struct {
     uint32_t rx_bad_checksum; /**< Frames with SMACK/G8BPQ/FlexNet CRC mismatch */
     uint32_t rx_aborted; /**< Frames aborted by double-FESC violation */
     uint32_t rx_overflows; /**< Frames dropped due to rx_buf overflow */
-    uint64_t rx_bytes; /**< Total bytes consumed by receive state machine */
-    uint64_t tx_bytes; /**< Total bytes emitted via serial_write callback */
+    uint32_t rx_bytes; /**< Total bytes consumed by receive state machine */
+    uint32_t tx_bytes; /**< Total bytes emitted via serial_write callback */
 } ax25_kiss_stats_t;
 
 /*============================================================================*/
@@ -605,35 +609,30 @@ struct ax25_kiss_ctx {
 };
 
 /*============================================================================*/
-/* CRC Utility Functions (SMACK / FlexNet CRC-CCITT)                         */
+/* CRC Utility Functions (SMACK CRC-16/ARC and G8BPQ XOR)                     */
 /*============================================================================*/
 
 /**
  * @defgroup KISSCRCUtils CRC Computation Utilities
  * @brief CRC-CCITT (polynomial 0x1021, initial value 0xFFFF) utilities
- *
- * Both SMACK and FlexNet use 16-bit CRC-CCITT with the standard polynomial
- * 0x1021 and initial value 0xFFFF.  The checksum is appended LSB-first.
- * G8BPQ uses a simple 8-bit XOR of all payload bytes (including type byte).
  */
 
 /**
  * @brief Compute 16-bit CRC-CCITT over a byte buffer
  *
- * Implements CRC-CCITT (polynomial 0x1021, initial value 0xFFFF) as used by
- * SMACK and FlexNet KISS checksum modes.
+ * SMACK CRC-16/ARC: poly 0x8005 reflected LSB-first, init 0x0000, no final XOR
+ * Covers type byte + all data bytes computed BEFORE SLIP encoding, appended LSB first
  *
  * @param[in] data   Pointer to input bytes
  * @param[in] len    Number of bytes to process
  * @return 16-bit CRC-CCITT value; transmitted LSB first per SMACK spec
  */
-uint16_t ax25_kiss_crc16_ccitt(const uint8_t *data, size_t len);
+uint16_t ax25_kiss_smack_crc16(const uint8_t *data, size_t len);
 
 /**
  * @brief Compute 8-bit XOR checksum (G8BPQ KISS ROM style)
  *
- * The G8BPQ checksum is the XOR of all bytes in the frame including
- * the type indicator byte, before KISS escaping.
+ * G8BPQ 8-bit XOR checksum of all bytes including type byte, before SLIP encoding
  *
  * @param[in] data  Pointer to input bytes (including type byte)
  * @param[in] len   Number of bytes to process
