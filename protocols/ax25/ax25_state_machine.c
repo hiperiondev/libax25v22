@@ -1268,6 +1268,15 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
             conn->state = AX25_STATE_DISCONNECTED;
             conn->t1_start_tick = 0;
             conn->t3_start_tick = 0;  // Reset T3 as well
+
+            // Free any I-frames queued for retransmission
+            while (conn->tx_queue.count > 0) {
+                free(conn->tx_queue.frames[conn->tx_queue.head]);
+                conn->tx_queue.frames[conn->tx_queue.head] = NULL;
+                conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
+                conn->tx_queue.count--;
+            }
+
             // DL-ERROR indication code N: N2 retries exceeded
             FIRE_DL_ERROR(conn, AX25_DL_ERROR_N);
 
@@ -1822,7 +1831,7 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
 
             uint8_t err;
             size_t len;
-            uint8_t *encoded = ax25_unnumbered_frame_encode(&ua, &len, &err);
+            uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &ua, &len, &err);
             if (encoded && conn->callbacks.transmit) {
                 conn->callbacks.transmit(conn->user_data, encoded, len);
             }
