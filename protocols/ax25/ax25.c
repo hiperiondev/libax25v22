@@ -279,10 +279,16 @@ uint8_t* ax25_address_encode(const ax25_address_t *addr, size_t *len, uint8_t *e
     uint8_t ssid_byte = (addr->ssid << 1) & 0x1E;
     if (addr->ch)
         ssid_byte |= 0x80;
-    if (addr->res0)
-        ssid_byte |= 0x20;
+    /* Spec §3.12.2: reserved bit 5 (res0) MUST always be 1.
+     * Bit 6 (res1) is intentionally caller-controlled: ax25_frame_encode()
+     * clears it on the source address to signal Modulo-128 mode per the
+     * PE1CHL extension; real-world packets also carry res1=0 for modulo-8
+     * frames, so we preserve the caller's intent here rather than forcing 1.
+     * Bit 7 is the C/H bit, set above.
+     */
+    ssid_byte |= 0x20; /* res0 (bit 5) forced to 1 per §3.12.2 */
     if (addr->res1)
-        ssid_byte |= 0x40;
+        ssid_byte |= 0x40; /* res1 (bit 6): caller-controlled (mod-128 signal) */
     if (addr->extension)
         ssid_byte |= 0x01;
     data[6] = ssid_byte;
@@ -443,16 +449,37 @@ uint8_t* ax25_frame_header_encode(const ax25_frame_header_t *header, size_t *len
     size_t offset = 0;
     ax25_address_t dest = header->destination;
     dest.extension = false;
-    // Preserve the ch bit from the original address structure
+    ax25_address_t src = header->source;
+    src.extension = (header->repeaters.num_repeaters == 0);
+
+    /* AX.25 v2.2 §3.12: derive the C/H bits from the frame's command/response
+     * designation rather than trusting whatever ch values happen to be in the
+     * address structs.  This is the most commonly mis-implemented detail in AX.25:
+     *   Command frame  → dest.ch = 1, src.ch = 0
+     *   Response frame → dest.ch = 0, src.ch = 1
+     *
+     * We apply the correction only when the CR flags form a valid command/response
+     * pair (cr XOR src_cr == 1).  When both flags are 0 — which occurs with
+     * non-conforming or legacy on-air frames decoded verbatim — we leave the ch
+     * bits from the address structs unchanged so that decode→encode round-trips
+     * remain byte-for-byte faithful even for malformed packets.
+     */
+    if (header->cr && !header->src_cr) {
+        /* Command frame */
+        dest.ch = true;
+        src.ch = false;
+    } else if (!header->cr && header->src_cr) {
+        /* Response frame */
+        dest.ch = false;
+        src.ch = true;
+    }
+    /* else: both zero (non-conforming) — preserve address struct ch bits */
     size_t dest_len;
     uint8_t *dest_bytes = ax25_address_encode(&dest, &dest_len, err);
     memcpy(bytes + offset, dest_bytes, dest_len);
     offset += dest_len;
     free(dest_bytes);
 
-    ax25_address_t src = header->source;
-    src.extension = (header->repeaters.num_repeaters == 0);
-    // Preserve the ch bit from the original address structure
     size_t src_len;
     uint8_t *src_bytes = ax25_address_encode(&src, &src_len, err);
     memcpy(bytes + offset, src_bytes, src_len);

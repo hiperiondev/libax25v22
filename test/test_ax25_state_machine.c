@@ -52,10 +52,10 @@ static int establish_connection(ax25_connection_t *conn, ax25_address_t *dest, a
     // Expected SABM frame (modulo 8, no digi, SSID-0, P=1)
     uint8_t expected_sabm[15];
     memcpy(expected_sabm + 0, test2_call, 6);     // destination callsign
-    expected_sabm[6] = 0x60;                      // destination SSID (not last, ch=0, res0=1, res1=1, ext=0, ssid=0)
+    expected_sabm[6] = 0xE0;                      // destination SSID (not last, ch=1, res0=1, res1=1, ext=0, ssid=0) — SABM is a command: dest.ch=1
     memcpy(expected_sabm + 7, test1_call, 6);     // source callsign
     // source for modulo-8 (res1=1)
-    expected_sabm[13] = 0x61;                     // source SSID (last, ch=0, res0=1, res1=1, ext=1, ssid=0)
+    expected_sabm[13] = 0x61;                     // source SSID (last, ch=0, res0=1, res1=1, ext=1, ssid=0) — SABM command: src.ch=0
     expected_sabm[14] = 0x3F;                     // SABM with P=1
 
     reset_capture();
@@ -68,10 +68,10 @@ static int establish_connection(ax25_connection_t *conn, ax25_address_t *dest, a
     uint8_t ua_raw[15];
     memcpy(ua_raw + 0, test1_call, 6);            // destination = original source
     // destination for modulo-8
-    ua_raw[6] = 0x60;                             // destination SSID (not last, ch=0, res0=1, res1=1, ext=0, ssid=0)
+    ua_raw[6] = 0x60;                             // destination SSID (not last, ch=0, res0=1, res1=1, ext=0, ssid=0) — UA is a response: dest.ch=0
     memcpy(ua_raw + 7, test2_call, 6);            // source = original destination
     // source for modulo-8 with extension bit
-    ua_raw[13] = 0x61;                            // source SSID (last, ch=1, res0=1, res1=1, ext=1, ssid=0)
+    ua_raw[13] = 0xE1;                            // source SSID (last, ch=1, res0=1, res1=1, ext=1, ssid=0) — UA is a response: src.ch=1
     ua_raw[14] = 0x73;                            // UA with F=1
 
     uint8_t decode_err = 0;
@@ -134,9 +134,9 @@ static int test_data_transfer(void) {
     uint8_t expected_i[20];
     memcpy(expected_i + 0, test2_call, 6);        // destination callsign
     // modulo-8 SSID bytes
-    expected_i[6] = 0x60;                         // destination SSID (ch=0, res0=1, res1=1, ext=0, ssid=0)
+    expected_i[6] = 0xE0;                         // destination SSID (ch=1, res0=1, res1=1, ext=0, ssid=0) — I-frame is a command: dest.ch=1
     memcpy(expected_i + 7, test1_call, 6);        // source callsign
-    expected_i[13] = 0x61;                        // source SSID (ch=0, res0=1, res1=1, ext=1, ssid=0)
+    expected_i[13] = 0x61;                        // source SSID (ch=0, res0=1, res1=1, ext=1, ssid=0) — I-frame command: src.ch=0
     expected_i[14] = 0x00;                        // I-frame control (NS=0, NR=0, PF=0)
     expected_i[15] = pid;                         // PID
     memcpy(expected_i + 16, payload, payload_len);  // payload
