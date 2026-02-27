@@ -154,8 +154,6 @@ The implementation strictly adheres to:
 ### Future Extensions
 
 Planned enhancements include:
-- IL2P (Improved Layer 2 Protocol) compatibility layer
-- KISS protocol interface implementation
 - Integration examples with popular modems (Bell 202, G3RUH, GFSK)
 - Connection-oriented examples for common microcontroller platforms
 - Network layer protocol support (NET/ROM, ROSE)
@@ -522,13 +520,13 @@ This checklist documents the implementation status of all features defined in:
 - ✅ Integration with HDLC layer
 
 ### 15.2 IL2P (Improved Layer 2 Protocol)
-- ❌ IL2P header mapping
-- ❌ SIXBIT callsign compression
-- ❌ Reed-Solomon payload blocks
-- ❌ 24-bit sync word
-- ❌ Scrambling/descrambling
-- ❌ Type 0 transparent encapsulation
-- ❌ Type 1 translated encapsulation
+- ✅ IL2P header mapping
+- ✅ SIXBIT callsign compression
+- ✅ Reed-Solomon payload blocks
+- ✅ 24-bit sync word
+- ✅ Scrambling/descrambling
+- ✅ Type 0 transparent encapsulation
+- ✅ Type 1 translated encapsulation
 
 ### 15.3 KISS Interface Protocol
 - ✅ KISS framing (FEND, FESC encoding)

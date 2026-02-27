@@ -44,8 +44,6 @@
 //   - ax25_kiss_set_poll_mode: poll flag and interval
 //   - ax25_kiss_set_hw_flowctrl: HW flow control flag
 
-#define DEBUG_ENABLE
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
