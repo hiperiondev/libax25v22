@@ -7,67 +7,50 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/*
- * IL2P LFSR: polynomial x^9 + x^4 + 1
- *
- * Galois configuration, 9-bit register.
- * Initial state: all ones = 0x1FF
- * Processing: MSB-first (IL2P sends all bytes MSB first)
- *
- * Feedback mask: when the MSB (bit 8) shifts out as '1', XOR the
- * lower register bits corresponding to the polynomial taps:
- *   x^4 → bit 4 of the 9-bit register → mask bit = (1 << 4) = 0x010
- *   x^0 (constant +1) is the output tap itself, handled by the shift
- *
- * The 5-bit Galois pipeline delay means that after all N data bytes
- * are clocked through the LFSR, 5 additional "flush" bits (zeros fed
- * as input) must be processed to extract all information from the
- * register. The scrambled output of these 5 flush bits is appended
- * to the data block before RS encoding.
- */
+// Galois configuration, 9-bit register.
+// Initial state: all ones = 0x1FF
+// Processing: MSB-first (IL2P sends all bytes MSB first)
+//
+// Feedback mask: when the MSB (bit 8) shifts out as '1', XOR the
+// lower register bits corresponding to the polynomial taps:
+//   x^4 -> bit 4 of the 9-bit register -> mask bit = (1 << 4) = 0x010
+//   x^0 (constant +1) is the output tap itself, handled by the shift
 
-#define IL2P_LFSR_POLY_MASK   0x010u   /* Tap mask for Galois feedback (x^4 term only) */
-#define IL2P_LFSR_INIT        0x1FFu   /* Initial state: all 9 bits set */
-#define IL2P_LFSR_FLUSH_BITS  5u       /* Pipeline flush bits */
+#define IL2P_LFSR_POLY_MASK   0x010u   // Tap mask for Galois feedback (x^4 term only)
+#define IL2P_LFSR_INIT        0x1FFu   // Initial state: all 9 bits set
 
-/** LFSR state container */
+// IL2P_LFSR_FLUSH_BITS = 5 is retained for documentation purposes.
+// IL2P v0.6 specifies a 5-bit Galois pipeline delay, but for byte-aligned
+// RS code blocks with per-block LFSR reset (the architecture used here),
+// the pipeline drains entirely within the inter-block gap (LFSR reset).
+// No explicit flush step is required in this implementation; the constant
+// is kept only as a spec reference.
+#define IL2P_LFSR_FLUSH_BITS  5u       // Pipeline flush bits (spec reference only; not applied)
+
 typedef struct {
-    uint16_t state;  /**< 9-bit LFSR state (bits 8..0 used, bits 15..9 always 0) */
+    uint16_t state;  // 9-bit LFSR state (bits 8..0 used, bits 15..9 always 0)
 } il2p_lfsr_t;
 
-/**
- * @brief Reset LFSR to initial conditions.
- *
- * Must be called at the start of each RS code block (header or payload).
- *
- * @param lfsr  LFSR state.
- */
+// Reset LFSR to initial conditions.
+// Must be called at the start of each RS code block (header or payload).
 static inline void il2p_lfsr_reset(il2p_lfsr_t *lfsr) {
     lfsr->state = IL2P_LFSR_INIT;
 }
 
-/**
- * @brief Process one bit through the Galois LFSR (MSB-first convention).
- *
- * Both scramble and descramble use the same operation when the LFSR
- * runs independently (additive / packet-synchronous mode). Feed 0
- * for flush bits.
- *
- * @param lfsr      LFSR state (updated in place).
- * @param data_bit  Input data bit (0 or 1).
- * @return          Scrambled/descrambled output bit.
- */
+// Process one bit through the Galois LFSR (MSB-first convention).
+// Both scramble and descramble use the same operation when the LFSR
+// runs independently (additive / packet-synchronous mode).
 static inline uint8_t il2p_lfsr_step_bit(il2p_lfsr_t *lfsr, uint8_t data_bit) {
     /* Extract MSB (this is the LFSR output bit in Galois config, MSB-first) */
-    uint8_t out_bit = (uint8_t)((lfsr->state >> 8u) & 1u);
+    uint8_t out_bit = (uint8_t) ((lfsr->state >> 8u) & 1u);
     /* Shift left by 1 */
-    lfsr->state = (uint16_t)((lfsr->state << 1u) & 0x1FFu);
+    lfsr->state = (uint16_t) ((lfsr->state << 1u) & 0x1FFu);
     /* Galois feedback: if out_bit=1, XOR tap mask into register */
     if (out_bit) {
-        lfsr->state ^= (uint16_t)IL2P_LFSR_POLY_MASK;
+        lfsr->state ^= (uint16_t) IL2P_LFSR_POLY_MASK;
     }
     /* XOR data bit with LFSR output to produce scrambled bit */
-    return (uint8_t)(data_bit ^ out_bit);
+    return (uint8_t) (data_bit ^ out_bit);
 }
 
 /**
@@ -80,9 +63,9 @@ static inline uint8_t il2p_lfsr_step_bit(il2p_lfsr_t *lfsr, uint8_t data_bit) {
 static inline uint8_t il2p_lfsr_step_byte(il2p_lfsr_t *lfsr, uint8_t byte) {
     uint8_t result = 0u;
     for (int8_t b = 7; b >= 0; b--) {
-        uint8_t in_bit  = (uint8_t)((byte >> (uint8_t)b) & 1u);
+        uint8_t in_bit = (uint8_t) ((byte >> (uint8_t) b) & 1u);
         uint8_t out_bit = il2p_lfsr_step_bit(lfsr, in_bit);
-        result |= (uint8_t)(out_bit << (uint8_t)b);
+        result |= (uint8_t) (out_bit << (uint8_t) b);
     }
     return result;
 }

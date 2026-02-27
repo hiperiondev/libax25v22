@@ -38,14 +38,17 @@ uint8_t il2p_pid_from_ax25(uint8_t ax25_pid, bool is_s_frame, bool is_u_frame) {
             return i;
     }
 
-    // AX.25 L3 pattern: bits 5:4 are 01 (0x10) or 10 (0x20), value in range 0x10..0x3F only.
-    // This matches the AX.25 v2.2 spec "yy10yyyy" / "yy01yyyy" Layer 3 PID encoding
-    // but only for the low byte range 0x10..0x3F where these bits are meaningful.
-    // Values like 0x99 (10011001) accidentally match the bit pattern but are NOT
-    // valid AX.25 L3 PIDs and must return 0xFF to force Type 0 encapsulation.
-    if (ax25_pid >= 0x10u && ax25_pid <= 0x3Fu) {
-        if ((ax25_pid & 0x30u) == 0x20u || (ax25_pid & 0x30u) == 0x10u)
+    // AX.25 Layer 3 PIDs: match yy10yyyy or yy01yyyy pattern
+    // restricted to the practically occurring range 0x10..0x1F only.
+    // PIDs above 0x1F that match the bit pattern are not valid L3 PIDs
+    // in practice and would cause incorrect Type 1 encoding.
+    // Original range 0x10..0x3F was too wide: 0x20..0x2F also matched
+    // the 10-pattern but those values are not genuine AX.25 L3 PIDs
+    // in real traffic. Narrowed to 0x10..0x1F per NinoTNC reference.
+    if ((ax25_pid & 0x30u) == 0x20u || (ax25_pid & 0x30u) == 0x10u) {
+        if (ax25_pid <= 0x1Fu) {
             return IL2P_PID_AX25_L3;
+        }
     }
 
     return 0xFFu;  // Not mappable -- force Type 0
@@ -284,7 +287,13 @@ bool il2p_header_from_ax25(const ax25_frame_t *frame, uint16_t payload_len, il2p
         const ax25_supervisory_frame_t *sframe = (const ax25_supervisory_frame_t*) frame;
         uint8_t nr = (uint8_t) (sframe->nr & 0x07);
         uint8_t c_bit = (uint8_t) (sframe->pf ? 1u : 0u);
-        // code field: 0=RR, 1=RNR, 2=REJ, 3=SREJ -- maps directly to IL2P opcode
+
+        // sframe->code must use the encoding RR=0, RNR=1, REJ=2, SREJ=3
+        // which is identical to the IL2P opcode table (IL2P spec Table 3-4).
+        // No translation is needed. If ax25.h ever changes this mapping,
+        // a translation table must be inserted here.
+        // AX.25 v2.2 S-frame supervisory bits S1:S0 (control byte bits 3:2):
+        //   0b00 = RR, 0b01 = RNR, 0b10 = REJ, 0b11 = SREJ
         uint8_t opcode = (uint8_t) (sframe->code & 0x03u);
         ctrl7 = (uint8_t) ((nr << 3u) | (c_bit << 2u) | opcode);
     } else {
