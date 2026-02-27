@@ -1191,8 +1191,8 @@ ax25_xid_parameter_t* ax25_xid_class_of_procedures_new(bool a_flag, bool b_flag,
  * @return Pointer to XID parameter, or NULL on error
  */
 ax25_xid_parameter_t* ax25_xid_hdlc_optional_functions_new(bool rnr, bool rej, bool srej, bool sabm, bool sabme, bool dm, bool disc, bool ua, bool frmr,
-        bool ui, bool xid, bool test, bool modulo8, bool modulo128, bool res1, bool res2, bool res3, bool res4, bool res5, bool res6, bool res7,
-        uint8_t reserved, bool ext, uint8_t *err);
+bool ui, bool xid, bool test, bool modulo8, bool modulo128, bool res1, bool res2, bool res3, bool res4, bool res5, bool res6, bool res7, uint8_t reserved,
+bool ext, uint8_t *err);
 
 /**
  * @brief Create big-endian integer XID parameter
@@ -1354,5 +1354,97 @@ int8_t ax25_find_next_digi(const ax25_frame_header_t *header);
  * @param[in]     retransmit  Callback to transmit modified frame
  */
 void ax25_digipeat_frame(uint8_t *frame_data, size_t len, const char *my_call, uint8_t my_ssid, void (*retransmit)(uint8_t*, size_t));
+
+/*============================================================================*/
+/* PID Dispatch Table                                                           */
+/*============================================================================*/
+
+/*============================================================================*/
+/* Information Field Buffer Pool                                               */
+/*============================================================================*/
+
+// start modified part: static buffer pool for info-field payloads
+// AX25_MAX_INFO: maximum information field size in bytes per AX.25 v2.2 section 6.7.2.1.
+// Default N1 = 256 bytes. Override at compile time with -DAX25_MAX_INFO=<n>.
+#ifndef AX25_MAX_INFO
+#define AX25_MAX_INFO 256u
+#endif
+
+// AX25_POOL_SIZE: number of simultaneously active info-field buffers.
+// Each slot holds one frame payload up to AX25_MAX_INFO bytes.
+// Size the pool to the maximum number of frames that can be in flight
+// concurrently (RX pipeline + TX window). Default 16 covers mod-128 with
+// window size k=7 plus a generous RX margin.
+#ifndef AX25_POOL_SIZE
+#define AX25_POOL_SIZE 16u
+#endif
+
+// ax25_buf_t: one slot in the static info-field buffer pool.
+// The data array is sized to AX25_MAX_INFO + 1 to allow a null terminator
+// for string-safe access of text payloads without a separate allocation.
+typedef struct {
+    uint8_t data[AX25_MAX_INFO + 1u];  // payload bytes (+1 for null terminator)
+    uint16_t len;                       // valid bytes in data[]
+    uint8_t in_use;                    // 1 = slot allocated, 0 = free
+} ax25_buf_t;
+
+// ax25_buf_alloc: claim a free pool slot.
+// Returns pointer to slot on success, NULL if pool is exhausted.
+// Caller must call ax25_buf_free() when the payload is no longer needed.
+ax25_buf_t* ax25_buf_alloc(void);
+
+// ax25_buf_free: release a pool slot back to the free list.
+// Safe to call with NULL (no-op).
+void ax25_buf_free(ax25_buf_t *b);
+
+// ax25_buf_pool_free_count: return the number of currently free pool slots.
+// Useful for diagnostics and flow control decisions.
+uint8_t ax25_buf_pool_free_count(void);
+
+// Maximum number of simultaneously registered PID handlers.
+// Fixed-size table: no dynamic allocation, safe for all MCU targets.
+#ifndef AX25_MAX_PID_HANDLERS
+#define AX25_MAX_PID_HANDLERS 8
+#endif
+
+// Callback type invoked when a frame with a matching PID is received.
+// info: pointer to the information field payload (after PID byte).
+// len:  length of the information field payload in bytes.
+// ctx:  user-supplied context pointer registered with ax25_register_pid().
+typedef void (*ax25_pid_handler_fn)(const uint8_t *info, uint16_t len, void *ctx);
+
+// Single entry in the PID dispatch table.
+typedef struct {
+    uint8_t pid;  // PID value this entry handles
+    ax25_pid_handler_fn fn;  // handler callback
+    void *ctx;  // user context passed to fn
+} ax25_pid_entry_t;
+
+// PID dispatch function declarations
+
+// ax25_register_pid: register a handler for a specific PID value.
+// Duplicate PID registrations are silently ignored (first registration wins).
+// Returns 0 on success, 1 if the table is full, 2 if fn is NULL.
+uint8_t ax25_register_pid(uint8_t pid, ax25_pid_handler_fn fn, void *ctx);
+
+// ax25_unregister_pid: remove a previously registered PID handler.
+// Returns 0 on success, 1 if PID not found.
+uint8_t ax25_unregister_pid(uint8_t pid);
+
+// ax25_dispatch_pid: dispatch an I-frame or UI-frame payload to the
+// registered handler for its PID value.
+// pid:  PID byte extracted from the received frame.
+// info: pointer to information field data (NOT including the PID byte).
+// len:  length of information field data in bytes.
+// Frames with PID=0x08 (PID_SEGMENTATION) are routed to the SAR handler
+// if one has been registered; otherwise silently dropped.
+// Frames with PID=0xFF (PID_ESCAPE) require a second PID byte; if the
+// extended PID has a registered handler it is called with info advanced
+// past the second PID byte.
+// Returns 0 if a handler was called, 1 if no handler registered for PID.
+uint8_t ax25_dispatch_pid(uint8_t pid, const uint8_t *info, uint16_t len);
+
+// ax25_pid_handler_count: return the number of currently registered handlers.
+uint8_t ax25_pid_handler_count(void);
 
 #endif /* AX25_H_ */

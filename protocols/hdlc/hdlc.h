@@ -104,6 +104,26 @@
 #define HDLC_STUFF_INSERT_BIT   0   /**< Bit value inserted after threshold */
 #define HDLC_ABORT_MIN_ONES     15  /**< Minimum consecutive 1s for abort sequence */
 
+// Maximum receive frame size in bytes including FCS; MCU-safe, no 64-bit
+#define HDLC_MAX_FRAME_RX   330
+
+// HDLC bit-stream receiver state machine.
+// Feed one NRZI-decoded bit at a time via hdlc_rx_bit().
+// Implements: flag detection via 8-bit shift register,
+//             bit-destuffing (drop stuffed zero after 5 ones),
+//             abort detection (6+ consecutive ones),
+//             empty-frame suppression (consecutive 0x7E flags ignored),
+//             LSB-first byte assembly per AX.25 v2.2 section 3.8.
+typedef struct {
+    uint8_t buf[HDLC_MAX_FRAME_RX];  // assembled frame bytes (incl FCS)
+    uint16_t len;                     // valid bytes in buf when frame complete
+    uint8_t shift;                   // 8-bit shift register for flag detection
+    uint8_t ones;                    // consecutive-ones counter for bit-stuffing
+    uint8_t in_frame;                // 1 = currently inside frame data region
+    uint8_t bit_pos;                 // bit position within cur_byte (0..7)
+    uint8_t cur_byte;                // byte being assembled LSB-first
+} hdlc_rx_t;
+
 /*============================================================================*/
 /* HDLC Error Codes                                                           */
 /*============================================================================*/
@@ -437,5 +457,16 @@ bool hdlc_validate_frame(const unsigned char *frame, int len, int *dataLen);
  *       of start and end flags with sufficient data between them.
  */
 bool hdlc_frame_complete(const unsigned char *buffer, int len, int *frameLen);
+
+// hdlc_rx_bit: process one NRZI-decoded bit from the raw bit stream.
+// Returns 1 when a complete frame has been placed in h->buf[0..h->len-1].
+// Returns 0 while accumulating. Caller must read buf/len before the next
+// call that would start a new frame. Zero-initialise hdlc_rx_t before first use.
+int hdlc_rx_bit(hdlc_rx_t *h, uint8_t bit);
+
+// hdlc_tx_interframe_fill: write fill_count 0x7E flag bytes into buf.
+// Required for continuous HDLC streams between frames per AX.25 v2.2 section 2.2.1.
+// Returns number of bytes actually written (capped at buf_len).
+int hdlc_tx_interframe_fill(unsigned char *buf, int buf_len, int fill_count);
 
 #endif /* HDLC_H_ */

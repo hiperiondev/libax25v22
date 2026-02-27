@@ -695,8 +695,16 @@ uint8_t* ax25_frame_encode(const ax25_frame_t *frame, size_t *len, uint8_t *err)
     return result;
 }
 
+// AX25_BUF_FROM_DATA: recover the ax25_buf_t* owning a payload data pointer.
+// All pool-backed payloads are assigned as frame->payload = buf->data, so the
+// owning slot can be found by subtracting the offsetof(ax25_buf_t, data).
+// This avoids the broken (ax25_buf_t*)(payload) cast used previously, which
+// produced a wrong pointer and silently leaked the pool slot.
+#define AX25_BUF_FROM_DATA(ptr)     ((ax25_buf_t *)((uint8_t *)(ptr) - offsetof(ax25_buf_t, data)))
+
 void ax25_frame_free(ax25_frame_t *frame, uint8_t *err) {
     *err = 0;
+    uint8_t *p = NULL;
 
     if (!frame) {
         *err = 1;
@@ -708,22 +716,33 @@ void ax25_frame_free(ax25_frame_t *frame, uint8_t *err) {
             free(((ax25_raw_frame_t*) frame)->payload);
         break;
         case AX25_FRAME_UNNUMBERED_INFORMATION:
-            free(((ax25_unnumbered_information_frame_t*) frame)->payload);
+            p = ((ax25_unnumbered_information_frame_t*) frame)->payload;
+            if (p)
+                free(p);
         break;
         case AX25_FRAME_UNNUMBERED_XID: {
             ax25_exchange_identification_frame_t *xid = (ax25_exchange_identification_frame_t*) frame;
             for (size_t i = 0; i < xid->param_count; i++) {
                 xid->parameters[i]->free(xid->parameters[i], err);
             }
+            // free the parameters pointer array allocated by realloc in the decoder
             free(xid->parameters);
             break;
         }
         case AX25_FRAME_UNNUMBERED_TEST:
-            free(((ax25_test_frame_t*) frame)->payload);
+            // payload = pool buf->data; calling free() on it is undefined behaviour
+            // because it points into the static ax25_pool array, not the heap.
+            // Recover the owning ax25_buf_t* and release via ax25_buf_free instead.
+            p = ((ax25_test_frame_t*) frame)->payload;
+            if (p)
+                ax25_buf_free(AX25_BUF_FROM_DATA(p));
         break;
         case AX25_FRAME_INFORMATION_8BIT:
         case AX25_FRAME_INFORMATION_16BIT:
-            free(((ax25_information_frame_t*) frame)->payload);
+            // same as UI/TEST: payload is buf->data; recover owning slot via AX25_BUF_FROM_DATA
+            p = ((ax25_information_frame_t*) frame)->payload;
+            if (p)
+                ax25_buf_free(AX25_BUF_FROM_DATA(p));
         break;
         default:
         break;
@@ -915,18 +934,30 @@ ax25_unnumbered_information_frame_t* ax25_unnumbered_information_frame_decode(ax
     ui_frame->base.modifier = 0x03;  // UI frame modifier
     ui_frame->pid = data[0];
 
-    // Allocate payload with an extra byte for null terminator
     ui_frame->payload_len = len - 1;
-    ui_frame->payload = malloc(ui_frame->payload_len + 1);  // +1 for null terminator
-    if (!ui_frame->payload) {
+    // UI frames are connectionless and may carry large datagrams (e.g. APRS, test payloads);
+    // the pool is fixed at AX25_MAX_INFO bytes and cannot hold oversized payloads.
+    // Free path in ax25_frame_free (AX25_FRAME_UNNUMBERED_INFORMATION case) uses free() directly.
+    if (ui_frame->payload_len > 0) {
+        ui_frame->payload = malloc(ui_frame->payload_len + 1u);
+        if (!ui_frame->payload) {
+            *err = 1;
+            free(ui_frame);
+            return NULL;
+        }
+        memcpy(ui_frame->payload, data + 1, ui_frame->payload_len);
+        ui_frame->payload[ui_frame->payload_len] = '\0';  // null terminate for text safety
+    } else {
+        ui_frame->payload = NULL;
+    }
+
+    ax25_buf_t *ui_buf = ax25_buf_alloc();
+    if (!ui_buf) {
+        // Pool exhausted - treat as allocation failure
         *err = 1;
         free(ui_frame);
         return NULL;
     }
-
-    // Copy payload and ensure null termination
-    memcpy(ui_frame->payload, data + 1, ui_frame->payload_len);
-    ui_frame->payload[ui_frame->payload_len] = '\0';
 
     *err = 0;
     return ui_frame;
@@ -1103,13 +1134,26 @@ ax25_information_frame_t* ax25_information_frame_decode(ax25_frame_header_t *hea
         }
         frame->pid = data[0];
         frame->payload_len = len - 1;
-        frame->payload = malloc(frame->payload_len);
-        if (!frame->payload && frame->payload_len > 0) {
+        if (frame->payload_len > AX25_MAX_INFO) {
+            // Payload exceeds N1 maximum - reject per AX.25 v2.2 section 6.7.2.1
             *err = 3;
             free(frame);
             return NULL;
         }
-        memcpy(frame->payload, data + 1, frame->payload_len);
+        if (frame->payload_len > 0) {
+            ax25_buf_t *i_buf = ax25_buf_alloc();
+            if (!i_buf) {
+                *err = 3;
+                free(frame);
+                return NULL;
+            }
+            i_buf->len = (uint16_t) frame->payload_len;
+            memcpy(i_buf->data, data + 1, frame->payload_len);
+            i_buf->data[frame->payload_len] = 0;  // null terminate for safety
+            frame->payload = i_buf->data;
+        } else {
+            frame->payload = NULL;
+        }
     }
     return frame;
 }
@@ -1473,14 +1517,22 @@ ax25_test_frame_t* ax25_test_frame_decode(ax25_frame_header_t *header, bool pf, 
     frame->base.pf = pf;
     frame->base.modifier = 0xE3;
     frame->payload_len = len;
-    frame->payload = malloc(len);
-
-    if (!frame->payload) {
+    if (len > AX25_MAX_INFO) {
+        // TEST frame payload exceeds N1 - reject per AX.25 v2.2 section 6.7.2.1
         *err = 2;
         free(frame);
         return NULL;
     }
-    memcpy(frame->payload, data, len);
+    ax25_buf_t *test_buf = ax25_buf_alloc();
+    if (!test_buf) {
+        *err = 2;
+        free(frame);
+        return NULL;
+    }
+    test_buf->len = (uint16_t) len;
+    memcpy(test_buf->data, data, len);
+    test_buf->data[len] = 0;
+    frame->payload = test_buf->data;
 
     return frame;
 }
@@ -2019,4 +2071,133 @@ void ax25_digipeat_frame(uint8_t *frame_data, size_t len, const char *my_call, u
 
     // Free the decoded frame structure
     ax25_frame_free(frame, &err);
+}
+
+// Static dispatch table: fixed size, no dynamic allocation, MCU-safe.
+// pid_count tracks the number of active entries (0..AX25_MAX_PID_HANDLERS).
+static ax25_pid_entry_t pid_table[AX25_MAX_PID_HANDLERS];
+static uint8_t pid_count = 0;
+
+// ax25_register_pid: add a handler for pid to the dispatch table.
+// If pid is already registered the call is ignored (first-wins policy).
+// Returns 0 on success, 1 if table is full, 2 if fn is NULL.
+uint8_t ax25_register_pid(uint8_t pid, ax25_pid_handler_fn fn, void *ctx) {
+    uint8_t i;
+
+    if (!fn)
+        return 2;
+
+    // Duplicate check: ignore if already registered
+    for (i = 0; i < pid_count; i++) {
+        if (pid_table[i].pid == pid)
+            return 0;  // already registered - no error, first-wins
+    }
+
+    if (pid_count >= AX25_MAX_PID_HANDLERS)
+        return 1;  // table full
+
+    pid_table[pid_count].pid = pid;
+    pid_table[pid_count].fn = fn;
+    pid_table[pid_count].ctx = ctx;
+    pid_count++;
+    return 0;
+}
+
+// ax25_unregister_pid: remove the handler for pid.
+// Compacts the table by shifting remaining entries down.
+// Returns 0 on success, 1 if PID not found.
+uint8_t ax25_unregister_pid(uint8_t pid) {
+    uint8_t i;
+    for (i = 0; i < pid_count; i++) {
+        if (pid_table[i].pid == pid) {
+            // Shift remaining entries left to fill the gap
+            uint8_t j;
+            for (j = i; j < (uint8_t) (pid_count - 1u); j++)
+                pid_table[j] = pid_table[j + 1u];
+            pid_count--;
+            return 0;
+        }
+    }
+    return 1;  // not found
+}
+
+// ax25_dispatch_pid: route received frame payload to registered handler.
+// pid:  PID byte from the received I-frame or UI-frame.
+// info: information field data pointer (does NOT include the PID byte).
+// len:  length of info in bytes.
+//
+// Special cases handled per AX.25 v2.2 spec:
+//   PID_SEGMENTATION (0x08): routed to registered SAR handler if any.
+//   PID_ESCAPE (0xFF):       extended PID - second byte consumed and used
+//                            as the actual PID for table lookup; info and
+//                            len are adjusted past the extended PID byte.
+//   PID_NO_L3 (0xF0):        plain text / no-layer-3; routed normally.
+//
+// Returns 0 if a handler was called, 1 if no handler registered for PID.
+uint8_t ax25_dispatch_pid(uint8_t pid, const uint8_t *info, uint16_t len) {
+    uint8_t i;
+    uint8_t lookup_pid = pid;
+
+    if (!info)
+        return 1;
+
+    // PID_ESCAPE (0xFF): consume the extended PID byte per AX.25 v2.2 section 6.5
+    if (pid == PID_ESCAPE) {
+        if (len < 1u)
+            return 1;  // malformed extended PID frame
+        lookup_pid = info[0];
+        info++;      // advance past extended PID byte
+        len--;       // adjust remaining length
+    }
+
+    // Linear scan of the fixed dispatch table
+    for (i = 0; i < pid_count; i++) {
+        if (pid_table[i].pid == lookup_pid) {
+            pid_table[i].fn(info, len, pid_table[i].ctx);
+            return 0;  // handler called
+        }
+    }
+
+    // No handler registered for this PID - silently drop per spec
+    return 1;
+}
+
+// ax25_pid_handler_count: return the number of currently registered handlers.
+uint8_t ax25_pid_handler_count(void) {
+    return pid_count;
+}
+
+// Static pool: AX25_POOL_SIZE slots, each holding up to AX25_MAX_INFO+1 bytes.
+// No heap allocation; safe for MCUs with 32 KB SRAM or less.
+static ax25_buf_t ax25_pool[AX25_POOL_SIZE];
+
+// ax25_buf_alloc: find and return the first free slot.
+// Returns NULL when the pool is exhausted (caller must handle gracefully).
+ax25_buf_t* ax25_buf_alloc(void) {
+    uint8_t i;
+    for (i = 0; i < AX25_POOL_SIZE; i++) {
+        if (!ax25_pool[i].in_use) {
+            ax25_pool[i].in_use = 1;
+            ax25_pool[i].len = 0;
+            return &ax25_pool[i];
+        }
+    }
+    return NULL;  // pool exhausted
+}
+
+// ax25_buf_free: mark a pool slot as free.
+// NULL-safe: calling with NULL is a harmless no-op.
+void ax25_buf_free(ax25_buf_t *b) {
+    if (b)
+        b->in_use = 0;
+}
+
+// ax25_buf_pool_free_count: count available (un-allocated) pool slots.
+uint8_t ax25_buf_pool_free_count(void) {
+    uint8_t i, count = 0;
+    for (i = 0; i < AX25_POOL_SIZE; i++) {
+        if (!ax25_pool[i].in_use)
+            count++;
+    }
+    return count;
 }

@@ -221,3 +221,95 @@ unsigned char reverse_bits(unsigned char byte) {
     return reversed;
 }
 
+// hdlc_rx_bit: process one NRZI-decoded bit from the raw bit stream.
+// Detects 0x7E flag via 8-bit shift register, performs bit-destuffing,
+// suppresses empty frames (consecutive flags produce no output), and
+// assembles bytes LSB-first per AX.25 v2.2 section 3.8.
+// Returns 1 when a complete frame is in h->buf[0..h->len-1].
+// No 64-bit types, no float. Safe for all MCU targets.
+int hdlc_rx_bit(hdlc_rx_t *h, uint8_t bit) {
+    if (!h)
+        return 0;
+
+    // Feed bit into shift register: new bit enters at MSB, old bits shift right.
+    // After 8 bits the register holds the last 8 received bits for flag matching.
+    h->shift = (uint8_t) ((h->shift >> 1) | (bit ? 0x80u : 0u));
+
+    // Flag detection: 01111110 = 0x7E
+    if (h->shift == HDLC_FLAG_BYTE) {
+        // Inside a frame with enough data: signal frame complete.
+        // Minimum 4 bytes prevents pure flag sequences from appearing as frames
+        // (empty-frame suppression per AX.25 v2.2 section 2.2.1 requirement).
+        if (h->in_frame && h->len >= 4) {
+            h->in_frame = 0;
+            // h->len intentionally NOT reset; caller reads buf[0..len-1]
+            return 1;
+        }
+        // Consecutive flag or opening flag: reset accumulator.
+        // Empty-frame suppression: consecutive 0x7E simply restart the state.
+        h->in_frame = 1;
+        h->len = 0;
+        h->bit_pos = 0;
+        h->cur_byte = 0;
+        h->ones = 0;
+        return 0;
+    }
+
+    // Not inside a frame: discard bit
+    if (!h->in_frame)
+        return 0;
+
+    // Bit-destuffing per AX.25 v2.2 section 3.6:
+    // After 5 consecutive one-bits the transmitter inserts a zero; discard it.
+    // 6 or more consecutive one-bits is an abort sequence; discard the frame.
+    if (bit) {
+        h->ones++;
+        if (h->ones >= 6) {
+            // Abort sequence detected - discard frame in progress
+            h->in_frame = 0;
+            h->len = 0;
+            h->ones = 0;
+            return 0;
+        }
+    } else {
+        if (h->ones == 5) {
+            // Stuffed zero - discard this bit and reset ones counter
+            h->ones = 0;
+            return 0;
+        }
+        h->ones = 0;
+    }
+
+    // Assemble byte LSB-first (AX.25 transmits LSb first per section 3.8)
+    if (bit)
+        h->cur_byte = (uint8_t) (h->cur_byte | (uint8_t) (1u << h->bit_pos));
+    h->bit_pos++;
+
+    if (h->bit_pos == 8) {
+        if (h->len < HDLC_MAX_FRAME_RX) {
+            h->buf[h->len++] = h->cur_byte;
+        } else {
+            // Buffer overflow - silently discard frame in progress
+            h->in_frame = 0;
+            h->len = 0;
+        }
+        h->bit_pos = 0;
+        h->cur_byte = 0;
+    }
+
+    return 0;
+}
+
+// hdlc_tx_interframe_fill: fill buf with fill_count 0x7E flag bytes.
+// Inter-frame time fill for continuous HDLC streams per AX.25 v2.2 section 2.2.1.
+// Returns number of bytes actually written (capped at buf_len).
+int hdlc_tx_interframe_fill(unsigned char *buf, int buf_len, int fill_count) {
+    int i;
+    if (!buf || buf_len <= 0 || fill_count <= 0)
+        return 0;
+    if (fill_count > buf_len)
+        fill_count = buf_len;
+    for (i = 0; i < fill_count; i++)
+        buf[i] = (unsigned char) HDLC_FLAG_BYTE;
+    return fill_count;
+}
