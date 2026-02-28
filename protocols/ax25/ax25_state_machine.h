@@ -565,6 +565,13 @@ typedef struct {
     ax25_negotiated_params_t params; /**< XID negotiated parameters */
     uint16_t t3_timeout; /**< T3 timeout value (10ms units) */
 
+    // SABME/SABM modulo negotiation per PE1CHL §6
+    // want_mod128: set to 1 before calling ax25_connect() to request a
+    // mod-128 connection via SABME. If the peer responds with DM or FRMR
+    // the state machine falls back automatically to mod-8 SABM.
+    // Cleared to 0 after fallback or after a successful connection.
+    uint8_t want_mod128;
+
     /* Duplex mode */
     bool full_duplex; /**< Full-duplex operation enabled */
 

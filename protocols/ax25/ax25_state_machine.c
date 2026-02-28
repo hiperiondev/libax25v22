@@ -1151,6 +1151,10 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     // initialize MDL context pointer
     conn->mgmt_ctx = NULL;  // caller sets if MDL error bridging is needed
 
+    // Initialize SABME/SABM modulo preference to mod-8 default
+    // Caller sets conn->want_mod128 = 1 before ax25_connect() to request SABME
+    conn->want_mod128 = 0;
+
     // Initialize segmenter/reassembler per AX.25 v2.2 Section 2.4 / Appendix C6.
     // segment_size = N1 - 2 (1-byte segment header + 1-byte original-PID overhead).
     // Callbacks wire automatic segmentation on TX and reassembly delivery on RX.
@@ -1385,6 +1389,9 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                 // Connection established - transition to CONNECTED state
                 conn->vars.vs = conn->vars.vr = conn->vars.va = 0;
                 conn->state = AX25_STATE_CONNECTED;
+                // clear want_mod128 on successful connection
+                // conn->vars.mod already holds the negotiated modulo (8 or 128)
+                conn->want_mod128 = 0;
 
                 // Clear SREJ/REJ state on new connection
                 clear_srej_state(conn);
@@ -1459,6 +1466,16 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
             conn->stats.uframe_received++;
             if (conn->stats.uframe_received == 0) {
                 conn->stats.uframe_received = 1;
+            }
+
+            // SABM/SABME collision handling per §6.3.6.2
+            // When both stations transmit SABM simultaneously each receives the
+            // other's SABM while in AWAITING_CONNECTION. Cancel T1 so the pending
+            // retransmit loop does not fire again; the code below sends UA and
+            // transitions to CONNECTED immediately.
+            if (conn->state == AX25_STATE_AWAITING_CONNECTION) {
+                conn->t1_start_tick = 0;
+                conn->retry_count = 0;
             }
 
             // Connection request
@@ -1739,6 +1756,20 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
         case AX25_FRAME_UNNUMBERED_FRMR: {
             // Handle received FRMR
             ax25_frame_reject_frame_t *frmr = (ax25_frame_reject_frame_t*) frame;
+
+            // SABME fallback when FRMR received during AWAITING_CONNECTION
+            // Per PE1CHL §6: some stations reply FRMR to SABME instead of UA.
+            // Fall back to mod-8 SABM, reset retry counter, and try again.
+            if (conn->state == AX25_STATE_AWAITING_CONNECTION && conn->want_mod128) {
+                conn->want_mod128 = 0;
+                conn->vars.mod = 8;
+                conn->timers.k = 7;
+                conn->retry_count = 0;
+                send_sabm(conn, false);
+                conn->t1_start_tick = AX25_T1_PENDING;
+                break;
+            }
+
             handle_received_frmr(conn, frmr);
             break;
         }
@@ -1891,6 +1922,19 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
             }
 
             if (conn->state == AX25_STATE_AWAITING_CONNECTION) {
+                // SABME fallback when DM received during AWAITING_CONNECTION
+                // Per PE1CHL §6: some stations reply DM to SABME instead of UA.
+                // If we were trying mod-128, fall back to mod-8 SABM and retry.
+                if (conn->want_mod128) {
+                    conn->want_mod128 = 0;
+                    conn->vars.mod = 8;
+                    conn->timers.k = 7;
+                    conn->retry_count = 0;
+                    send_sabm(conn, false);
+                    conn->t1_start_tick = AX25_T1_PENDING;
+                    break;
+                }
+
                 // Remote refused connection - cancel T1, notify Layer 3
                 conn->state = AX25_STATE_DISCONNECTED;
                 conn->t1_start_tick = 0;
@@ -1958,7 +2002,25 @@ uint8_t ax25_connect(ax25_connection_t *conn, ax25_address_t *dest, ax25_address
     conn->peer_addr.cr = true;
     conn->peer_addr.repeaters.num_repeaters = 0;
 
-    send_sabm(conn, false);
+    // send SABME when want_mod128 is set, SABM otherwise
+    // Per PE1CHL §6: if want_mod128 is set we prefer mod-128 (SABME); the state
+    // machine falls back to SABM automatically on DM/FRMR response from peer.
+    if (conn->want_mod128) {
+        // Request mod-128 extended sequence numbering via SABME
+        conn->vars.mod = 128;
+        // Apply spec default window size for mod-128 unless caller pre-configured a
+        // larger value; clamp to queue capacity so the queue never overflows.
+        if (conn->timers.k <= 7u) {
+            uint8_t queue_max = (uint8_t) (AX25_MAX_QUEUE_SIZE - 1u);
+            conn->timers.k = (32u <= queue_max) ? 32u : queue_max;
+        }
+        send_sabm(conn, true);  // true = SABME
+    } else {
+        // Standard mod-8 connection via SABM
+        conn->vars.mod = 8;
+        send_sabm(conn, false);  // false = SABM
+    }
+
     conn->state = AX25_STATE_AWAITING_CONNECTION;
     conn->retry_count = 0;
     // T1 MUST be started after sending SABM per AX.25 v2.2 Section 6.3.1 and C4 SDL.

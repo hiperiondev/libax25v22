@@ -883,6 +883,96 @@ uint8_t* ax25_raw_frame_encode(const ax25_raw_frame_t *frame, size_t *len, uint8
     return bytes;
 }
 
+// Parses one or two control bytes into ax25_ctrl_t.  All output fields are
+// zero-initialised before any branch so callers never read uninitialised memory.
+// Bit layouts verified against ax25_information_frame_decode() and
+// ax25_supervisory_frame_decode() in this file:
+//   mod-8  I: ns=bits[3:1], pf=bit4, nr=bits[7:5]
+//   mod-128 I: ns=c0 bits[7:1], pf=c1 bit0, nr=c1 bits[7:1]
+//   mod-8  S: s_cmd=bits[3:2], pf=bit4, nr=bits[7:5]
+//   mod-128 S: s_cmd=c0 bits[3:2], pf=c1 bit0, nr=c1 bits[7:1]
+//   U (always 1 byte): pf=bit4, u_cmd = c0 & 0xEF (P/F stripped)
+uint8_t ax25_parse_ctrl(ax25_ctrl_t *out, const uint8_t *ctrl, size_t avail, uint8_t mod128) {
+    // Validate pointers and minimum buffer size
+    if (!out || !ctrl)
+        return 1u;
+    if (avail < 1u)
+        return 2u;
+
+    // Zero all fields so unused ones are always deterministic
+    out->type = 0u;
+    out->s_cmd = 0u;
+    out->u_cmd = 0u;
+    out->pf = 0u;
+    out->ns = 0u;
+    out->nr = 0u;
+    out->ctrl_len = 0u;
+
+    uint8_t c0 = ctrl[0];
+
+    if ((c0 & 0x01u) == 0u) {
+        // I-frame: bit 0 of first byte is 0
+        out->type = 'I';
+        if (mod128) {
+            // mod-128 requires a second control byte
+            if (avail < 2u)
+                return 2u;
+            uint8_t c1 = ctrl[1];
+            // N(S): bits 7-1 of c0 (7-bit sequence number, range 0-127)
+            out->ns = (c0 >> 1) & 0x7Fu;
+            // P/F: bit 0 of c1 (bit 8 of the 16-bit control word)
+            // Confirmed: ax25_information_frame_decode uses (control & 0x0100)
+            out->pf = (c1 >> 0) & 0x01u;
+            // N(R): bits 7-1 of c1 (7-bit sequence number, range 0-127)
+            // Confirmed: ax25_information_frame_decode uses (control >> 9) & 0x7F
+            out->nr = (c1 >> 1) & 0x7Fu;
+            out->ctrl_len = 2u;
+        } else {
+            // N(S): bits 3-1 of c0 (3-bit sequence number, range 0-7)
+            out->ns = (c0 >> 1) & 0x07u;
+            // P/F: bit 4 of c0 -- POLL_FINAL_8BIT = 0x10
+            out->pf = (c0 >> 4) & 0x01u;
+            // N(R): bits 7-5 of c0 (3-bit sequence number, range 0-7)
+            out->nr = (c0 >> 5) & 0x07u;
+            out->ctrl_len = 1u;
+        }
+    } else if ((c0 & 0x03u) == 0x01u) {
+        // S-frame: bits 1-0 = 01
+        out->type = 'S';
+        // Supervisory code: bits 3-2 (0=RR, 1=RNR, 2=REJ, 3=SREJ)
+        // Confirmed: ax25_supervisory_frame_decode uses (control >> 2) & 0x03
+        out->s_cmd = (c0 >> 2) & 0x03u;
+        if (mod128) {
+            // mod-128 requires a second control byte
+            if (avail < 2u)
+                return 2u;
+            uint8_t c1 = ctrl[1];
+            // P/F: bit 0 of c1 -- POLL_FINAL_16BIT = 0x0100 (bit 8 of 16-bit word)
+            out->pf = (c1 >> 0) & 0x01u;
+            // N(R): bits 7-1 of c1
+            out->nr = (c1 >> 1) & 0x7Fu;
+            out->ctrl_len = 2u;
+        } else {
+            // P/F: bit 4 of c0 -- POLL_FINAL_8BIT = 0x10
+            out->pf = (c0 >> 4) & 0x01u;
+            // N(R): bits 7-5 of c0
+            out->nr = (c0 >> 5) & 0x07u;
+            out->ctrl_len = 1u;
+        }
+    } else {
+        // U-frame: bits 1-0 = 11; always 1 byte regardless of mod128
+        out->type = 'U';
+        // P/F: bit 4 of c0 -- U-frames always use 8-bit control
+        out->pf = (c0 >> 4) & 0x01u;
+        // Strip P/F bit to get canonical opcode -- matches existing: modifier = control & 0xEF
+        // Explicit cast to uint8_t prevents ~0x10u (uint32_t) from widening the expression
+        out->u_cmd = (uint8_t) (c0 & (uint8_t) ~0x10u);
+        out->ctrl_len = 1u;
+    }
+
+    return 0u;
+}
+
 ax25_unnumbered_frame_t* ax25_unnumbered_frame_decode(ax25_frame_header_t *header, uint8_t control, const uint8_t *data, size_t len, uint8_t *err) {
     *err = 0;
     uint8_t modifier = control & 0xEF;
@@ -2098,6 +2188,37 @@ void ax25_digipeat_frame(uint8_t *frame_data, size_t len, const char *my_call, u
 
     // Free the decoded frame structure
     ax25_frame_free(frame, &err);
+}
+
+// The H-bit (has-been-repeated) is bit 7 (mask 0x80) of the 7th byte of each
+// 7-byte address field.  Address offsets: dest=0, src=7, digi_n=14+(7*n).
+// Verified against ax25_address_decode() and ax25_address_encode() in this file,
+// both of which use (data[6] & 0x80) / (ssid_byte |= 0x80) for the C/H bit.
+
+uint8_t ax25_get_h_bit(const uint8_t *frame_buf, size_t frame_len, uint8_t digi_idx) {
+    // Validate pointer and index range (0..AX25_MAX_REPEATERS-1)
+    if (!frame_buf || digi_idx >= AX25_MAX_REPEATERS)
+        return 0xFFu;
+    // Calculate byte offset: dest(7) + src(7) + digi_idx * 7, then +6 for SSID byte
+    uint16_t offset = (uint16_t) (14u + (uint16_t) digi_idx * 7u);
+    // Validate that the SSID byte is within the supplied buffer
+    if ((size_t) (offset + 6u) >= frame_len)
+        return 0xFFu;
+    // H-bit is bit 7 of the SSID byte (confirmed: ax25_address_decode uses 0x80)
+    return (frame_buf[offset + 6u] >> 7) & 0x01u;
+}
+
+void ax25_set_h_bit(uint8_t *frame_buf, size_t frame_len, uint8_t digi_idx) {
+    // Validate pointer and index range (0..AX25_MAX_REPEATERS-1)
+    if (!frame_buf || digi_idx >= AX25_MAX_REPEATERS)
+        return;
+    // Calculate byte offset: dest(7) + src(7) + digi_idx * 7, then +6 for SSID byte
+    uint16_t offset = (uint16_t) (14u + (uint16_t) digi_idx * 7u);
+    // Validate that the SSID byte is within the supplied buffer
+    if ((size_t) (offset + 6u) >= frame_len)
+        return;
+    // Set H-bit (bit 7, mask 0x80) — confirmed: ax25_address_encode uses 0x80
+    frame_buf[offset + 6u] |= 0x80u;
 }
 
 // Static dispatch table: fixed size, no dynamic allocation, MCU-safe.

@@ -87,6 +87,20 @@
 #define POLL_FINAL_8BIT  0x10   /**< P/F bit position in 8-bit control field (bit 4) */
 #define POLL_FINAL_16BIT 0x0100 /**< P/F bit position in 16-bit control field (bit 8) */
 
+// U-frame opcodes after stripping the P/F bit (bit 4) from the control byte.
+// These values match the modifier literals used in ax25_unnumbered_frame_decode()
+// and are defined here so callers of ax25_parse_ctrl() can switch on out->u_cmd
+// without embedding magic numbers.
+#define AX25_U_UI     0x03u  // Unnumbered Information
+#define AX25_U_DM     0x0Fu  // Disconnected Mode
+#define AX25_U_SABM   0x2Fu  // Set ABM (mod-8)
+#define AX25_U_DISC   0x43u  // Disconnect
+#define AX25_U_UA     0x63u  // Unnumbered Acknowledge
+#define AX25_U_SABME  0x6Fu  // Set ABM Extended (mod-128)
+#define AX25_U_FRMR   0x87u  // Frame Reject
+#define AX25_U_XID    0xAFu  // Exchange Identification
+#define AX25_U_TEST   0xE3u  // Test
+
 /*============================================================================*/
 /* Modulo Sequence Numbering Constants                                        */
 /*============================================================================*/
@@ -158,6 +172,18 @@
 /*============================================================================*/
 /* Frame Type Enumeration                                                       */
 /*============================================================================*/
+
+// ax25_ctrl_t: result of ax25_parse_ctrl().
+// All fields not relevant to the decoded frame type are zero-initialised.
+typedef struct {
+    uint8_t type;     // Frame type: 'I' = information, 'S' = supervisory, 'U' = unnumbered
+    uint8_t s_cmd;    // S-frame sub-type: 0=RR, 1=RNR, 2=REJ, 3=SREJ (valid when type=='S')
+    uint8_t u_cmd;    // U-frame opcode with P/F stripped (valid when type=='U'); compare to AX25_U_* defines
+    uint8_t pf;       // Poll/Final bit: 1=set, 0=clear
+    uint8_t ns;       // N(S): mod-8 range 0-7, mod-128 range 0-127 (valid when type=='I')
+    uint8_t nr;       // N(R): mod-8 range 0-7, mod-128 range 0-127 (valid when type=='I' or 'S')
+    uint8_t ctrl_len;  // Bytes consumed from ctrl[]: 1 for mod-8 I/S and all U, 2 for mod-128 I/S
+} ax25_ctrl_t;
 
 /**
  * @brief Enumeration of all AX.25 frame types
@@ -635,6 +661,57 @@ extern ax25_xid_parameter_t *AX25_20_DEFAULT_XID_ACKTIMER; /**< AX.25 v2.0 Ack T
 extern ax25_xid_parameter_t *AX25_22_DEFAULT_XID_ACKTIMER; /**< AX.25 v2.2 Ack Timer default */
 extern ax25_xid_parameter_t *AX25_20_DEFAULT_XID_RETRIES; /**< AX.25 v2.0 Retries default */
 extern ax25_xid_parameter_t *AX25_22_DEFAULT_XID_RETRIES; /**< AX.25 v2.2 Retries default */
+
+// Public inline utilities for modular sequence arithmetic used by the data link
+// state machine and any upper-layer code that needs window validation.
+// These cover the three per-connection state variables V(S), V(R), V(A) and
+// the window arithmetic defined in AX.25 v2.2 §4.2.2 and §6.4.
+
+// Bit masks for sequence number modulo modes
+#define MOD8_MASK   0x07u  // Modulo-8: 3-bit sequence numbers (range 0-7)
+#define MOD128_MASK 0x7Fu  // Modulo-128: 7-bit sequence numbers (range 0-127)
+
+// seqn_mask: derive the correct mask from the modulus value stored in
+// ax25_state_vars_t.mod (8 or 128).  Avoids scattering ternaries at call sites.
+static inline uint8_t seqn_mask(uint8_t mod) {
+    return (mod == 128u) ? MOD128_MASK : MOD8_MASK;
+}
+
+// seqn_inc: increment a sequence number by 1 with modular wrap.
+// Equivalent to (v + 1) mod (mask+1).
+// Usage: conn->vars.vs = seqn_inc(conn->vars.vs, seqn_mask(conn->vars.mod));
+static inline uint8_t seqn_inc(uint8_t v, uint8_t mask) {
+    return (uint8_t) ((v + 1u) & mask);
+}
+
+// seqn_sub: modular subtraction a - b, result always in [0, mask].
+// C unsigned arithmetic wraps naturally; masking gives the modular distance.
+// Example (mod-8): a=1, b=6 -> (1-6) in uint8 = 0xFB, & 0x07 = 3 (correct: 6->7->0->1).
+// Simpler and equivalent to the (a - b + mask + 1) & mask form; no risk of
+// intermediate overflow since operands are promoted to int before subtraction.
+static inline uint8_t seqn_sub(uint8_t a, uint8_t b, uint8_t mask) {
+    return (uint8_t) ((a - b) & mask);
+}
+
+// seqn_in_window: test whether sequence number n lies in the half-open window
+// [low, high) modulo (mask+1).  Used to validate received N(R) and N(S).
+// Works correctly across the modular wrap-around point.
+// Returns 1 if n is inside the window, 0 otherwise.
+static inline uint8_t seqn_in_window(uint8_t n, uint8_t low, uint8_t high, uint8_t mask) {
+    // Translate both n and high to offsets from low; n is in-window iff its
+    // offset is strictly less than the window width.
+    uint8_t offset_n = seqn_sub(n, low, mask);
+    uint8_t offset_high = seqn_sub(high, low, mask);
+    return (offset_n < offset_high) ? 1u : 0u;
+}
+
+// seqn_window_full: returns 1 if the transmit window is exhausted and no more
+// I-frames may be sent.
+// Condition: (V(S) - V(A)) mod modulo >= k   (AX.25 v2.2 §6.4.1)
+// k is the negotiated window size stored in ax25_timers_t.k.
+static inline uint8_t seqn_window_full(uint8_t vs, uint8_t va, uint8_t k, uint8_t mask) {
+    return (seqn_sub(vs, va, mask) >= k) ? 1u : 0u;
+}
 
 /*============================================================================*/
 /* XID Initialization Functions                                               */
@@ -1355,6 +1432,23 @@ int8_t ax25_find_next_digi(const ax25_frame_header_t *header);
  */
 void ax25_digipeat_frame(uint8_t *frame_data, size_t len, const char *my_call, uint8_t my_ssid, void (*retransmit)(uint8_t*, size_t));
 
+// ax25_get_h_bit: read the H (has-been-repeated) bit directly from a raw
+// AX.25 frame byte buffer for a given digipeater slot index (0-based).
+// Address layout: dest=offset 0, src=offset 7, digi_n=offset 14+(7*n).
+// The H-bit is bit 7 (0x80) of the 7th (SSID) byte of the address field,
+// matching ax25_address_decode() which does: addr->ch = (data[6] & 0x80) != 0.
+// Returns 1 if H-bit is set, 0 if clear.
+// Returns 0xFF on invalid arguments (NULL, index out of range, or buffer
+// too short to contain the addressed digipeater slot).
+uint8_t ax25_get_h_bit(const uint8_t *frame_buf, size_t frame_len, uint8_t digi_idx);
+
+// ax25_set_h_bit: set the H-bit in a raw AX.25 frame byte buffer for a
+// given digipeater slot index (0-based).  Modifies the buffer in-place.
+// The H-bit is bit 7 (0x80) of the SSID byte, matching ax25_address_encode()
+// which does: if (addr->ch) ssid_byte |= 0x80.
+// No-op if arguments are invalid (NULL, index out of range, buffer too short).
+void ax25_set_h_bit(uint8_t *frame_buf, size_t frame_len, uint8_t digi_idx);
+
 /*============================================================================*/
 /* PID Dispatch Table                                                           */
 /*============================================================================*/
@@ -1446,5 +1540,15 @@ uint8_t ax25_dispatch_pid(uint8_t pid, const uint8_t *info, uint16_t len);
 
 // ax25_pid_handler_count: return the number of currently registered handlers.
 uint8_t ax25_pid_handler_count(void);
+
+// ax25_parse_ctrl: unified control-field decoder for both modulo modes.
+// ctrl:   pointer to the first control field byte in the frame buffer.
+// avail:  number of bytes available starting at ctrl (must be >= 1; >= 2 for mod-128 I/S).
+// mod128: 1 = use extended 2-byte control field (SABME connection), 0 = 1-byte control.
+// out:    filled on success; all fields zero-initialised before parsing so unused
+//         fields (e.g. ns for an S-frame) are always 0 rather than garbage.
+// Returns 0 on success, 1 if ctrl is NULL or out is NULL, 2 if avail is too small
+// for the required control field width.
+uint8_t ax25_parse_ctrl(ax25_ctrl_t *out, const uint8_t *ctrl, size_t avail, uint8_t mod128);
 
 #endif /* AX25_H_ */
