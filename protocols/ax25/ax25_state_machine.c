@@ -599,25 +599,48 @@ static bool ax25_nr_is_valid(ax25_connection_t *conn, uint8_t nr) {
     return dist_nr <= dist_vs;
 }
 
-// send_frmr_z: send FRMR with Z-bit set (invalid N(R) received)
-// Per AX.25 v2.2 Section 4.3.3.6 - transitions link to AX25_STATE_FRAME_REJECT
-static void send_frmr_z(ax25_connection_t *conn, uint8_t bad_ctrl) {
+// send_frmr_generic: encode and transmit a FRMR frame with arbitrary W/X/Y/Z reason bits.
+// Correctly initialises all ax25_frame_reject_frame_t fields (vs, vr, frmr_cr)
+// and stores frmr_info in a layout that resend_stored_frmr() can reproduce exactly.
+// frmr_info layout per AX.25 v2.2 §4.3.3.6:
+//   mod-8  (3 bytes): [ctrl][V(R)<<5 | C/R<<4 | V(S)<<1][W|X|Y|Z]
+//   mod-128 (5 bytes): [ctrl_lo][ctrl_hi][V(S)<<1 | C/R][V(R)<<1][W|X|Y|Z]
+// Per AX.25 v2.2 Section 4.4.5 - transitions link to AX25_STATE_FRAME_REJECT
+static void send_frmr_generic(ax25_connection_t *conn, uint16_t bad_ctrl,
+bool w, bool x, bool y, bool z) {
     ax25_frame_reject_frame_t frmr;
+    memset(&frmr, 0, sizeof(frmr));
     frmr.base.base.header = conn->peer_addr;
     frmr.base.base.type = AX25_FRAME_UNNUMBERED_FRMR;
-    frmr.base.pf = true;
-    frmr.base.modifier = 0x87;
+    frmr.base.pf = true;       // F=1 per §4.4.5
+    frmr.base.modifier = 0x87u;      // FRMR modifier
     frmr.is_modulo128 = (conn->vars.mod == 128);
     frmr.frmr_control = bad_ctrl;
-    frmr.w = false;
-    frmr.x = false;
-    frmr.y = false;
-    frmr.z = true;  // Z-bit: invalid N(R)
-    // Store FRMR info for retransmission
-    conn->frmr_info_len = (conn->vars.mod == 128) ? 5 : 3;
-    conn->frmr_info[0] = bad_ctrl;
-    conn->frmr_info[1] = (uint8_t) (conn->vars.vs << 1);
-    conn->frmr_info[conn->frmr_info_len - 1] = FRMR_Z;
+    frmr.vs = conn->vars.vs;
+    frmr.vr = conn->vars.vr;
+    frmr.frmr_cr = conn->peer_addr.cr;  // C/R bit of the rejected frame
+    frmr.w = w;
+    frmr.x = x;
+    frmr.y = y;
+    frmr.z = z;
+    // Store FRMR info for accurate retransmission by resend_stored_frmr()
+    uint8_t wxyz = (uint8_t) ((w ? FRMR_W : 0u) | (x ? FRMR_X : 0u) | (y ? FRMR_Y : 0u) | (z ? FRMR_Z : 0u));
+    if (conn->vars.mod == 128) {
+        conn->frmr_info_len = 5;
+        conn->frmr_info[0] = (uint8_t) (bad_ctrl & 0xFFu);
+        conn->frmr_info[1] = (uint8_t) ((bad_ctrl >> 8) & 0xFFu);
+        // byte 2: V(S) in bits 7-1, C/R in bit 0 - mirrors encode byte[3]
+        conn->frmr_info[2] = (uint8_t) (((conn->vars.vs & 0x7Fu) << 1) | (conn->peer_addr.cr ? 1u : 0u));
+        // byte 3: V(R) in bits 7-1 - mirrors encode byte[4]
+        conn->frmr_info[3] = (uint8_t) ((conn->vars.vr & 0x7Fu) << 1);
+        conn->frmr_info[4] = wxyz;
+    } else {
+        conn->frmr_info_len = 3;
+        conn->frmr_info[0] = (uint8_t) (bad_ctrl & 0xFFu);
+        // byte 1: V(R) in bits 7-5, C/R in bit 4, V(S) in bits 3-1 - mirrors encode byte[2]
+        conn->frmr_info[1] = (uint8_t) (((conn->vars.vr & 0x07u) << 5) | (conn->peer_addr.cr ? 0x10u : 0u) | ((conn->vars.vs & 0x07u) << 1));
+        conn->frmr_info[2] = wxyz;
+    }
     conn->frmr_pending = true;
     conn->frmr_retry_count = 0;
     size_t len;
@@ -631,12 +654,77 @@ static void send_frmr_z(ax25_connection_t *conn, uint8_t bad_ctrl) {
     }
     if (encoded != NULL) {
         free(encoded);
-        encoded = NULL;
     }
     conn->state = AX25_STATE_FRAME_REJECT;
+}
 
-    // DL-ERROR indication code J: invalid N(R) received
+// send_frmr_z: FRMR with Z-bit (invalid N(R) received) per §4.3.3.6
+static void send_frmr_z(ax25_connection_t *conn, uint8_t bad_ctrl) {
+    send_frmr_generic(conn, (uint16_t) bad_ctrl, false, false, false, true);
+    // DL-ERROR J: N(R) sequence error
     FIRE_DL_ERROR(conn, AX25_DL_ERROR_J);
+}
+
+// send_frmr_y: FRMR with Y-bit (I-field length exceeds N1) per §4.3.3.6
+static void send_frmr_y(ax25_connection_t *conn, uint8_t bad_ctrl) {
+    send_frmr_generic(conn, (uint16_t) bad_ctrl, false, false, true, false);
+    // DL-ERROR G: I-field exceeded maximum length N1
+    FIRE_DL_ERROR(conn, AX25_DL_ERROR_G);
+}
+
+// send_frmr_w: FRMR with W-bit (invalid/unimplemented control field) per §4.3.3.6
+// Forward declaration with unused attribute suppresses -Wunused-function warning.
+// Function is kept for AX.25 v2.2 spec completeness (W-bit FRMR per §4.3.3.6).
+static void send_frmr_w(ax25_connection_t *conn, uint8_t bad_ctrl) __attribute__((unused));
+static void send_frmr_w(ax25_connection_t *conn, uint8_t bad_ctrl) {
+    send_frmr_generic(conn, (uint16_t) bad_ctrl, true, false, false, false);
+    // DL-ERROR L: control field invalid or not implemented
+    FIRE_DL_ERROR(conn, AX25_DL_ERROR_L);
+}
+
+// resend_stored_frmr: retransmit the FRMR stored in conn->frmr_info
+// Called when peer polls (P=1) while we are in FRAME_REJECT state per §4.4.5
+// Correctly reconstructs vs, vr, frmr_cr from the stored byte layout.
+static void resend_stored_frmr(ax25_connection_t *conn) {
+    if (!conn->frmr_pending)
+        return;
+    ax25_frame_reject_frame_t frmr;
+    memset(&frmr, 0, sizeof(frmr));
+    frmr.base.base.header = conn->peer_addr;
+    frmr.base.base.type = AX25_FRAME_UNNUMBERED_FRMR;
+    frmr.base.pf = true;
+    frmr.base.modifier = 0x87u;
+    frmr.is_modulo128 = (conn->frmr_info_len == 5);
+    if (conn->frmr_info_len == 5) {
+        // mod-128 layout: [ctrl_lo][ctrl_hi][V(S)<<1|C/R][V(R)<<1][wxyz]
+        frmr.frmr_control = (uint16_t) (conn->frmr_info[0]) | ((uint16_t) (conn->frmr_info[1]) << 8);
+        frmr.vs = (conn->frmr_info[2] >> 1) & 0x7F;
+        frmr.frmr_cr = (conn->frmr_info[2] & 0x01u) != 0u;
+        frmr.vr = (conn->frmr_info[3] >> 1) & 0x7F;
+        frmr.w = (conn->frmr_info[4] & FRMR_W) != 0;
+        frmr.x = (conn->frmr_info[4] & FRMR_X) != 0;
+        frmr.y = (conn->frmr_info[4] & FRMR_Y) != 0;
+        frmr.z = (conn->frmr_info[4] & FRMR_Z) != 0;
+    } else {
+        // mod-8 layout: [ctrl][V(R)<<5|C/R<<4|V(S)<<1][wxyz]
+        frmr.frmr_control = conn->frmr_info[0];
+        frmr.vr = (conn->frmr_info[1] >> 5) & 0x07u;
+        frmr.frmr_cr = (conn->frmr_info[1] & 0x10u) != 0u;
+        frmr.vs = (conn->frmr_info[1] >> 1) & 0x07u;
+        frmr.w = (conn->frmr_info[2] & FRMR_W) != 0;
+        frmr.x = (conn->frmr_info[2] & FRMR_X) != 0;
+        frmr.y = (conn->frmr_info[2] & FRMR_Y) != 0;
+        frmr.z = (conn->frmr_info[2] & FRMR_Z) != 0;
+    }
+    size_t len;
+    uint8_t err;
+    uint8_t *encoded = ax25_frame_reject_frame_encode(&frmr, &len, &err);
+    if (encoded && conn->callbacks.transmit) {
+        conn->callbacks.transmit(conn->user_data, encoded, len);
+    }
+    if (encoded != NULL) {
+        free(encoded);
+    }
 }
 
 // validate N(R), dequeue acked frames, advance V(A)
@@ -1179,8 +1267,17 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
         return;
     }
 
-    uint8_t ns = iframe->ns;
-    uint8_t nr = iframe->nr;
+    // Check I-field length against negotiated N1 - Y-bit condition per §4.3.3.6
+    // If the received payload exceeds our N1 parameter, reject with FRMR Y=1
+    if (iframe->payload_len > (size_t) conn->timers.n1) {
+        send_frmr_y(conn, (uint8_t) iframe->base.type);
+        return;
+    }
+
+    // Extract N(R), N(S), and P/F from the decoded I-frame structure.
+    // These are set by ax25_information_frame_decode() during frame parsing.
+    uint8_t nr = (uint8_t) iframe->nr;
+    uint8_t ns = (uint8_t) iframe->ns;
     bool pf = iframe->pf;
 
     // Restart T3 using the authoritative tick supplied by the caller
@@ -1552,13 +1649,17 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
 
         case AX25_FRAME_INFORMATION_8BIT:
         case AX25_FRAME_INFORMATION_16BIT:
-            // In frame reject state, discard I frames per Section 4.4.5
-            if (conn->state != AX25_STATE_FRAME_REJECT) {
+            // In FRAME_REJECT state discard I-frames but resend FRMR if P=1
+            // per AX.25 v2.2 Section 4.4.5
+            if (conn->state == AX25_STATE_FRAME_REJECT) {
+                if (((ax25_information_frame_t*) frame)->pf) {
+                    resend_stored_frmr(conn);
+                }
+            } else {
                 // Pass authoritative tick through to ax25_process_iframe
                 ax25_process_iframe(conn, (ax25_information_frame_t*) frame, current_tick_10ms);
 
             }
-            // Note: P/F bit is still examined in frame reject state
         break;
 
         case AX25_FRAME_SUPERVISORY_RR_8BIT:
@@ -1570,38 +1671,7 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
             if (conn->state == AX25_STATE_FRAME_REJECT) {
                 // If P=1, respond with FRMR per Section 4.4.5
                 if (sframe->pf) {
-                    // Resend FRMR with same info field
-                    if (conn->frmr_pending) {
-                        ax25_frame_reject_frame_t frmr;
-                        frmr.base.base.header = conn->peer_addr;
-                        frmr.base.base.type = AX25_FRAME_UNNUMBERED_FRMR;
-                        frmr.base.pf = true;
-                        frmr.base.modifier = 0x87;
-                        frmr.is_modulo128 = (conn->frmr_info_len == 5);
-
-                        if (conn->frmr_info_len == 5) {
-                            frmr.frmr_control = conn->frmr_info[0] | (conn->frmr_info[1] << 8);
-                        } else {
-                            frmr.frmr_control = conn->frmr_info[0];
-                        }
-                        // Set other fields from stored info...
-                        frmr.w = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_W) != 0;
-                        frmr.x = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_X) != 0;
-                        frmr.y = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_Y) != 0;
-                        frmr.z = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_Z) != 0;
-
-                        size_t len;
-                        uint8_t err;
-                        uint8_t *encoded = ax25_frame_reject_frame_encode(&frmr, &len, &err);
-                        if (encoded && conn->callbacks.transmit) {
-                            conn->callbacks.transmit(conn->user_data, encoded, len);
-                        }
-
-                        if (encoded != NULL) {
-                            free(encoded);
-                            encoded = NULL;
-                        }
-                    }
+                    resend_stored_frmr(conn);
                 }
                 break;
             }
@@ -1615,35 +1685,8 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
             ax25_supervisory_frame_t *sframe = (ax25_supervisory_frame_t*) frame;
             // In frame reject state, discard but check P bit
             if (conn->state == AX25_STATE_FRAME_REJECT) {
-                if (sframe->pf && conn->frmr_pending) {
-                    // Resend FRMR
-                    ax25_frame_reject_frame_t frmr;
-                    frmr.base.base.header = conn->peer_addr;
-                    frmr.base.base.type = AX25_FRAME_UNNUMBERED_FRMR;
-                    frmr.base.pf = true;
-                    frmr.base.modifier = 0x87;
-                    frmr.is_modulo128 = (conn->frmr_info_len == 5);
-                    if (conn->frmr_info_len == 5) {
-                        frmr.frmr_control = conn->frmr_info[0] | (conn->frmr_info[1] << 8);
-                    } else {
-                        frmr.frmr_control = conn->frmr_info[0];
-                    }
-                    frmr.w = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_W) != 0;
-                    frmr.x = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_X) != 0;
-                    frmr.y = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_Y) != 0;
-                    frmr.z = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_Z) != 0;
-
-                    size_t len;
-                    uint8_t err;
-                    uint8_t *encoded = ax25_frame_reject_frame_encode(&frmr, &len, &err);
-                    if (encoded && conn->callbacks.transmit) {
-                        conn->callbacks.transmit(conn->user_data, encoded, len);
-                    }
-
-                    if (encoded != NULL) {
-                        free(encoded);
-                        encoded = NULL;
-                    }
+                if (sframe->pf) {
+                    resend_stored_frmr(conn);
                 }
                 break;
             }
@@ -1660,35 +1703,8 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
             ax25_supervisory_frame_t *sframe = (ax25_supervisory_frame_t*) frame;
             // In frame reject state, discard but check P bit
             if (conn->state == AX25_STATE_FRAME_REJECT) {
-                if (sframe->pf && conn->frmr_pending) {
-                    // Resend FRMR
-                    ax25_frame_reject_frame_t frmr;
-                    frmr.base.base.header = conn->peer_addr;
-                    frmr.base.base.type = AX25_FRAME_UNNUMBERED_FRMR;
-                    frmr.base.pf = true;
-                    frmr.base.modifier = 0x87;
-                    frmr.is_modulo128 = (conn->frmr_info_len == 5);
-                    if (conn->frmr_info_len == 5) {
-                        frmr.frmr_control = conn->frmr_info[0] | (conn->frmr_info[1] << 8);
-                    } else {
-                        frmr.frmr_control = conn->frmr_info[0];
-                    }
-                    frmr.w = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_W) != 0;
-                    frmr.x = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_X) != 0;
-                    frmr.y = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_Y) != 0;
-                    frmr.z = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_Z) != 0;
-
-                    size_t len;
-                    uint8_t err;
-                    uint8_t *encoded = ax25_frame_reject_frame_encode(&frmr, &len, &err);
-                    if (encoded && conn->callbacks.transmit) {
-                        conn->callbacks.transmit(conn->user_data, encoded, len);
-                    }
-
-                    if (encoded != NULL) {
-                        free(encoded);
-                        encoded = NULL;
-                    }
+                if (sframe->pf) {
+                    resend_stored_frmr(conn);
                 }
                 break;
             }
@@ -1713,35 +1729,8 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
             ax25_supervisory_frame_t *sframe = (ax25_supervisory_frame_t*) frame;
             // In frame reject state, discard but check P bit
             if (conn->state == AX25_STATE_FRAME_REJECT) {
-                if (sframe->pf && conn->frmr_pending) {
-                    // Resend FRMR
-                    ax25_frame_reject_frame_t frmr;
-                    frmr.base.base.header = conn->peer_addr;
-                    frmr.base.base.type = AX25_FRAME_UNNUMBERED_FRMR;
-                    frmr.base.pf = true;
-                    frmr.base.modifier = 0x87;
-                    frmr.is_modulo128 = (conn->frmr_info_len == 5);
-                    if (conn->frmr_info_len == 5) {
-                        frmr.frmr_control = conn->frmr_info[0] | (conn->frmr_info[1] << 8);
-                    } else {
-                        frmr.frmr_control = conn->frmr_info[0];
-                    }
-                    frmr.w = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_W) != 0;
-                    frmr.x = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_X) != 0;
-                    frmr.y = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_Y) != 0;
-                    frmr.z = (conn->frmr_info[conn->frmr_info_len - 1] & FRMR_Z) != 0;
-
-                    size_t len;
-                    uint8_t err;
-                    uint8_t *encoded = ax25_frame_reject_frame_encode(&frmr, &len, &err);
-                    if (encoded && conn->callbacks.transmit) {
-                        conn->callbacks.transmit(conn->user_data, encoded, len);
-                    }
-
-                    if (encoded != NULL) {
-                        free(encoded);
-                        encoded = NULL;
-                    }
+                if (sframe->pf) {
+                    resend_stored_frmr(conn);
                 }
                 break;
             }
