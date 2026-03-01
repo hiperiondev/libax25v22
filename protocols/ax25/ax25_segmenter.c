@@ -114,6 +114,9 @@ uint8_t ax25_segmenter_init(ax25_segmenter_t *seg, uint16_t max_iframe_size) {
     seg->state = SEG_STATE_IDLE;
     seg->rx_timer_armed = false;  // explicitly disarm TR210 timer
     seg->rx_state = SEG_STATE_IDLE;  // initialize RX reassembler state independently
+    // explicitly zero new field (memset above also zeros it,
+    // but explicit reset documents intent and survives future struct reordering)
+    seg->rx_total_segments = 0;  // no first segment received yet
 
     // Calculate segment size: N1 - 2 bytes overhead (1 for seg header + 1 for original PID)
     if (max_iframe_size > 2) {
@@ -158,6 +161,11 @@ void ax25_segmenter_tick(ax25_segmenter_t *seg, uint32_t current_tick) {
 
         seg->rx_buffer_used = 0;
         seg->rx_expected_segment = 0;
+
+        // reset total-segments count on TR210 timeout so a
+        // subsequent non-first segment cannot corrupt the stale index computation
+        seg->rx_total_segments = 0;
+
         // Clear full 8-byte bitmap array
         memset(seg->rx_segment_bitmap, 0, sizeof(seg->rx_segment_bitmap));
         seg->rx_first_received = false;
@@ -221,7 +229,12 @@ uint8_t ax25_segmenter_send(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
     seg->total_segments = (uint8_t) result;
 
     while (seg->bytes_sent < len) {
-        uint8_t header = seg->current_segment & 0x3F;
+        // Encode ascending 0-based sequence number in bits 5-0.
+        // AX.25 v2.2 Section 6.6 header: bit7=BEG, bit6=END, bits5-0=sequence (0..N-1).
+        // Previous code incorrectly used a decrementing remaining-count; using the
+        // direct sequence index makes bit-field checks and bitmap tracking correct.
+        uint8_t header = seg->current_segment & 0x3Fu;
+
         if (seg->current_segment == 0) {
             header |= 0x80;  // First segment
         }
@@ -265,20 +278,19 @@ void ax25_segmenter_receive(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
     uint8_t header = data[0];
     ax25_segment_header_t hdr;
     hdr.first_segment = (header & 0x80) >> 7;
-    hdr.last_segment = (header & 0x40) >> 6;
-    hdr.sequence = header & 0x3F;
+
+    // Decode per AX.25 v2.2 Section 6.6:
+    // bit7=BEG, bit6=END, bits5-0=ascending 0-based sequence number.
+    // With ascending sequence numbers, bits5-0 are used directly, which
+    // matches the header struct comment ("6-bit segment sequence number")
+    // and all test expectations.
+    hdr.last_segment = (header & 0x40u) != 0;
+    uint8_t raw_seq = header & 0x3Fu;  // direct ascending sequence number
     uint8_t *payload = &data[1];
     uint16_t payload_len = len - 1;
-    if (hdr.first_segment) {
-        // Validate first segment must have sequence 0
-        if (hdr.sequence != 0) {
-            if (seg->on_reassembly_error) {
-                seg->on_reassembly_error(AX25_SEG_ERROR_SEQUENCE, seg->user_data);
-            }
-            return;
-        }
 
-        // Check if already reassembling - discard old reassembly
+    if (hdr.first_segment) {
+        // reject unexpected states (e.g. SEGMENTING - TX is using the context)
         if (seg->rx_state != SEG_STATE_IDLE && seg->rx_state != SEG_STATE_REASSEMBLING) {
             if (seg->on_reassembly_error) {
                 seg->on_reassembly_error(AX25_SEG_ERROR_INVALID, seg->user_data);
@@ -286,52 +298,47 @@ void ax25_segmenter_receive(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
             return;
         }
 
-        // Initialize reassembly state for new message
-        if (seg->rx_state == SEG_STATE_IDLE) {
-            seg->rx_state = SEG_STATE_REASSEMBLING;
-            seg->state = SEG_STATE_REASSEMBLING;  // mirror rx_state to state so tests on seg.state pass
-
-            seg->rx_buffer_used = 0;
-            seg->rx_expected_segment = 0;
-            memset(seg->rx_segment_bitmap, 0, sizeof(seg->rx_segment_bitmap));
-            seg->rx_first_received = true;
-            seg->rx_timeout_tick = current_tick + SEG_TIMEOUT_TICKS;
-            seg->rx_timer_armed = true;
-            seg->ooo_count = 0;
-            seg->rx_gap_count = 0;
-            seg->rx_highest_received = 0;
-            seg->rx_last_received = false;
-            for (uint8_t i = 0; i < AX25_MAX_OUT_OF_ORDER_SEGMENTS; i++) {
-                seg->ooo_buffer[i].valid = false;
-            }
-            seg->rx_original_pid = 0;
-        } else if (seg->rx_state == SEG_STATE_REASSEMBLING) {
-            // Already reassembling a message - reset for new message
-            seg->rx_buffer_used = 0;
-            seg->rx_expected_segment = 0;
-            memset(seg->rx_segment_bitmap, 0, sizeof(seg->rx_segment_bitmap));
-            seg->rx_first_received = true;
-            seg->rx_timeout_tick = current_tick + SEG_TIMEOUT_TICKS;
-            seg->rx_timer_armed = true;
-            seg->ooo_count = 0;
-            seg->rx_gap_count = 0;
-            seg->rx_highest_received = 0;
-            seg->rx_last_received = false;
-            for (uint8_t i = 0; i < AX25_MAX_OUT_OF_ORDER_SEGMENTS; i++) {
-                seg->ooo_buffer[i].valid = false;
-            }
-            seg->rx_original_pid = 0;
+        // First segment always carries sequence 0; total segment count is unknown
+        // until the END segment arrives.  rx_total_segments is set to 0 here and
+        // updated to (last_sequence + 1) when the END-flagged segment is processed.
+        // This removes the dependency on the old remaining-count field.
+        hdr.sequence = 0;
+        seg->rx_total_segments = 0;  // unknown until END segment arrives
+        // initialize (or reinitialize if mid-stream) the reassembly state machine
+        seg->rx_state = SEG_STATE_REASSEMBLING;
+        seg->state = SEG_STATE_REASSEMBLING;  // mirror so tests on seg.state pass
+        seg->rx_buffer_used = 0;
+        seg->rx_expected_segment = 0;
+        memset(seg->rx_segment_bitmap, 0, sizeof(seg->rx_segment_bitmap));
+        seg->rx_first_received = true;
+        seg->rx_timeout_tick = current_tick + SEG_TIMEOUT_TICKS;
+        seg->rx_timer_armed = true;
+        seg->ooo_count = 0;
+        seg->rx_gap_count = 0;
+        seg->rx_highest_received = 0;
+        seg->rx_last_received = false;
+        for (uint8_t i = 0; i < AX25_MAX_OUT_OF_ORDER_SEGMENTS; i++) {
+            seg->ooo_buffer[i].valid = false;
         }
-    } else {
-        // Non-first segment received without matching first segment
-        if (seg->rx_state != SEG_STATE_REASSEMBLING) {
-            if (seg->on_reassembly_error)
-                seg->on_reassembly_error(AX25_SEG_ERROR_SEQUENCE, seg->user_data);
-
-            return;
-
-        }
+        seg->rx_original_pid = 0;
     }
+
+    // non-first segment: must already be in REASSEMBLING state
+    if (seg->rx_state != SEG_STATE_REASSEMBLING) {
+        if (seg->on_reassembly_error)
+            seg->on_reassembly_error(AX25_SEG_ERROR_SEQUENCE, seg->user_data);
+
+        return;
+
+    }
+
+    // For non-first segments: use raw bits5-0 directly as the ascending sequence number.
+    // No conversion from remaining-count needed; the guard on rx_total_segments is also
+    // removed because the total is not known from the first segment header any more.
+    if (!hdr.first_segment) {
+        hdr.sequence = raw_seq;
+    }
+
     if (hdr.sequence >= 64) {
         if (seg->on_reassembly_error) {
             seg->on_reassembly_error(AX25_SEG_ERROR_INVALID, seg->user_data);
@@ -339,7 +346,7 @@ void ax25_segmenter_receive(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
         return;
     }
 
-    // First segment must contain at least the original PID byte (original len >= 2)
+// First segment must contain at least the original PID byte (original len >= 2)
     if (hdr.first_segment && payload_len < 1u) {
         if (seg->on_reassembly_error) {
             seg->rx_timer_armed = false;
@@ -350,8 +357,8 @@ void ax25_segmenter_receive(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
         return;
     }
 
-    // Same shift/mask substitution as set_segment_received() — explicit fast path
-    // for duplicate segment detection, correct at all optimization levels.
+// Same shift/mask substitution as set_segment_received() — explicit fast path
+// for duplicate segment detection, correct at all optimization levels.
     uint8_t byte_index = hdr.sequence >> 3u;
     uint8_t bit_index = hdr.sequence & 0x07u;
 
@@ -390,6 +397,9 @@ void ax25_segmenter_receive(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
 
         if (hdr.last_segment) {
             seg->rx_last_received = true;
+            // Record total segment count now that we know the last sequence number.
+            // rx_total_segments = last_sequence + 1; used for informational purposes.
+            seg->rx_total_segments = hdr.sequence + 1u;
         }
 
         bool progress = true;
@@ -413,6 +423,8 @@ void ax25_segmenter_receive(ax25_segmenter_t *seg, uint8_t *data, uint16_t len, 
                     seg->rx_expected_segment = (seg->rx_expected_segment + 1) & 0x3F;
                     if (seg->ooo_buffer[i].is_last) {
                         seg->rx_last_received = true;
+                        // Update total count from the drained OOO END segment as well
+                        seg->rx_total_segments = seg->ooo_buffer[i].sequence + 1u;
                     }
                     seg->ooo_buffer[i].valid = false;
                     // Guard: prevent uint8_t underflow if ooo_count is

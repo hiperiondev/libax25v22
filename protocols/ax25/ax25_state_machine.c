@@ -29,6 +29,284 @@
             (conn)->callbacks.on_dl_error((conn)->user_data, (code)); \
     } while (0)
 
+// ============================================================================
+// Event-Driven FSM - AX.25 v2.2 Appendix C4 SDL
+// ============================================================================
+
+// start modified part: event-driven FSM action functions and dispatch table.
+// Each action_* function implements one cell of the (state, event) FSM table.
+// NULL entries in the table mean "ignore this event in this state" per SDL.
+
+// action_dl_connect: DL-CONNECT request in DISCONNECTED state - send SABM/SABME
+static void action_dl_connect(ax25_connection_t *conn, const ax25_event_data_t *ev_data) {
+    if (!ev_data)
+        return;
+    ax25_connect(conn, ev_data->connect.dest, ev_data->connect.src);
+}
+
+// action_dl_disconnect: DL-DISCONNECT request in CONNECTED or TIMER_RECOVERY state
+static void action_dl_disconnect(ax25_connection_t *conn, const ax25_event_data_t *ev_data) {
+    (void) ev_data;
+    ax25_disconnect(conn);
+}
+
+// action_dl_data: DL-DATA request - send I-frame
+static void action_dl_data(ax25_connection_t *conn, const ax25_event_data_t *ev_data) {
+    if (!ev_data)
+        return;
+    ax25_send_data(conn, ev_data->data.data, ev_data->data.len, ev_data->data.pid);
+}
+
+// action_dl_flow_off: DL-FLOW-OFF - set local busy, send RNR
+static void action_dl_flow_off(ax25_connection_t *conn, const ax25_event_data_t *ev_data) {
+    (void) ev_data;
+    ax25_send_rnr(conn);
+}
+
+// action_dl_flow_on: DL-FLOW-ON - clear local busy, send RR
+static void action_dl_flow_on(ax25_connection_t *conn, const ax25_event_data_t *ev_data) {
+    (void) ev_data;
+    ax25_clear_local_busy(conn);
+}
+
+// action_rx_frame: dispatch a received frame through ax25_process_frame
+static void action_rx_frame(ax25_connection_t *conn, const ax25_event_data_t *ev_data) {
+    if (!ev_data || !ev_data->frame)
+        return;
+    ax25_process_frame(conn, ev_data->frame, ev_data->tick);
+}
+
+// action_t1_expired: T1 timer expired - drive ax25_tick
+static void action_t1_expired(ax25_connection_t *conn, const ax25_event_data_t *ev_data) {
+    if (!ev_data)
+        return;
+    ax25_tick(conn, ev_data->tick);
+}
+
+// action_t2_expired: T2 timer expired - drive ax25_tick
+static void action_t2_expired(ax25_connection_t *conn, const ax25_event_data_t *ev_data) {
+    if (!ev_data)
+        return;
+    ax25_tick(conn, ev_data->tick);
+}
+
+// action_t3_expired: T3 timer expired - drive ax25_tick
+static void action_t3_expired(ax25_connection_t *conn, const ax25_event_data_t *ev_data) {
+    if (!ev_data)
+        return;
+    ax25_tick(conn, ev_data->tick);
+}
+
+// FSM sparse action table: indexed by [ax25_link_state_t][ax25_event_t].
+// NULL = ignore this event in this state (per SDL "else" transition).
+// The table maps every significant (state, event) pair to an action function.
+// States: DISCONNECTED(0) AWAITING_CONNECTION(1) AWAITING_RELEASE(2)
+//         CONNECTED(3) TIMER_RECOVERY(4) AWAITING_CONN_2_2(5)
+//         AWAITING_SABM(6) AWAITING_DISC(7) FRAME_REJECT(8)
+static const ax25_action_fn ax25_fsm[AX25_STATE_COUNT][AX25_EV_COUNT] = {
+// AX25_STATE_DISCONNECTED (state 0 / D0 in SDL)
+        [AX25_STATE_DISCONNECTED] = {  //
+                [AX25_EV_DL_CONNECT] = action_dl_connect,   // initiate connection -> send SABM, state 1
+                        [AX25_EV_DL_DATA] = NULL,                // no connection: ignore data
+                        [AX25_EV_DL_DISCONNECT] = NULL,                // already disconnected: ignore
+                        [AX25_EV_DL_FLOW_ON] = NULL,  //
+                        [AX25_EV_DL_FLOW_OFF] = NULL,  //
+                        [AX25_EV_RX_SABM] = action_rx_frame,    // peer connects -> send UA, state 3
+                        [AX25_EV_RX_SABME] = action_rx_frame,    // peer connects mod-128 -> send UA, state 3
+                        [AX25_EV_RX_DISC] = action_rx_frame,    // send DM (not connected)
+                        [AX25_EV_RX_UA] = NULL,                // unexpected UA: ignore per SDL
+                        [AX25_EV_RX_UA_F1] = NULL,  //
+                        [AX25_EV_RX_DM] = NULL,                // already disconnected: ignore
+                        [AX25_EV_RX_I] = action_rx_frame,    // DL-ERROR M (I frame while not connected)
+                        [AX25_EV_RX_RR] = NULL,   //
+                        [AX25_EV_RX_RNR] = NULL,  //
+                        [AX25_EV_RX_REJ] = NULL,   //
+                        [AX25_EV_RX_SREJ] = NULL,  //
+                        [AX25_EV_RX_FRMR] = NULL,  //
+                        [AX25_EV_RX_UI ] = action_rx_frame,    // UI accepted in any state
+                        [AX25_EV_RX_TEST] = action_rx_frame,    // TEST accepted in any state
+                        [AX25_EV_T1_EXPIRED] = NULL,  //
+                        [AX25_EV_T2_EXPIRED] = NULL,  //
+                        [AX25_EV_T3_EXPIRED] = NULL,  //
+                },
+        // AX25_STATE_AWAITING_CONNECTION (state 1 / D1 in SDL, SABM sent mod-8)
+        [AX25_STATE_AWAITING_CONNECTION] = {  //
+                [AX25_EV_DL_CONNECT] = NULL,                // already connecting: ignore
+                        [AX25_EV_DL_DATA] = NULL,                // not connected yet: ignore
+                        [AX25_EV_DL_DISCONNECT] = action_dl_disconnect,  // cancel connection attempt
+                        [AX25_EV_DL_FLOW_ON] = NULL,  //
+                        [AX25_EV_DL_FLOW_OFF] = NULL,   //
+                        [AX25_EV_RX_SABM] = action_rx_frame,    // collision: send UA, connected
+                        [AX25_EV_RX_SABME] = action_rx_frame,    // collision: send UA, connected
+                        [AX25_EV_RX_DISC] = action_rx_frame,    // peer refused: send DM, disconnect
+                        [AX25_EV_RX_UA] = action_rx_frame,    // UA F=0: DL-ERROR C (discard)
+                        [AX25_EV_RX_UA_F1] = action_rx_frame,    // UA F=1: connection established -> state 3
+                        [AX25_EV_RX_DM] = action_rx_frame,    // peer refused: disconnect
+                        [AX25_EV_RX_I] = NULL,                // unexpected: ignore
+                        [AX25_EV_RX_RR] = NULL,  //
+                        [AX25_EV_RX_RNR] = NULL,  //
+                        [AX25_EV_RX_REJ] = NULL,   //
+                        [AX25_EV_RX_SREJ] = NULL,  //
+                        [AX25_EV_RX_FRMR] = action_rx_frame,  // SABME fallback or link error
+                        [AX25_EV_RX_UI] = action_rx_frame,    // UI accepted in any state
+                        [AX25_EV_RX_TEST] = action_rx_frame,    // TEST accepted in any state
+                        [AX25_EV_T1_EXPIRED] = action_t1_expired,  // retry SABM or N2 exceeded
+                        [AX25_EV_T2_EXPIRED] = NULL,  //
+                        [AX25_EV_T3_EXPIRED] = NULL,  //
+                },
+        // AX25_STATE_AWAITING_RELEASE (state 2 / D2 in SDL, DISC sent)
+        [AX25_STATE_AWAITING_RELEASE] = {  //
+                [AX25_EV_DL_CONNECT] = NULL,                // in release: ignore
+                        [AX25_EV_DL_DATA] = NULL,                // releasing: ignore
+                        [AX25_EV_DL_DISCONNECT] = NULL,                // already releasing: ignore
+                        [AX25_EV_DL_FLOW_ON] = NULL,   //
+                        [AX25_EV_DL_FLOW_OFF] = NULL,   //
+                        [AX25_EV_RX_SABM] = action_rx_frame,  // peer reconnects while releasing: respond UA
+                        [AX25_EV_RX_SABME] = action_rx_frame,   //
+                        [AX25_EV_RX_DISC] = action_rx_frame,    // peer confirms disconnect: send UA
+                        [AX25_EV_RX_UA] = action_rx_frame,    // release confirmed -> state 0
+                        [AX25_EV_RX_UA_F1] = action_rx_frame,   //
+                        [AX25_EV_RX_DM] = action_rx_frame,    // DM confirms disconnect -> state 0
+                        [AX25_EV_RX_I] = NULL,                // ignore while releasing
+                        [AX25_EV_RX_RR] = NULL,  //
+                        [AX25_EV_RX_RNR] = NULL,  //
+                        [AX25_EV_RX_REJ] = NULL,  //
+                        [AX25_EV_RX_SREJ] = NULL,  //
+                        [AX25_EV_RX_FRMR] = NULL,  //
+                        [AX25_EV_RX_UI ] = action_rx_frame,  //
+                        [AX25_EV_RX_TEST] = action_rx_frame,  //
+                        [AX25_EV_T1_EXPIRED] = action_t1_expired,  // retry DISC or N2 exceeded
+                        [AX25_EV_T2_EXPIRED] = NULL,  //
+                        [AX25_EV_T3_EXPIRED] = NULL,  //
+                },
+        // AX25_STATE_CONNECTED (state 3 / D3 in SDL)
+        [AX25_STATE_CONNECTED] = {  //
+                [AX25_EV_DL_CONNECT] = NULL,                // already connected: ignore
+                        [AX25_EV_DL_DATA] = action_dl_data,     // send I-frame
+                        [AX25_EV_DL_DISCONNECT] = action_dl_disconnect,  // send DISC -> state 2
+                        [AX25_EV_DL_FLOW_ON] = action_dl_flow_on,  // clear local busy, send RR
+                        [AX25_EV_DL_FLOW_OFF] = action_dl_flow_off,  // set local busy, send RNR
+                        [AX25_EV_RX_SABM] = action_rx_frame,    // re-connect: reset, send UA -> state 3
+                        [AX25_EV_RX_SABME] = action_rx_frame,   //
+                        [AX25_EV_RX_DISC] = action_rx_frame,    // peer disconnects: send UA -> state 0
+                        [AX25_EV_RX_UA] = NULL,                // unexpected UA in connected state: ignore
+                        [AX25_EV_RX_UA_F1] = NULL,   //
+                        [AX25_EV_RX_DM] = action_rx_frame,    // DL-ERROR D: forced disconnect
+                        [AX25_EV_RX_I] = action_rx_frame,    // receive I-frame, ack
+                        [AX25_EV_RX_RR] = action_rx_frame,    // receive ACK, clear busy
+                        [AX25_EV_RX_RNR] = action_rx_frame,    // peer busy
+                        [AX25_EV_RX_REJ] = action_rx_frame,    // go-back-N retransmit
+                        [AX25_EV_RX_SREJ] = action_rx_frame,    // selective retransmit
+                        [AX25_EV_RX_FRMR] = action_rx_frame,    // protocol error -> state 0
+                        [AX25_EV_RX_UI] = action_rx_frame,  //
+                        [AX25_EV_RX_TEST] = action_rx_frame,  //
+                        [AX25_EV_T1_EXPIRED] = action_t1_expired,  // poll or retransmit -> state 4
+                        [AX25_EV_T2_EXPIRED] = action_t2_expired,  // send delayed RR
+                        [AX25_EV_T3_EXPIRED] = action_t3_expired,  // idle poll
+                },
+        // AX25_STATE_TIMER_RECOVERY (state 4 / D4 in SDL)
+        [AX25_STATE_TIMER_RECOVERY] = {  //
+                [AX25_EV_DL_CONNECT] = NULL,   //
+                        [AX25_EV_DL_DATA] = NULL,                // no new data during recovery per SDL
+                        [AX25_EV_DL_DISCONNECT] = action_dl_disconnect,  // send DISC -> state 2
+                        [AX25_EV_DL_FLOW_ON] = action_dl_flow_on,   //
+                        [AX25_EV_DL_FLOW_OFF] = action_dl_flow_off,   //
+                        [AX25_EV_RX_SABM] = action_rx_frame,  // reset: send UA -> state 3
+                        [AX25_EV_RX_SABME] = action_rx_frame,   //
+                        [AX25_EV_RX_DISC] = action_rx_frame,    // peer disconnects: send UA -> state 0
+                        [AX25_EV_RX_UA] = NULL,   //
+                        [AX25_EV_RX_UA_F1] = NULL,   //
+                        [AX25_EV_RX_DM] = action_rx_frame,    // DL-ERROR D
+                        [AX25_EV_RX_I] = action_rx_frame,    // accept I-frames during recovery
+                        [AX25_EV_RX_RR] = action_rx_frame,    // RR F=1 with VA==VS -> state 3
+                        [AX25_EV_RX_RNR] = action_rx_frame,   //
+                        [AX25_EV_RX_REJ] = action_rx_frame,    // retransmit from N(R)
+                        [AX25_EV_RX_SREJ] = action_rx_frame,  //
+                        [AX25_EV_RX_FRMR] = action_rx_frame,  //
+                        [AX25_EV_RX_UI] = action_rx_frame,  //
+                        [AX25_EV_RX_TEST] = action_rx_frame,  //
+                        [AX25_EV_T1_EXPIRED] = action_t1_expired,  // retry poll or N2 exceeded
+                        [AX25_EV_T2_EXPIRED] = action_t2_expired,  //
+                        [AX25_EV_T3_EXPIRED] = action_t3_expired, },
+        // AX25_STATE_AWAITING_CONN_2_2 (state 5 / D5 in SDL, SABME sent mod-128)
+        [AX25_STATE_AWAITING_CONN_2_2] = {  //
+                [AX25_EV_DL_CONNECT] = NULL,                // already connecting: ignore
+                        [AX25_EV_DL_DATA] = NULL,   //
+                        [AX25_EV_DL_DISCONNECT] = action_dl_disconnect,  // cancel connection attempt
+                        [AX25_EV_DL_FLOW_ON] = NULL,   //
+                        [AX25_EV_DL_FLOW_OFF] = NULL,   //
+                        [AX25_EV_RX_SABM] = action_rx_frame,    // collision
+                        [AX25_EV_RX_SABME] = action_rx_frame,    // collision
+                        [AX25_EV_RX_DISC] = action_rx_frame,    // peer refused
+                        [AX25_EV_RX_UA] = action_rx_frame,    // UA F=0: DL-ERROR C
+                        [AX25_EV_RX_UA_F1] = action_rx_frame,    // connection established -> state 3
+                        [AX25_EV_RX_DM] = action_rx_frame,    // peer refused SABME, fall back to mod-8
+                        [AX25_EV_RX_I] = NULL,  //
+                        [AX25_EV_RX_RR] = NULL,  //
+                        [AX25_EV_RX_RNR] = NULL,  //
+                        [AX25_EV_RX_REJ] = NULL,  //
+                        [AX25_EV_RX_SREJ] = NULL,  //
+                        [AX25_EV_RX_FRMR ] = action_rx_frame,    // fall back to mod-8 SABM
+                        [AX25_EV_RX_UI] = action_rx_frame,  //
+                        [AX25_EV_RX_TEST] = action_rx_frame,  //
+                        [AX25_EV_T1_EXPIRED] = action_t1_expired,  // retry SABME or N2 exceeded
+                        [AX25_EV_T2_EXPIRED] = NULL,  //
+                        [AX25_EV_T3_EXPIRED] = NULL,  //
+                },
+        // AX25_STATE_AWAITING_SABM (state 6) - internal transitional state
+        [AX25_STATE_AWAITING_SABM] = {  //
+                [AX25_EV_RX_UI] = action_rx_frame,   //
+                        [AX25_EV_RX_TEST] = action_rx_frame,  //
+                },
+        // AX25_STATE_AWAITING_DISC (state 7) - internal transitional state
+        [AX25_STATE_AWAITING_DISC] = {  //
+                [AX25_EV_RX_UI] = action_rx_frame,  //
+                        [AX25_EV_RX_TEST] = action_rx_frame,  //
+                },
+        // AX25_STATE_FRAME_REJECT (state 8 / D6 in SDL, FRMR sent)
+        [AX25_STATE_FRAME_REJECT] = {  //
+                [AX25_EV_DL_CONNECT] = NULL,  //
+                        [AX25_EV_DL_DATA] = NULL,  //
+                        [AX25_EV_DL_DISCONNECT] = action_dl_disconnect,  //
+                        [AX25_EV_DL_FLOW_ON ] = NULL,  //
+                        [AX25_EV_DL_FLOW_OFF] = NULL,  //
+                        [AX25_EV_RX_SABM] = action_rx_frame,    // reset after FRMR: send UA -> state 3
+                        [AX25_EV_RX_SABME] = action_rx_frame,  //
+                        [AX25_EV_RX_DISC] = action_rx_frame,    // disconnect: send UA -> state 0
+                        [AX25_EV_RX_UA] = action_rx_frame,    // UA in FRMR state -> state 0
+                        [AX25_EV_RX_UA_F1] = action_rx_frame,  //
+                        [AX25_EV_RX_DM] = action_rx_frame,  //
+                        [AX25_EV_RX_I] = action_rx_frame,    // resend FRMR if P=1
+                        [AX25_EV_RX_RR] = action_rx_frame,    // resend FRMR if P=1
+                        [AX25_EV_RX_RNR] = action_rx_frame,  //
+                        [AX25_EV_RX_REJ] = action_rx_frame,  //
+                        [AX25_EV_RX_SREJ] = action_rx_frame,  //
+                        [AX25_EV_RX_FRMR] = action_rx_frame,    // DL-ERROR H
+                        [AX25_EV_RX_UI] = action_rx_frame,  //
+                        [AX25_EV_RX_TEST] = action_rx_frame,  //
+                        [AX25_EV_T1_EXPIRED] = action_t1_expired,  // N2 exceeded -> state 0
+                        [AX25_EV_T2_EXPIRED] = NULL,  //
+                        [AX25_EV_T3_EXPIRED] = NULL,  //
+                },  //
+        };
+
+// ax25_process_event: dispatch ev through the FSM sparse action table.
+// This is the canonical event entry point per AX.25 v2.2 Appendix C4 SDL.
+// If ax25_fsm[conn->state][ev] is non-NULL the action is called; otherwise
+// the event is silently ignored (SDL "else" / no-transition behaviour).
+void ax25_process_event(ax25_connection_t *conn, ax25_event_t ev, const ax25_event_data_t *ev_data) {
+    if (!conn)
+        return;
+    if ((unsigned) ev >= (unsigned) AX25_EV_COUNT)
+        return;
+    if ((unsigned) conn->state >= (unsigned) AX25_STATE_COUNT)
+        return;
+    ax25_action_fn fn = ax25_fsm[conn->state][ev];
+    if (fn)
+        fn(conn, ev_data);
+    // NULL entry: event ignored in this state per SDL "else" transitions
+}
+
 static inline bool ax25_in_window(uint8_t ns, uint8_t vr, uint8_t k, uint8_t mod) {
     uint8_t diff = (uint8_t) (((uint8_t) ns - (uint8_t) vr) & AX25_MASK(mod));
     return (diff > 0u) && (diff <= k);
@@ -74,14 +352,49 @@ static void send_rr(ax25_connection_t *conn, bool pf) {
     }
 }
 
+// Internal: Send RNR supervisory frame
+static void send_rnr(ax25_connection_t *conn, bool pf) {
+    ax25_supervisory_frame_t rnr;
+    rnr.base.header = conn->peer_addr;
+    rnr.base.type = (conn->vars.mod == 128) ? AX25_FRAME_SUPERVISORY_RNR_16BIT : AX25_FRAME_SUPERVISORY_RNR_8BIT;
+    rnr.nr = conn->vars.vr;
+    rnr.pf = pf;
+    rnr.code = 1;  // RNR code is 01 in bits 2-3
+
+    size_t len;
+    uint8_t err;
+// use ax25_frame_encode to include address header in transmitted frame
+    uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &rnr, &len, &err);
+    if (encoded && conn->callbacks.transmit) {
+        conn->callbacks.transmit(conn->user_data, encoded, len);
+
+        // Update statistics - S-frame sent
+        conn->stats.sframe_sent++;
+        if (conn->stats.sframe_sent == 0) {
+            conn->stats.sframe_sent = 1;  // Prevent overflow
+        }
+    }
+
+    if (encoded != NULL) {
+        free(encoded);
+        encoded = NULL;
+    }
+}
+
 // Start T2 timer instead of sending immediate RR response - AX.25 v2.2 Section 6.7.1.2
 // This allows piggybacking acknowledgments on outgoing I-frames
 static void start_t2_response(ax25_connection_t *conn, uint32_t current_tick) {
     // In full-duplex mode both stations can transmit simultaneously so there is no
     // benefit in delaying the acknowledgment to piggyback it on an outgoing I-frame.
-    // Send RR immediately and return without starting the T2 timer.
+    // Send RR (or RNR if locally busy) immediately and return without starting T2.
     if (conn->full_duplex) {
-        send_rr(conn, false);
+        // honour local_busy in full-duplex ACK path
+        // per §6.4.9.  Sending RR while locally busy incorrectly signals readiness.
+        if (conn->local_busy) {
+            send_rnr(conn, false);
+        } else {
+            send_rr(conn, false);
+        }
         return;
     }
 
@@ -105,7 +418,7 @@ static void dispatch_to_protocol(ax25_connection_t *conn, uint8_t *data, size_t 
         return;
     }
 
-    // Search for registered handler for this PID
+// Search for registered handler for this PID
     for (uint8_t i = 0; i < AX25_MAX_PROTOCOL_HANDLERS; i++) {
         if (conn->protocols[i].active && conn->protocols[i].pid == pid) {
             // Found specific handler - dispatch to it
@@ -114,13 +427,13 @@ static void dispatch_to_protocol(ax25_connection_t *conn, uint8_t *data, size_t 
         }
     }
 
-    // No specific handler found - try default handler
+// No specific handler found - try default handler
     if (conn->default_handler) {
         conn->default_handler(conn->default_user_data, data, len, pid);
         return;
     }
 
-    // Fall back to legacy on_data callback for backward compatibility
+// Fall back to legacy on_data callback for backward compatibility
     if (conn->callbacks.on_data) {
         // pid forwarded per AX.25 v2.2 Appendix D.4 DL-DATA indication.
         // Layer 3 needs PID to demultiplex protocols (IP=0xCC, NET/ROM=0xCF, etc.).
@@ -197,7 +510,7 @@ static void deliver_buffered_srej_frames(ax25_connection_t *conn, uint32_t curre
         }
     }
 
-    // If all buffered frames delivered, clear SREJ exception
+// If all buffered frames delivered, clear SREJ exception
     if (conn->srej_buffer_count == 0) {
         conn->srej_exception = false;
         conn->srej_count = 0;
@@ -207,25 +520,25 @@ static void deliver_buffered_srej_frames(ax25_connection_t *conn, uint32_t curre
 
 // Handle UI frame - AX.25 v2.2 Section 6.4.12: UI frames accepted in any state
 static void handle_ui_frame(ax25_connection_t *conn, ax25_unnumbered_information_frame_t *ui) {
-    // AX.25 v2.2 Section 6.4.12: UI frames can be received in any state
-    // No acknowledgment required, no connection needed
-    // Count UI frames received per connection statistics, even in DISCONNECTED
-    // state, since UI is valid in all states per AX.25 v2.2 Section 6.3.7
+// AX.25 v2.2 Section 6.4.12: UI frames can be received in any state
+// No acknowledgment required, no connection needed
+// Count UI frames received per connection statistics, even in DISCONNECTED
+// state, since UI is valid in all states per AX.25 v2.2 Section 6.3.7
     conn->stats.uframe_received++;
     if (conn->stats.uframe_received == 0) {
         conn->stats.uframe_received = 1;
     }
 
-    // UI frames can also update peer address if not connected
-    // This allows connectionless communication
+// UI frames can also update peer address if not connected
+// This allows connectionless communication
     if (conn->state == AX25_STATE_DISCONNECTED) {
         conn->peer_addr = ui->base.base.header;
     }
 
-    // DL-UNIT-DATA indication: per AX.25 v2.2 Appendix D.4 and Section 6.5,
-    // UI frames must be dispatched through the PID-based protocol multiplexer
-    // so registered handlers receive them. Falling back to on_data only when
-    // no registered handler exists maintains backward compatibility.
+// DL-UNIT-DATA indication: per AX.25 v2.2 Appendix D.4 and Section 6.5,
+// UI frames must be dispatched through the PID-based protocol multiplexer
+// so registered handlers receive them. Falling back to on_data only when
+// no registered handler exists maintains backward compatibility.
     if (ui->payload_len > 0 && ui->payload) {
         dispatch_to_protocol(conn, ui->payload, ui->payload_len, ui->pid);
 
@@ -233,8 +546,8 @@ static void handle_ui_frame(ax25_connection_t *conn, ax25_unnumbered_information
 }
 
 static void handle_test_frame(ax25_connection_t *conn, ax25_test_frame_t *test, uint32_t current_tick) {
-    // AX.25 v2.2 Section 6.4.13: Handle TEST command or response
-    // TEST frames work in any state - no connection required
+// AX.25 v2.2 Section 6.4.13: Handle TEST command or response
+// TEST frames work in any state - no connection required
     if (test->base.base.header.cr) {
         // Received TEST command - send TEST response
         static uint8_t test_response_buffer[TEST_FRAME_MAX_PAYLOAD];
@@ -288,7 +601,7 @@ static void handle_test_frame(ax25_connection_t *conn, ax25_test_frame_t *test, 
 static void send_sabm(ax25_connection_t *conn, bool extended) {
     ax25_unnumbered_frame_t sabm;
     sabm.base.header = conn->peer_addr;
-    // Only set the frame-level CR bit, let header encoder handle ch bits
+// Only set the frame-level CR bit, let header encoder handle ch bits
     sabm.base.header.cr = true;  // This is a command frame
     sabm.base.type = extended ? AX25_FRAME_UNNUMBERED_SABME : AX25_FRAME_UNNUMBERED_SABM;
     sabm.pf = true;
@@ -349,7 +662,7 @@ static void send_rej(ax25_connection_t *conn, bool pf) {
 
     size_t len;
     uint8_t err;
-    // use ax25_frame_encode to include address header in transmitted frame
+// use ax25_frame_encode to include address header in transmitted frame
     uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &rej, &len, &err);
     if (encoded && conn->callbacks.transmit) {
         conn->callbacks.transmit(conn->user_data, encoded, len);
@@ -378,7 +691,7 @@ static void send_srej(ax25_connection_t *conn, uint8_t missing_ns, bool pf) {
 
     size_t len;
     uint8_t err;
-    // use ax25_frame_encode to include address header in transmitted frame
+// use ax25_frame_encode to include address header in transmitted frame
     uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &srej, &len, &err);
     if (encoded && conn->callbacks.transmit) {
         conn->callbacks.transmit(conn->user_data, encoded, len);
@@ -395,7 +708,7 @@ static void send_srej(ax25_connection_t *conn, uint8_t missing_ns, bool pf) {
         encoded = NULL;
     }
 
-    // Mark this N(S) in bitmap - calculate byte and bit position
+// Mark this N(S) in bitmap - calculate byte and bit position
     uint8_t byte_idx = missing_ns >> 3;  // Divide by 8
     uint8_t bit_idx = missing_ns & 0x07;  // Modulo 8
     if (byte_idx < 16) {
@@ -419,8 +732,8 @@ static uint8_t count_missing_frames(ax25_connection_t *conn, uint8_t received_ns
     uint8_t mask = (mod == 8) ? 0x07 : 0x7F;
 
     uint8_t diff = (uint8_t) ((received_ns - vr) & mask);
-    // Clamp diff to window k: frames beyond window are not in-window gaps.
-    // Return 0 as sentinel so handle_out_of_sequence_iframe discards the frame.
+// Clamp diff to window k: frames beyond window are not in-window gaps.
+// Return 0 as sentinel so handle_out_of_sequence_iframe discards the frame.
     if (diff > conn->timers.k) {
         diff = 0u;
     }
@@ -435,24 +748,24 @@ static void handle_out_of_sequence_iframe(ax25_connection_t *conn, ax25_informat
     uint8_t missing_count = count_missing_frames(conn, ns);
     uint8_t mask = (conn->vars.mod == 8) ? 0x07 : 0x7F;
 
-    // If count_missing_frames returned 0 for ns != vr the frame is outside
-    // the receive window - treat identically to the duplicate/discard path.
+// If count_missing_frames returned 0 for ns != vr the frame is outside
+// the receive window - treat identically to the duplicate/discard path.
     if (missing_count == 0u) {
         if (iframe->pf)
             send_rr(conn, false);
         return;
     }
 
-    // Section 6.4.4.3: If REJ exception already pending, don't send SREJ
+// Section 6.4.4.3: If REJ exception already pending, don't send SREJ
     if (conn->rej_exception) {
         // REJ already pending - discard frame per Section 6.4.4.1
         return;
     }
 
-    // Three distinct cases replace the original two-flag approach:
-    //   (a) !srej_exception && single gap       -> start SREJ
-    //   (b) srej_exception && consecutive frame -> buffer only, keep SREJ state
-    //   (c) srej_exception && new gap           -> send SREJ for new missing or fall to REJ
+// Three distinct cases replace the original two-flag approach:
+//   (a) !srej_exception && single gap       -> start SREJ
+//   (b) srej_exception && consecutive frame -> buffer only, keep SREJ state
+//   (c) srej_exception && new gap           -> send SREJ for new missing or fall to REJ
     if (can_use_srej(conn) && !conn->srej_exception && missing_count == 1) {
         // Case (a): Single missing frame, no prior SREJ - start SREJ mode
         if (conn->srej_buffer_count < AX25_MAX_QUEUE_SIZE) {
@@ -553,8 +866,8 @@ static void handle_out_of_sequence_iframe(ax25_connection_t *conn, ax25_informat
 
 // Process expected I-frame (N(S) == V(R)) - routes PID=0x08 to reassembler
 static void process_expected_iframe(ax25_connection_t *conn, ax25_information_frame_t *iframe, uint32_t current_tick) {
-    // Route segment fragments to the built-in reassembler per AX.25 v2.2 Appendix C6.
-    // All other PIDs go directly to the L3 protocol multiplexer (Section 6.5).
+// Route segment fragments to the built-in reassembler per AX.25 v2.2 Appendix C6.
+// All other PIDs go directly to the L3 protocol multiplexer (Section 6.5).
     if (iframe->payload_len > 0 && iframe->payload) {
         if (iframe->pid == AX25_PID_SEGMENT_FRAGMENT) {
             ax25_segmenter_receive(&conn->segmenter, iframe->payload, (uint16_t) iframe->payload_len, iframe->pid, current_tick);
@@ -563,10 +876,10 @@ static void process_expected_iframe(ax25_connection_t *conn, ax25_information_fr
         }
     }
 
-    // Advance V(R)
+// Advance V(R)
     conn->vars.vr = INC_MOD(conn->vars.vr, conn->vars.mod);
 
-    // Section 6.4.4.2: Check if this clears SREJ exception
+// Section 6.4.4.2: Check if this clears SREJ exception
     if (conn->srej_exception) {
         // Check if we received the frame that was SREJ'd
         uint8_t prev_ns = (conn->vars.vr == 0) ? (conn->vars.mod == 8 ? 7 : 127) : (conn->vars.vr - 1);
@@ -578,16 +891,16 @@ static void process_expected_iframe(ax25_connection_t *conn, ax25_information_fr
         deliver_buffered_srej_frames(conn, current_tick);
     }
 
-    // Clear REJ exception if we received the expected frame
+// Clear REJ exception if we received the expected frame
     if (conn->rej_exception) {
         conn->rej_exception = false;
     }
 
-    // Send acknowledgment - use T2 delay unless P/F bit is set
+// Send acknowledgment - use T2 delay unless P/F bit is set
     if (iframe->pf) {
         send_rr(conn, true);  // Immediate response required for P/F bit
     }
-    // For non-P/F frames, T2 timer will send RR after delay (started in tick handler)
+// For non-P/F frames, T2 timer will send RR after delay (started in tick handler)
 }
 
 // ax25_nr_is_valid: check N(R) is in [V(A)..V(S)] per AX.25 v2.2 Section 4.2.2
@@ -595,7 +908,7 @@ static bool ax25_nr_is_valid(ax25_connection_t *conn, uint8_t nr) {
     uint8_t mask = AX25_MASK(conn->vars.mod);
     uint8_t dist_nr = (uint8_t) ((nr - conn->vars.va) & mask);
     uint8_t dist_vs = (uint8_t) ((conn->vars.vs - conn->vars.va) & mask);
-    // N(R)==V(A): no new ack (valid); N(R)==V(S): all frames acked (valid)
+// N(R)==V(A): no new ack (valid); N(R)==V(S): all frames acked (valid)
     return dist_nr <= dist_vs;
 }
 
@@ -623,7 +936,7 @@ bool w, bool x, bool y, bool z) {
     frmr.x = x;
     frmr.y = y;
     frmr.z = z;
-    // Store FRMR info for accurate retransmission by resend_stored_frmr()
+// Store FRMR info for accurate retransmission by resend_stored_frmr()
     uint8_t wxyz = (uint8_t) ((w ? FRMR_W : 0u) | (x ? FRMR_X : 0u) | (y ? FRMR_Y : 0u) | (z ? FRMR_Z : 0u));
     if (conn->vars.mod == 128) {
         conn->frmr_info_len = 5;
@@ -661,14 +974,14 @@ bool w, bool x, bool y, bool z) {
 // send_frmr_z: FRMR with Z-bit (invalid N(R) received) per §4.3.3.6
 static void send_frmr_z(ax25_connection_t *conn, uint8_t bad_ctrl) {
     send_frmr_generic(conn, (uint16_t) bad_ctrl, false, false, false, true);
-    // DL-ERROR J: N(R) sequence error
+// DL-ERROR J: N(R) sequence error
     FIRE_DL_ERROR(conn, AX25_DL_ERROR_J);
 }
 
 // send_frmr_y: FRMR with Y-bit (I-field length exceeds N1) per §4.3.3.6
 static void send_frmr_y(ax25_connection_t *conn, uint8_t bad_ctrl) {
     send_frmr_generic(conn, (uint16_t) bad_ctrl, false, false, true, false);
-    // DL-ERROR G: I-field exceeded maximum length N1
+// DL-ERROR G: I-field exceeded maximum length N1
     FIRE_DL_ERROR(conn, AX25_DL_ERROR_G);
 }
 
@@ -678,7 +991,7 @@ static void send_frmr_y(ax25_connection_t *conn, uint8_t bad_ctrl) {
 static void send_frmr_w(ax25_connection_t *conn, uint8_t bad_ctrl) __attribute__((unused));
 static void send_frmr_w(ax25_connection_t *conn, uint8_t bad_ctrl) {
     send_frmr_generic(conn, (uint16_t) bad_ctrl, true, false, false, false);
-    // DL-ERROR L: control field invalid or not implemented
+// DL-ERROR L: control field invalid or not implemented
     FIRE_DL_ERROR(conn, AX25_DL_ERROR_L);
 }
 
@@ -731,25 +1044,25 @@ static void resend_stored_frmr(ax25_connection_t *conn) {
 // Returns false if N(R) invalid (FRMR Z sent); true on success
 // Dequeue loop stops when head_ns==N(R) - correct for all k and modulo values
 static bool ax25_process_nr(ax25_connection_t *conn, uint8_t nr, uint8_t raw_ctrl) {
-    // When the tx queue is empty (V(A)==V(S), no outstanding unacknowledged frames),
-    // the remote may piggyback a stale or zero-initialized N(R) in their I-frame.
-    // Per AX.25 v2.2 Section 4.4.5, the FRMR Z condition is only meaningful when
-    // there are outstanding frames whose acknowledgment range can be violated.
-    // With an empty queue there is nothing to dequeue and nothing to validate;
-    // attempting to advance V(A) to a stale N(R) would corrupt the send state.
-    // Return true immediately so frame processing (e.g., I-frame receive path)
-    // continues normally without touching V(A).
+// When the tx queue is empty (V(A)==V(S), no outstanding unacknowledged frames),
+// the remote may piggyback a stale or zero-initialized N(R) in their I-frame.
+// Per AX.25 v2.2 Section 4.4.5, the FRMR Z condition is only meaningful when
+// there are outstanding frames whose acknowledgment range can be violated.
+// With an empty queue there is nothing to dequeue and nothing to validate;
+// attempting to advance V(A) to a stale N(R) would corrupt the send state.
+// Return true immediately so frame processing (e.g., I-frame receive path)
+// continues normally without touching V(A).
     if (conn->tx_queue.count == 0) {
         return true;
     }
 
-    // Validate N(R) in [V(A)..V(S)]
+// Validate N(R) in [V(A)..V(S)]
     if (!ax25_nr_is_valid(conn, nr)) {
         send_frmr_z(conn, raw_ctrl);
         return false;
     }
-    // Dequeue all frames with N(S) in [V(A), N(R))
-    // N(R) is exclusive: acknowledges up to but NOT including N(R)
+// Dequeue all frames with N(S) in [V(A), N(R))
+// N(R) is exclusive: acknowledges up to but NOT including N(R)
     while (conn->tx_queue.count > 0) {
         uint8_t head_ns = conn->tx_queue.ns[conn->tx_queue.head];
         if (head_ns == nr) {
@@ -760,9 +1073,9 @@ static bool ax25_process_nr(ax25_connection_t *conn, uint8_t nr, uint8_t raw_ctr
         conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
         conn->tx_queue.count--;
     }
-    // Advance V(A) to N(R)
+// Advance V(A) to N(R)
     conn->vars.va = nr;
-    // Stop T1 if all frames acknowledged
+// Stop T1 if all frames acknowledged
     if (conn->tx_queue.count == 0) {
         conn->t1_start_tick = 0;
         conn->retry_count = 0;
@@ -774,13 +1087,13 @@ static bool ax25_process_nr(ax25_connection_t *conn, uint8_t nr, uint8_t raw_ctr
 static void handle_received_srej(ax25_connection_t *conn, ax25_supervisory_frame_t *sframe) {
     uint8_t nr = sframe->nr;
 
-    // Update statistics - S-frame received
+// Update statistics - S-frame received
     conn->stats.sframe_received++;
     if (conn->stats.sframe_received == 0) {
         conn->stats.sframe_received = 1;  // Prevent overflow
     }
 
-    // Retransmit the specific frame with N(S) = N(R) of SREJ
+// Retransmit the specific frame with N(S) = N(R) of SREJ
     uint8_t idx = conn->tx_queue.head;
     for (uint8_t i = 0; i < conn->tx_queue.count; i++) {
         if (conn->tx_queue.ns[idx] == nr) {
@@ -798,9 +1111,9 @@ static void handle_received_srej(ax25_connection_t *conn, ax25_supervisory_frame
         idx = (idx + 1) % AX25_MAX_QUEUE_SIZE;
     }
 
-    // In full-duplex mode restart T1 immediately using the sentinel value so the
-    // tick handler arms it on the very next call.  In half-duplex mode clear T1
-    // and let the tick handler restart it once the channel is free.
+// In full-duplex mode restart T1 immediately using the sentinel value so the
+// tick handler arms it on the very next call.  In half-duplex mode clear T1
+// and let the tick handler restart it once the channel is free.
     if (conn->full_duplex) {
         // Use AX25_T1_PENDING (UINT32_MAX) not 1; value 1 collides with tick==1
         // on MCUs booting near zero and causes an off-by-one T1 expiry at T1<20ms.
@@ -814,34 +1127,34 @@ static void handle_received_srej(ax25_connection_t *conn, ax25_supervisory_frame
 static void handle_received_rej(ax25_connection_t *conn, ax25_supervisory_frame_t *sframe) {
     uint8_t nr = sframe->nr;
 
-    // Update statistics - S-frame received
+// Update statistics - S-frame received
     conn->stats.sframe_received++;
     if (conn->stats.sframe_received == 0) {
         conn->stats.sframe_received = 1;  // Prevent overflow
     }
 
-    // Validate N(R) before using it - must lie in [V(A)..V(S)] per AX.25 v2.2 Section 4.2.2
+// Validate N(R) before using it - must lie in [V(A)..V(S)] per AX.25 v2.2 Section 4.2.2
     if (!ax25_nr_is_valid(conn, nr)) {
         send_frmr_z(conn, (uint8_t) sframe->base.type);
         return;
     }
 
-    // range [N(R), old_V(S)) can be computed correctly without any half-window limit;
-    // the MOD_LT macro that was used here had an unsafe threshold of modulo/2 which
-    // fails for modulo-128 when the window k exceeds 64 frames
+// range [N(R), old_V(S)) can be computed correctly without any half-window limit;
+// the MOD_LT macro that was used here had an unsafe threshold of modulo/2 which
+// fails for modulo-128 when the window k exceeds 64 frames
     uint8_t old_vs = conn->vars.vs;
 
-    // AX.25 v2.2 Section 6.4.7: roll back V(S) to V(A) before retransmission.
-    // This ensures the sequence space is consistent before any frames are sent.
-    // Required in both half-duplex and full-duplex paths.
+// AX.25 v2.2 Section 6.4.7: roll back V(S) to V(A) before retransmission.
+// This ensures the sequence space is consistent before any frames are sent.
+// Required in both half-duplex and full-duplex paths.
     conn->vars.vs = conn->vars.va;
 
-    // AX.25 v2.2 Section 6.4.5.3: in full-duplex mode the device MAY abort the
-    // frame it was currently sending and start retransmission immediately.
-    // TX and RX use separate frequencies so there is no channel contention;
-    // waiting for the next TX opportunity would delay recovery unnecessarily.
-    // Retransmit every unacknowledged frame in the queue right now using only
-    // uint8_t arithmetic and % AX25_MAX_QUEUE_SIZE - no 64-bit types needed.
+// AX.25 v2.2 Section 6.4.5.3: in full-duplex mode the device MAY abort the
+// frame it was currently sending and start retransmission immediately.
+// TX and RX use separate frequencies so there is no channel contention;
+// waiting for the next TX opportunity would delay recovery unnecessarily.
+// Retransmit every unacknowledged frame in the queue right now using only
+// uint8_t arithmetic and % AX25_MAX_QUEUE_SIZE - no 64-bit types needed.
     if (conn->full_duplex && conn->tx_queue.count > 0) {
         // Abort the in-progress frame before re-queuing retransmits.
         // Without this, retransmits queue behind a frame that may take up to
@@ -892,9 +1205,9 @@ static void handle_received_rej(ax25_connection_t *conn, ax25_supervisory_frame_
         }
     }
 
-    // In full-duplex mode restart T1 immediately using the sentinel value so the
-    // tick handler arms it on the very next call.  In half-duplex mode clear T1
-    // and let the tick handler restart it once the channel is free.
+// In full-duplex mode restart T1 immediately using the sentinel value so the
+// tick handler arms it on the very next call.  In half-duplex mode clear T1
+// and let the tick handler restart it once the channel is free.
     if (conn->full_duplex) {
         // Use AX25_T1_PENDING (UINT32_MAX) not 1; same rationale as SREJ handler.
         conn->t1_start_tick = AX25_T1_PENDING;
@@ -905,65 +1218,36 @@ static void handle_received_rej(ax25_connection_t *conn, ax25_supervisory_frame_
     conn->retry_count = 0;
 }
 
-// Internal: Send RNR supervisory frame
-static void send_rnr(ax25_connection_t *conn, bool pf) {
-    ax25_supervisory_frame_t rnr;
-    rnr.base.header = conn->peer_addr;
-    rnr.base.type = (conn->vars.mod == 128) ? AX25_FRAME_SUPERVISORY_RNR_16BIT : AX25_FRAME_SUPERVISORY_RNR_8BIT;
-    rnr.nr = conn->vars.vr;
-    rnr.pf = pf;
-    rnr.code = 1;  // RNR code is 01 in bits 2-3
-
-    size_t len;
-    uint8_t err;
-    // use ax25_frame_encode to include address header in transmitted frame
-    uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &rnr, &len, &err);
-    if (encoded && conn->callbacks.transmit) {
-        conn->callbacks.transmit(conn->user_data, encoded, len);
-
-        // Update statistics - S-frame sent
-        conn->stats.sframe_sent++;
-        if (conn->stats.sframe_sent == 0) {
-            conn->stats.sframe_sent = 1;  // Prevent overflow
-        }
-    }
-
-    if (encoded != NULL) {
-        free(encoded);
-        encoded = NULL;
-    }
-}
-
 // Handle received RNR frame - AX.25 v2.2 Section 6.4.9
-static void handle_received_rnr(ax25_connection_t *conn, ax25_supervisory_frame_t *rnr) {
+static void handle_received_rnr(ax25_connection_t *conn, ax25_supervisory_frame_t *rnr, uint32_t current_tick) {
     uint8_t nr = rnr->nr;
 
-    // Update statistics - S-frame received
+// Update statistics - S-frame received
     conn->stats.sframe_received++;
     if (conn->stats.sframe_received == 0) {
         conn->stats.sframe_received = 1;  // Prevent overflow
     }
 
-    // Validate N(R) and dequeue acknowledged frames using spec-correct loop
+// Validate N(R) and dequeue acknowledged frames using spec-correct loop
     if (!ax25_process_nr(conn, nr, (uint8_t) rnr->base.type)) {
         return;  // FRMR Z sent; do not continue
     }
 
-    // Enter peer busy state per Section 6.4.9
+// Enter peer busy state per Section 6.4.9
     conn->peer_busy = true;
-    conn->rnr_start_tick = conn->t3_start_tick;  // Track when busy started
-
-    // Stop T1 timer (don't retransmit while peer is busy)
-    // Per spec: stop transmitting I frames until busy condition clears
+// Record actual tick when peer busy was detected, not the stale t3_start_tick proxy
+    conn->rnr_start_tick = current_tick;
+// Stop T1 timer (don't retransmit while peer is busy)
+// Per spec: stop transmitting I frames until busy condition clears
     conn->t1_start_tick = 0;
 
-    // Notify upper layer of busy condition
+// Notify upper layer of busy condition
     if (conn->callbacks.on_busy) {
         conn->callbacks.on_busy(conn->user_data, true);
     }
 
-    // If P bit set, need to respond with RNR or RR with F=1
-    // Per Section 6.2: response to S frame with P=1 is RR, RNR, or REJ with F=1
+// If P bit set, need to respond with RNR or RR with F=1
+// Per Section 6.2: response to S frame with P=1 is RR, RNR, or REJ with F=1
     if (rnr->pf) {
         // Respond with appropriate frame based on our busy state
         if (conn->local_busy) {
@@ -978,13 +1262,13 @@ static void handle_received_rr(ax25_connection_t *conn, ax25_supervisory_frame_t
     uint8_t nr = rr->nr;
     bool pf = rr->pf;
 
-    // Update statistics - S-frame received
+// Update statistics - S-frame received
     conn->stats.sframe_received++;
     if (conn->stats.sframe_received == 0) {
         conn->stats.sframe_received = 1;  // Prevent overflow
     }
 
-    // Validate N(R) and dequeue acknowledged frames using spec-correct loop
+// Validate N(R) and dequeue acknowledged frames using spec-correct loop
     if (!ax25_process_nr(conn, nr, (uint8_t) rr->base.type)) {
         return;  // FRMR Z sent; do not continue
     }
@@ -997,9 +1281,18 @@ static void handle_received_rr(ax25_connection_t *conn, ax25_supervisory_frame_t
         }
     }
 
-    // Stop T1 here; ax25_tick will restart it if needed
+// Stop T1 here; ax25_tick will restart it if needed
     conn->retry_count = 0;
     conn->t1_start_tick = 0;  // Stop T1 - will be restarted by ax25_tick if frames pending
+
+    // per AX.25 v2.2 §6.4.7 SDL, when in Timer Recovery
+    // state and we receive RR F=1 (a response to our poll) with V(A)==V(S) (all
+    // outstanding frames have now been acknowledged), we must return to Connected
+    // state.  Without this transition ax25_send_data_raw() returns 6 forever and
+    // the link is permanently blocked after the first T1 expiry.
+    if (conn->state == AX25_STATE_TIMER_RECOVERY && pf && conn->vars.va == conn->vars.vs) {
+        conn->state = AX25_STATE_CONNECTED;
+    }
 
     if (pf) {
         if (conn->local_busy) {
@@ -1013,18 +1306,18 @@ static void handle_received_rr(ax25_connection_t *conn, ax25_supervisory_frame_t
 // Handle received FRMR frame - AX.25 v2.2 Section 4.4.5
 // When we receive FRMR, we must reset the link by sending SABM/SABME
 static void handle_received_frmr(ax25_connection_t *conn, ax25_frame_reject_frame_t *frmr) {
-    // notify MDL state machine (MDL-ERROR B) then fire DL-ERROR B
+// notify MDL state machine (MDL-ERROR B) then fire DL-ERROR B
     if (conn->mgmt_ctx)
         ax25_mgmt_notify_frmr_received(conn->mgmt_ctx);
     FIRE_DL_ERROR(conn, AX25_DL_ERROR_B);
 
-    // FRMR received - link reset required per Section 4.4.5
-    // Notify upper layer of the error condition
+// FRMR received - link reset required per Section 4.4.5
+// Notify upper layer of the error condition
     if (conn->callbacks.on_disconnect) {
         conn->callbacks.on_disconnect(conn->user_data, 2);  // 2 = FRMR received (link reset required)
     }
 
-    // Reset connection state
+// Reset connection state
     conn->state = AX25_STATE_DISCONNECTED;
     conn->vars.vs = conn->vars.vr = conn->vars.va = 0;
     conn->peer_busy = false;
@@ -1032,7 +1325,7 @@ static void handle_received_frmr(ax25_connection_t *conn, ax25_frame_reject_fram
     conn->frmr_pending = false;
     conn->frmr_retry_count = 0;
 
-    // Clear all pending frames
+// Clear all pending frames
     while (conn->tx_queue.count > 0) {
         free(conn->tx_queue.frames[conn->tx_queue.head]);
         conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
@@ -1057,7 +1350,7 @@ static uint8_t ax25_send_data_raw(ax25_connection_t *conn, uint8_t *data, size_t
     if (conn->peer_busy)
         return 5;
 
-    // Check window not exceeded
+// Check window not exceeded
     uint8_t outstanding = AX25_OUTSTANDING(conn->vars.vs, conn->vars.va, conn->vars.mod);
     if (outstanding >= conn->timers.k)
         return 3;
@@ -1065,7 +1358,7 @@ static uint8_t ax25_send_data_raw(ax25_connection_t *conn, uint8_t *data, size_t
     if (conn->tx_queue.count >= AX25_MAX_QUEUE_SIZE)
         return 3;
 
-    // Build I-frame; clamp to N1 as safety guard (callers ensure len <= n1)
+// Build I-frame; clamp to N1 as safety guard (callers ensure len <= n1)
     ax25_information_frame_t iframe;
     iframe.base.header = conn->peer_addr;
     iframe.base.type = (conn->vars.mod == 128) ? AX25_FRAME_INFORMATION_16BIT : AX25_FRAME_INFORMATION_8BIT;
@@ -1082,7 +1375,7 @@ static uint8_t ax25_send_data_raw(ax25_connection_t *conn, uint8_t *data, size_t
     if (!encoded)
         return 4;
 
-    // Queue for retransmission
+// Queue for retransmission
     uint8_t tail = conn->tx_queue.tail;
     conn->tx_queue.frames[tail] = encoded;
     conn->tx_queue.lengths[tail] = frame_len;
@@ -1090,36 +1383,36 @@ static uint8_t ax25_send_data_raw(ax25_connection_t *conn, uint8_t *data, size_t
     conn->tx_queue.tail = (tail + 1) % AX25_MAX_QUEUE_SIZE;
     conn->tx_queue.count++;
 
-    // Send immediately
+// Send immediately
     if (conn->callbacks.transmit)
         conn->callbacks.transmit(conn->user_data, encoded, frame_len);
 
-    // Update statistics - S-frame sent
+// Update statistics - S-frame sent
     conn->stats.sframe_sent++;
     if (conn->stats.sframe_sent == 0)
         conn->stats.sframe_sent = 1;
 
-    // Update statistics - I-frame sent
+// Update statistics - I-frame sent
     conn->stats.iframe_sent++;
     if (conn->stats.iframe_sent == 0)
         conn->stats.iframe_sent = 1;
 
-    // Update bytes sent
+// Update bytes sent
     conn->stats.bytes_sent += iframe.payload_len;
     if (conn->stats.bytes_sent < iframe.payload_len)
         conn->stats.bytes_sent = iframe.payload_len;
 
-    // Cancel T2 timer - ACK is piggybacked in N(R) of this I-frame
+// Cancel T2 timer - ACK is piggybacked in N(R) of this I-frame
     cancel_t2(conn);
 
     conn->vars.vs = INC_MOD(conn->vars.vs, conn->vars.mod);
 
-    // Start T1 timer for acknowledgment
+// Start T1 timer for acknowledgment
     if (conn->t1_start_tick == 0)
         conn->t1_start_tick = AX25_T1_PENDING;
     conn->retry_count = 0;
 
-    // Stop T3 while T1 is running
+// Stop T3 while T1 is running
     conn->t3_start_tick = 0;
 
     return 0;
@@ -1205,7 +1498,7 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     conn->frmr_pending = false;            // No FRMR pending
     conn->frmr_retry_count = 0;            // Clear FRMR retry counter
 
-    // Initialize SREJ state per AX.25 v2.2 defaults
+// Initialize SREJ state per AX.25 v2.2 defaults
     conn->rej_mode = AX25_REJ_MODE_SREJ_REJ;  // Default per Section 6.3.2
     conn->srej_max = 1;                       // Typically 1 per specification
     conn->srej_exception = false;
@@ -1214,44 +1507,49 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     conn->srej_buffer_count = 0;
     memset(conn->srej_bitmap, 0, sizeof(conn->srej_bitmap));
 
-    // T2 timer state initialization
+// T2 timer state initialization
     conn->t2_running = false;              // T2 timer not running initially
     conn->t2_ack_pending = false;          // No pending ACK
     conn->t2_pending_nr = 0;               // Clear pending N(R)
 
-    // Initialize TEST statistics
+// Initialize TEST statistics
     memset(&conn->test_stats, 0, sizeof(ax25_test_stats_t));
 
-    // Initialize full-duplex mode
-    // Default to half-duplex - will be updated if XID negotiation enables full-duplex
+// Initialize full-duplex mode
+// Default to half-duplex - will be updated if XID negotiation enables full-duplex
     conn->full_duplex = false;
 
-    // Initialize protocol multiplexing - all handlers inactive by default
+// Initialize protocol multiplexing - all handlers inactive by default
     for (uint8_t i = 0; i < AX25_MAX_PROTOCOL_HANDLERS; i++) {
         conn->protocols[i].active = false;
     }
     conn->default_handler = NULL;
     conn->default_user_data = NULL;
 
-    // Initialize statistics
+// Initialize statistics
     memset(&conn->stats, 0, sizeof(ax25_statistics_t));
 
-    // initialize MDL context pointer
+// initialize MDL context pointer
     conn->mgmt_ctx = NULL;  // caller sets if MDL error bridging is needed
 
-    // Initialize SABME/SABM modulo preference to mod-8 default
-    // Caller sets conn->want_mod128 = 1 before ax25_connect() to request SABME
+    // initialize MDL transmit trampoline to NULL.
+    // Caller sets conn->mdl_transmit_trampoline alongside conn->mgmt_ctx to enable
+    // automatic XID negotiation per AX.25 v2.2 §6.3.2 / Appendix C5.
+    conn->mdl_transmit_trampoline = NULL;
+
+// Initialize SABME/SABM modulo preference to mod-8 default
+// Caller sets conn->want_mod128 = 1 before ax25_connect() to request SABME
     conn->want_mod128 = 0;
 
-    // Initialize segmenter/reassembler per AX.25 v2.2 Section 2.4 / Appendix C6.
-    // segment_size = N1 - 2 (1-byte segment header + 1-byte original-PID overhead).
-    // Callbacks wire automatic segmentation on TX and reassembly delivery on RX.
+// Initialize segmenter/reassembler per AX.25 v2.2 Section 2.4 / Appendix C6.
+// segment_size = N1 - 2 (1-byte segment header + 1-byte original-PID overhead).
+// Callbacks wire automatic segmentation on TX and reassembly delivery on RX.
     ax25_segmenter_init(&conn->segmenter, conn->timers.n1);
     conn->segmenter.transmit_iframe = seg_transmit_cb;
     conn->segmenter.on_reassembly_complete = seg_reassembly_complete_cb;
     conn->segmenter.user_data = conn;
 
-    // Wire error/retransmit callbacks: completes automatic Appendix C6 integration
+// Wire error/retransmit callbacks: completes automatic Appendix C6 integration
     conn->segmenter.on_reassembly_error = seg_reassembly_error_cb;
     conn->segmenter.on_request_retransmit = seg_request_retransmit_cb;
 
@@ -1260,58 +1558,69 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
 
 // Process received I-frame - AX.25 v2.2 Section 6.4.4
 void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *iframe, uint32_t current_tick_10ms) {
-    // DL-ERROR M: I-frame received while not in information-transfer state.
-    // Per AX.25 v2.2 Appendix C4 SDL, issue error indication and discard.
+// DL-ERROR M: I-frame received while not in information-transfer state.
+// Per AX.25 v2.2 Appendix C4 SDL, issue error indication and discard.
     if (conn->state != AX25_STATE_CONNECTED && conn->state != AX25_STATE_TIMER_RECOVERY) {
         FIRE_DL_ERROR(conn, AX25_DL_ERROR_M);
         return;
     }
 
-    // Check I-field length against negotiated N1 - Y-bit condition per §4.3.3.6
-    // If the received payload exceeds our N1 parameter, reject with FRMR Y=1
+// Check I-field length against negotiated N1 - Y-bit condition per §4.3.3.6
+// If the received payload exceeds our N1 parameter, reject with FRMR Y=1
     if (iframe->payload_len > (size_t) conn->timers.n1) {
         send_frmr_y(conn, (uint8_t) iframe->base.type);
         return;
     }
 
-    // Extract N(R), N(S), and P/F from the decoded I-frame structure.
-    // These are set by ax25_information_frame_decode() during frame parsing.
+// Extract N(R), N(S), and P/F from the decoded I-frame structure.
+// These are set by ax25_information_frame_decode() during frame parsing.
     uint8_t nr = (uint8_t) iframe->nr;
     uint8_t ns = (uint8_t) iframe->ns;
     bool pf = iframe->pf;
 
-    // Restart T3 using the authoritative tick supplied by the caller
+// Restart T3 using the authoritative tick supplied by the caller
     restart_t3_on_activity(conn, current_tick_10ms);
 
-    // Update statistics - I-frame received
+// Update statistics - I-frame received
     conn->stats.iframe_received++;
-    // Prevent overflow on 32-bit counter
+// Prevent overflow on 32-bit counter
     if (conn->stats.iframe_received == 0) {
         conn->stats.iframe_received = 1;
     }
-    // Update bytes received (approximate - includes payload)
+// Update bytes received (approximate - includes payload)
     conn->stats.bytes_received += iframe->payload_len;
     if (conn->stats.bytes_received < iframe->payload_len) {
         // Overflow occurred
         conn->stats.bytes_received = iframe->payload_len;
     }
 
-    // Validate N(R) and dequeue acknowledged frames using spec-correct loop
-    // ax25_process_nr validates [V(A)..V(S)] range, dequeues by head_ns==N(R),
-    // advances V(A), and stops T1 if queue drained
+// Validate N(R) and dequeue acknowledged frames using spec-correct loop
+// ax25_process_nr validates [V(A)..V(S)] range, dequeues by head_ns==N(R),
+// advances V(A), and stops T1 if queue drained
     if (!ax25_process_nr(conn, nr, (uint8_t) iframe->base.type)) {
         return;  // FRMR Z sent; do not continue
     }
-    // Restart T1 for remaining unacknowledged frames using authoritative tick
+// Restart T1 for remaining unacknowledged frames using authoritative tick
     if (conn->tx_queue.count > 0 && conn->t1_start_tick == 0) {
         conn->t1_start_tick = current_tick_10ms ? current_tick_10ms : 1;
     }
-    // Restart T3 if T1 was just stopped (no outstanding frames) using authoritative tick
+// Restart T3 if T1 was just stopped (no outstanding frames) using authoritative tick
     if (conn->tx_queue.count == 0 && conn->t3_start_tick == 0) {
         conn->t3_start_tick = current_tick_10ms ? current_tick_10ms : 1;
     }
 
-    // Process received N(S): classify as in-order, out-of-order, or duplicate
+    // local_busy guard per AX.25 v2.2 §6.4.9 SDL.
+    // When locally busy: N(R) has already been processed above (piggybacked ACK
+    // advances V(A) and drains the TX queue), but we must NOT accept the incoming
+    // N(S) payload - our receive buffers are full.  Discard the data, do not
+    // advance V(R), and respond immediately with RNR to signal our busy condition.
+    // The P/F bit rule still applies: if P=1 we must respond with F=1.
+    if (conn->local_busy) {
+        send_rnr(conn, pf);  // F mirrors P per §6.4.9; always respond when P=1
+        return;
+    }
+
+// Process received N(S): classify as in-order, out-of-order, or duplicate
     if (ns == conn->vars.vr) {
         // In-order: expected sequence number - process normally
         // Pass tick so segment fragments reach the TR210 reassembly timer
@@ -1330,9 +1639,9 @@ void ax25_process_iframe(ax25_connection_t *conn, ax25_information_frame_t *ifra
         // For non-P/F, T2 timer will send RR after delay
     }
 
-    // Start T2 timer if not already running and ACK not pending
-    // This is called after processing the I-frame to start the response delay
-    // Pass the authoritative tick instead of the stale t3_start_tick proxy
+// Start T2 timer if not already running and ACK not pending
+// This is called after processing the I-frame to start the response delay
+// Pass the authoritative tick instead of the stale t3_start_tick proxy
     if (!conn->t2_running && !conn->t2_ack_pending && !iframe->pf) {
         start_t2_response(conn, current_tick_10ms);
     }
@@ -1343,25 +1652,33 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
     if (!conn)
         return;
 
-    // Tick the TR210 reassembly timer per AX.25 v2.2 Section 6.7.1.13 / Appendix C6.3.
-    // ax25_segmenter_tick is a no-op when no reassembly is in progress.
+    // service MDL TM201 timer per AX.25 v2.2 Appendix C5 SDL.
+    // ax25_mgmt_tick is a no-op when mgmt_ctx is NULL or state != AWAITING_RESPONSE.
+    // Runs unconditionally so XID retries work while DLSM is in any state.
+    // current_tick_10ms is in 10ms ticks; ax25_mgmt_tick expects milliseconds.
+    if (conn->mgmt_ctx) {
+        ax25_mgmt_tick(conn->mgmt_ctx, current_tick_10ms * 10u);
+    }
+
+// Tick the TR210 reassembly timer per AX.25 v2.2 Section 6.7.1.13 / Appendix C6.3.
+// ax25_segmenter_tick is a no-op when no reassembly is in progress.
     ax25_segmenter_tick(&conn->segmenter, current_tick_10ms);
 
-    // Initialize T1 timer with actual tick value if using sentinel
-    // Never set to 0 since 0 means "timer not active"
-    // Sentinel is now AX25_T1_PENDING (UINT32_MAX) instead of 1.
-    // Resolution runs before the T1 expiry check, so UINT32_MAX is never
-    // evaluated as a start time and cannot cause a spurious expiry.
+// Initialize T1 timer with actual tick value if using sentinel
+// Never set to 0 since 0 means "timer not active"
+// Sentinel is now AX25_T1_PENDING (UINT32_MAX) instead of 1.
+// Resolution runs before the T1 expiry check, so UINT32_MAX is never
+// evaluated as a start time and cannot cause a spurious expiry.
     if (conn->t1_start_tick == AX25_T1_PENDING) {
         conn->t1_start_tick = (current_tick_10ms != 0u) ? current_tick_10ms : 1u;
     }
 
-    // Start T3 if connected, no outstanding frames (T1 not running), and T3 not active
+// Start T3 if connected, no outstanding frames (T1 not running), and T3 not active
     if (conn->state == AX25_STATE_CONNECTED && conn->t1_start_tick == 0 && conn->t3_start_tick == 0) {
         conn->t3_start_tick = current_tick_10ms;
     }
 
-    // T1: Acknowledgment timer expiration
+// T1: Acknowledgment timer expiration
     if (conn->t1_start_tick != 0 && (current_tick_10ms - conn->t1_start_tick) >= conn->timers.t1) {
         conn->retry_count++;
         if (conn->retry_count > conn->timers.n2) {
@@ -1387,7 +1704,8 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
             }
         } else {
             // state-aware T1 retry handling
-            if (conn->state == AX25_STATE_AWAITING_CONNECTION) {
+            // treat AX25_STATE_AWAITING_CONN_2_2 same as AWAITING_CONNECTION for retransmit
+            if (conn->state == AX25_STATE_AWAITING_CONNECTION || conn->state == AX25_STATE_AWAITING_CONN_2_2) {
                 // Retransmit SABM/SABME per AX.25 v2.2 Section 6.3.1 and C4 SDL.
                 // Do NOT transition to TIMER_RECOVERY: stay in AWAITING_CONNECTION.
                 bool use_sabme = (conn->vars.mod == 128);
@@ -1433,22 +1751,38 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
         conn->stats.t1_expirations++;
     }
 
-    // T2: Response delay timer expiration
-    // Full-duplex never arms T2; skip evaluation if flag is set
-    // to prevent a stale t2_running (from a prior half-duplex phase) from
-    // firing a spurious RR after mode transition. Ref: Section 6.7.1.2.
+// T2: Response delay timer expiration
+// Full-duplex never arms T2; skip evaluation if flag is set
+// to prevent a stale t2_running (from a prior half-duplex phase) from
+// firing a spurious RR after mode transition. Ref: Section 6.7.1.2.
     if (conn->t2_running && !conn->full_duplex && (current_tick_10ms - conn->t2_start_tick) >= conn->timers.t2) {
         conn->t2_running = false;
         if (conn->t2_ack_pending) {
-            send_rr(conn, false);  // Send delayed ACK
+
+            // per §6.4.9, delayed ACK must reflect
+            // local busy state.  Sending RR while locally busy would incorrectly
+            // advertise readiness to receive more I-frames.
+            if (conn->local_busy) {
+                send_rnr(conn, false);
+            } else {
+                send_rr(conn, false);  // Send delayed ACK
+            }
+
             conn->t2_ack_pending = false;
         }
     }
 
-    // T3: Inactive link timer expiration
+// T3: Inactive link timer expiration
     if (conn->t3_start_tick != 0 && (current_tick_10ms - conn->t3_start_tick) >= conn->timers.t3) {
-        // Send poll to check link
-        send_rr(conn, true);  // RR with P=1
+        // per AX.25 v2.2 §6.4.9 and §6.2 the T3 poll must reflect
+        // our local receive state: send RNR P=1 when locally busy so the peer knows we
+        // are still flow-controlled while we solicit its F=1 status response; send RR P=1
+        // in all other cases (idle poll or recovery while peer was busy)
+        if (conn->local_busy) {
+            send_rnr(conn, true);  // RNR P=1: locally busy, poll peer for status
+        } else {
+            send_rr(conn, true);   // RR P=1: not busy, idle link poll
+        }
         conn->t1_start_tick = current_tick_10ms ? current_tick_10ms : 1;  // Start T1, avoid 0
         conn->t3_start_tick = current_tick_10ms;  // Restart T3
     }
@@ -1459,13 +1793,31 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
     if (!conn || !frame)
         return;
 
-    // Restart T3 using the authoritative tick supplied by the caller.
-    // Previously a stale proxy (t3_start_tick or t1_start_tick) was computed
-    // here; that caused T3 to appear already-expired on first use and T2 to
-    // fire immediately when t3_start_tick was many ticks old.
+// Restart T3 using the authoritative tick supplied by the caller.
+// Previously a stale proxy (t3_start_tick or t1_start_tick) was computed
+// here; that caused T3 to appear already-expired on first use and T2 to
+// fire immediately when t3_start_tick was many ticks old.
     restart_t3_on_activity(conn, current_tick_10ms);
 
     switch (frame->type) {
+        // handle received XID frames per AX.25 v2.2 §6.3.2 / Appendix C5.
+        // Without this case, XID frames fall to default:break and are silently discarded,
+        // making parameter negotiation via XID completely non-functional (MDL SDL Issue #10).
+        // Both XID command (C=1) and XID response (C=0) are routed here; ax25_mgmt_process_xid
+        // internally distinguishes them via xid->base.base.header.cr.
+        case AX25_FRAME_UNNUMBERED_XID: {
+            conn->stats.uframe_received++;
+            if (conn->stats.uframe_received == 0)
+                conn->stats.uframe_received = 1;
+            // start modified part: only route to MDL when mgmt_ctx and trampoline are both set
+            if (conn->mgmt_ctx && conn->mdl_transmit_trampoline) {
+                ax25_exchange_identification_frame_t *xid = (ax25_exchange_identification_frame_t*) frame;
+                ax25_mgmt_process_xid(conn->mgmt_ctx, xid, conn->mdl_transmit_trampoline);
+            }
+            // end modified part
+            break;
+        }
+
         case AX25_FRAME_UNNUMBERED_UA: {
             // Update statistics - U-frame received
             conn->stats.uframe_received++;
@@ -1473,7 +1825,9 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                 conn->stats.uframe_received = 1;
             }
 
-            if (conn->state == AX25_STATE_AWAITING_CONNECTION) {
+            // treat AX25_STATE_AWAITING_CONN_2_2 (state 5) same as
+            // AX25_STATE_AWAITING_CONNECTION (state 1) for UA reception per Appendix C4
+            if (conn->state == AX25_STATE_AWAITING_CONNECTION || conn->state == AX25_STATE_AWAITING_CONN_2_2) {
                 // AX.25 v2.2 Appendix C4 SDL: UA received in AWAITING_CONNECTION must
                 // have F=1 (responding to our SABM P=1). UA with F=0 is a protocol
                 // error - discard and issue DL-ERROR C per Section 17.2.
@@ -1486,6 +1840,17 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                 // Connection established - transition to CONNECTED state
                 conn->vars.vs = conn->vars.vr = conn->vars.va = 0;
                 conn->state = AX25_STATE_CONNECTED;
+
+                // initiate MDL XID negotiation after UA received per AX.25 v2.2 §6.3.2.
+                // The initiating station (active open: we sent SABM/SABME, peer replied UA) SHOULD
+                // send XID command to negotiate parameters when both mgmt_ctx and trampoline are set.
+                // Only start if MDL is IDLE to avoid double-sending if caller already started negotiation.
+                if (conn->mgmt_ctx && conn->mdl_transmit_trampoline && conn->mgmt_ctx->state == AX25_MGMT_IDLE) {
+                    ax25_address_t dest = conn->peer_addr.destination;
+                    ax25_address_t src = conn->peer_addr.source;
+                    ax25_mgmt_start_negotiation(conn->mgmt_ctx, &dest, &src, conn->mdl_transmit_trampoline);
+                }
+
                 // clear want_mod128 on successful connection
                 // conn->vars.mod already holds the negotiated modulo (8 or 128)
                 conn->want_mod128 = 0;
@@ -1570,7 +1935,8 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
             // other's SABM while in AWAITING_CONNECTION. Cancel T1 so the pending
             // retransmit loop does not fire again; the code below sends UA and
             // transitions to CONNECTED immediately.
-            if (conn->state == AX25_STATE_AWAITING_CONNECTION) {
+            // start modified part: also handle collision in AX25_STATE_AWAITING_CONN_2_2 (state 5)
+            if (conn->state == AX25_STATE_AWAITING_CONNECTION || conn->state == AX25_STATE_AWAITING_CONN_2_2) {
                 conn->t1_start_tick = 0;
                 conn->retry_count = 0;
             }
@@ -1690,8 +2056,8 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                 }
                 break;
             }
-            handle_received_rnr(conn, sframe);
 
+            handle_received_rnr(conn, sframe, current_tick_10ms);  // start modified part: pass authoritative tick // end modified part
             // Continue T3 during peer busy (T3 keeps running to detect stuck links)
             // Per Section 6.4.9: T3 expiry causes poll with RR/RNR P=1
             conn->t3_start_tick = current_tick_10ms;
@@ -1749,12 +2115,14 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
             // SABME fallback when FRMR received during AWAITING_CONNECTION
             // Per PE1CHL §6: some stations reply FRMR to SABME instead of UA.
             // Fall back to mod-8 SABM, reset retry counter, and try again.
-            if (conn->state == AX25_STATE_AWAITING_CONNECTION && conn->want_mod128) {
+            // also handle FRMR in AX25_STATE_AWAITING_CONN_2_2 (state 5)
+            if ((conn->state == AX25_STATE_AWAITING_CONNECTION || conn->state == AX25_STATE_AWAITING_CONN_2_2) && conn->want_mod128) {
                 conn->want_mod128 = 0;
                 conn->vars.mod = 8;
                 conn->timers.k = 7;
                 conn->retry_count = 0;
                 send_sabm(conn, false);
+                conn->state = AX25_STATE_AWAITING_CONNECTION;  // now using mod-8
                 conn->t1_start_tick = AX25_T1_PENDING;
                 break;
             }
@@ -1798,7 +2166,8 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
             // DISC received while awaiting UA to our own SABM: remote refused or
             // pre-empted the connection. Respond with DM, cancel T1, return to
             // DISCONNECTED, notify Layer 3 with reason 1 (remote disconnect).
-            if (conn->state == AX25_STATE_AWAITING_CONNECTION) {
+            // also handle DISC in AX25_STATE_AWAITING_CONN_2_2 (state 5)
+            if (conn->state == AX25_STATE_AWAITING_CONNECTION || conn->state == AX25_STATE_AWAITING_CONN_2_2) {
                 ax25_unnumbered_frame_t dm;
                 dm.base.header = conn->peer_addr;
                 dm.base.header.cr = false;  // DM is a response frame
@@ -1825,7 +2194,6 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                 break;
             }
 
-            // Normal DISC received while CONNECTED, TIMER_RECOVERY, AWAITING_RELEASE,
             // or FRAME_REJECT: send UA and transition to DISCONNECTED.
             conn->state = AX25_STATE_DISCONNECTED;
 
@@ -1910,7 +2278,8 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                 break;  // Already disconnected, ignore DM
             }
 
-            if (conn->state == AX25_STATE_AWAITING_CONNECTION) {
+            // handle DM in AX25_STATE_AWAITING_CONN_2_2 (state 5) same as state 1
+            if (conn->state == AX25_STATE_AWAITING_CONNECTION || conn->state == AX25_STATE_AWAITING_CONN_2_2) {
                 // SABME fallback when DM received during AWAITING_CONNECTION
                 // Per PE1CHL §6: some stations reply DM to SABME instead of UA.
                 // If we were trying mod-128, fall back to mod-8 SABM and retry.
@@ -1920,6 +2289,7 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                     conn->timers.k = 7;
                     conn->retry_count = 0;
                     send_sabm(conn, false);
+                    conn->state = AX25_STATE_AWAITING_CONNECTION;  // now using mod-8
                     conn->t1_start_tick = AX25_T1_PENDING;
                     break;
                 }
@@ -1991,9 +2361,7 @@ uint8_t ax25_connect(ax25_connection_t *conn, ax25_address_t *dest, ax25_address
     conn->peer_addr.cr = true;
     conn->peer_addr.repeaters.num_repeaters = 0;
 
-    // send SABME when want_mod128 is set, SABM otherwise
-    // Per PE1CHL §6: if want_mod128 is set we prefer mod-128 (SABME); the state
-    // machine falls back to SABM automatically on DM/FRMR response from peer.
+    // use AX25_STATE_AWAITING_CONN_2_2 for SABME per AX.25 v2.2 Appendix C4 state 5
     if (conn->want_mod128) {
         // Request mod-128 extended sequence numbering via SABME
         conn->vars.mod = 128;
@@ -2004,19 +2372,20 @@ uint8_t ax25_connect(ax25_connection_t *conn, ax25_address_t *dest, ax25_address
             conn->timers.k = (32u <= queue_max) ? 32u : queue_max;
         }
         send_sabm(conn, true);  // true = SABME
+        conn->state = AX25_STATE_AWAITING_CONN_2_2;  // State 5: awaiting UA to SABME
     } else {
         // Standard mod-8 connection via SABM
         conn->vars.mod = 8;
         send_sabm(conn, false);  // false = SABM
+        conn->state = AX25_STATE_AWAITING_CONNECTION;  // State 1: awaiting UA to SABM
     }
-
-    conn->state = AX25_STATE_AWAITING_CONNECTION;
     conn->retry_count = 0;
-    // T1 MUST be started after sending SABM per AX.25 v2.2 Section 6.3.1 and C4 SDL.
-    // Use AX25_T1_PENDING sentinel so ax25_tick() arms it on the first call,
-    // avoiding a spurious immediate expiry when current_tick is near zero.
-    // Without this, AWAITING_CONNECTION never times out: no DL-ERROR N and no
-    // DL-DISCONNECT indication reach Layer 3 when the peer never responds.
+
+// T1 MUST be started after sending SABM per AX.25 v2.2 Section 6.3.1 and C4 SDL.
+// Use AX25_T1_PENDING sentinel so ax25_tick() arms it on the first call,
+// avoiding a spurious immediate expiry when current_tick is near zero.
+// Without this, AWAITING_CONNECTION never times out: no DL-ERROR N and no
+// DL-DISCONNECT indication reach Layer 3 when the peer never responds.
     conn->t1_start_tick = AX25_T1_PENDING;
 
     return 0;
@@ -2026,11 +2395,11 @@ uint8_t ax25_connect(ax25_connection_t *conn, ax25_address_t *dest, ax25_address
 uint8_t ax25_disconnect(ax25_connection_t *conn) {
     if (!conn)
         return 1;
-    // allow disconnect from CONNECTED or TIMER_RECOVERY states
+// allow disconnect from CONNECTED or TIMER_RECOVERY states
     if (conn->state != AX25_STATE_CONNECTED && conn->state != AX25_STATE_TIMER_RECOVERY)
         return 2;
 
-    // build and send DISC command frame per AX.25 v2.2 Section 4.3.3.3
+// build and send DISC command frame per AX.25 v2.2 Section 4.3.3.3
     ax25_unnumbered_frame_t disc;
     disc.base.header = conn->peer_addr;
     disc.base.header.cr = true;   // command frame
@@ -2057,7 +2426,7 @@ uint8_t ax25_disconnect(ax25_connection_t *conn) {
         disc_encoded = NULL;
     }
 
-    // free all frames queued for retransmission - they will not be sent after DISC
+// free all frames queued for retransmission - they will not be sent after DISC
     while (conn->tx_queue.count > 0) {
         free(conn->tx_queue.frames[conn->tx_queue.head]);
         conn->tx_queue.frames[conn->tx_queue.head] = NULL;
@@ -2066,14 +2435,14 @@ uint8_t ax25_disconnect(ax25_connection_t *conn) {
         conn->tx_queue.count--;
     }
 
-    // transition to awaiting release and arm T1 for UA timeout
+// transition to awaiting release and arm T1 for UA timeout
     conn->state = AX25_STATE_AWAITING_RELEASE;
     conn->retry_count = 0;
 
-    // T1 MUST be started after sending DISC per AX.25 v2.2 Section 6.3.4 and
-    // C4 SDL. If UA or DM is never received, T1 expiry drives N2 retries and
-    // ultimately issues DL-ERROR N + DL-DISCONNECT indication to Layer 3.
-    // Use AX25_T1_PENDING sentinel to let ax25_tick() arm it safely on first call.
+// T1 MUST be started after sending DISC per AX.25 v2.2 Section 6.3.4 and
+// C4 SDL. If UA or DM is never received, T1 expiry drives N2 retries and
+// ultimately issues DL-ERROR N + DL-DISCONNECT indication to Layer 3.
+// Use AX25_T1_PENDING sentinel to let ax25_tick() arm it safely on first call.
     conn->t1_start_tick = AX25_T1_PENDING;
 
     return 0;
@@ -2083,21 +2452,21 @@ uint8_t ax25_send_data(ax25_connection_t *conn, uint8_t *data, size_t len, uint8
     if (!conn || !data)
         return 1;
 
-    // DL-DATA request: per AX.25 v2.2 Section 6.4.11 and C4 SDL, new I-frames
-    // must not be sent in TIMER_RECOVERY state (retransmission in progress).
+// DL-DATA request: per AX.25 v2.2 Section 6.4.11 and C4 SDL, new I-frames
+// must not be sent in TIMER_RECOVERY state (retransmission in progress).
     if (conn->state == AX25_STATE_TIMER_RECOVERY)
         return 6;  // Recovery in progress - retry later
 
     if (conn->state != AX25_STATE_CONNECTED)
         return 2;
 
-    // Per AX.25 v2.2 Section 6.4.9: stop I-frame transmission while peer is busy
+// Per AX.25 v2.2 Section 6.4.9: stop I-frame transmission while peer is busy
     if (conn->peer_busy)
         return 5;  // Peer busy
 
-    // Segment automatically when payload exceeds negotiated N1 per Section 6.6 / Appendix C6.
-    // Previously the payload was silently truncated to N1 (data loss); now the segmenter
-    // splits the data into multiple I-frames and the peer reassembles them transparently.
+// Segment automatically when payload exceeds negotiated N1 per Section 6.6 / Appendix C6.
+// Previously the payload was silently truncated to N1 (data loss); now the segmenter
+// splits the data into multiple I-frames and the peer reassembles them transparently.
     if (len > conn->timers.n1) {
         // Require at least one open window slot before starting segmentation.
         // If the window fills mid-burst, the peer's TR210 timer detects the gap
@@ -2118,18 +2487,12 @@ uint8_t ax25_send_data(ax25_connection_t *conn, uint8_t *data, size_t len, uint8
         return 0;
     }
 
-    // Payload fits within N1: use raw single-frame path (no segmentation)
+// Payload fits within N1: use raw single-frame path (no segmentation)
     return ax25_send_data_raw(conn, data, len, pid);
 }
 
 // Send RNR when local buffers full - AX.25 v2.2 Section 6.4.10
 uint8_t ax25_send_rnr(ax25_connection_t *conn) {
-    if (!conn || conn->state != AX25_STATE_CONNECTED)
-        return 1;
-
-    // DL-FLOW-OFF: permitted in CONNECTED and TIMER_RECOVERY per AX.25 v2.2
-    // Section 6.4.10. Both are information-transfer states where local busy
-    // can occur. Reject any other state.
     if (!conn)
         return 1;
     if (conn->state != AX25_STATE_CONNECTED && conn->state != AX25_STATE_TIMER_RECOVERY)
@@ -2146,9 +2509,16 @@ uint8_t ax25_send_rnr(ax25_connection_t *conn) {
 
     size_t len;
     uint8_t err;
-    uint8_t *encoded = ax25_supervisory_frame_encode(&rnr, &len, &err);
+// use ax25_frame_encode to include address header, consistent with
+// all other S-frame senders (send_rr, send_rej, send_srej, send_rnr static helper)
+    uint8_t *encoded = ax25_frame_encode((ax25_frame_t*) &rnr, &len, &err);
+
     if (encoded && conn->callbacks.transmit) {
         conn->callbacks.transmit(conn->user_data, encoded, len);
+        // Update statistics - S-frame sent (was missing from public API path)
+        conn->stats.sframe_sent++;
+        if (conn->stats.sframe_sent == 0)
+            conn->stats.sframe_sent = 1;
     }
 
     if (encoded != NULL) {
@@ -2161,11 +2531,11 @@ uint8_t ax25_send_rnr(ax25_connection_t *conn) {
 
 // Clear local busy condition - AX.25 v2.2 Section 6.4.10
 uint8_t ax25_clear_local_busy(ax25_connection_t *conn) {
-    // DL-FLOW-ON: guard against invalid states and choose correct response
-    // frame per AX.25 v2.2 Section 6.4.10:
-    //   - REJ if an implicit-reject exception is outstanding (last I-frame
-    //     was out of sequence and REJ was not yet sent or not yet answered)
-    //   - RR otherwise (all received I-frames were in order)
+// DL-FLOW-ON: guard against invalid states and choose correct response
+// frame per AX.25 v2.2 Section 6.4.10:
+//   - REJ if an implicit-reject exception is outstanding (last I-frame
+//     was out of sequence and REJ was not yet sent or not yet answered)
+//   - RR otherwise (all received I-frames were in order)
     if (!conn || !conn->local_busy)
         return 1;
     if (conn->state != AX25_STATE_CONNECTED && conn->state != AX25_STATE_TIMER_RECOVERY)
@@ -2195,7 +2565,7 @@ uint8_t ax25_send_ui(ax25_address_t *dest, ax25_address_t *src, uint8_t *data, s
         return 2;  // No data to send
     }
 
-    // Build UI frame
+// Build UI frame
     ax25_unnumbered_information_frame_t ui;
     ui.base.base.header.destination = *dest;
     ui.base.base.header.source = *src;
@@ -2214,7 +2584,7 @@ uint8_t ax25_send_ui(ax25_address_t *dest, ax25_address_t *src, uint8_t *data, s
         return 3;  // Encoding failed
     }
 
-    // Transmit the frame
+// Transmit the frame
     transmit(encoded, encoded_len);
 
     if (encoded != NULL) {
@@ -2253,7 +2623,7 @@ uint8_t ax25_send_ui_conn(ax25_connection_t *conn, uint8_t *data, size_t len, ui
 
     conn->callbacks.transmit(conn->user_data, encoded, encoded_len);
 
-    // Update statistics for UI frames sent
+// Update statistics for UI frames sent
     conn->stats.uframe_sent++;
     if (conn->stats.uframe_sent == 0) {
         conn->stats.uframe_sent = 1;
@@ -2277,7 +2647,7 @@ uint8_t ax25_send_test_command(ax25_connection_t *conn, uint8_t *payload, size_t
         return 2;  // Payload too large
     }
 
-    // Build TEST command frame
+// Build TEST command frame
     ax25_test_frame_t test;
     test.base.base.header = conn->peer_addr;
     test.base.base.header.cr = true;  // Command
@@ -2294,7 +2664,7 @@ uint8_t ax25_send_test_command(ax25_connection_t *conn, uint8_t *payload, size_t
         return 3;  // Encoding failed
     }
 
-    // Transmit the frame
+// Transmit the frame
     conn->callbacks.transmit(conn->user_data, encoded, len);
 
     if (encoded != NULL) {
@@ -2302,12 +2672,12 @@ uint8_t ax25_send_test_command(ax25_connection_t *conn, uint8_t *payload, size_t
         encoded = NULL;
     }
 
-    // Update statistics - mark test as sent and waiting for response
+// Update statistics - mark test as sent and waiting for response
     conn->test_stats.test_sent++;
     conn->test_stats.test_sequence++;
-    // Note: last_test_tick should be set by caller when they call this function
-    // We can't set it here because we don't have access to current_tick
-    // Caller should call: conn->test_stats.last_test_tick = current_tick after this
+// Note: last_test_tick should be set by caller when they call this function
+// We can't set it here because we don't have access to current_tick
+// Caller should call: conn->test_stats.last_test_tick = current_tick after this
 
     return 0;  // Success
 }
@@ -2318,15 +2688,15 @@ uint32_t ax25_get_average_rtt_ms(ax25_connection_t *conn) {
         return 0;
     }
 
-    // Calculate average RTT
-    // Use 32-bit arithmetic only, avoid division if possible
+// Calculate average RTT
+// Use 32-bit arithmetic only, avoid division if possible
     uint32_t sum = conn->test_stats.rtt_sum;
     uint16_t count = conn->test_stats.rtt_count;
 
-    // Simple division for average
+// Simple division for average
     uint32_t avg_ticks = sum / count;
 
-    // Convert from 10ms ticks to milliseconds
+// Convert from 10ms ticks to milliseconds
     return avg_ticks * 10;
 }
 
@@ -2336,40 +2706,40 @@ uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connect
         return 1;  // Invalid parameters
     }
 
-    // Only apply if negotiation completed successfully
+// Only apply if negotiation completed successfully
     if (mgmt_ctx->state != AX25_MGMT_NEGOTIATED) {
         return 1;  // Negotiation not complete
     }
 
-    // Apply full-duplex setting
-    // Per AX.25 v2.2 Section 6.7.2: both stations must agree to full-duplex
+// Apply full-duplex setting
+// Per AX.25 v2.2 Section 6.7.2: both stations must agree to full-duplex
     conn->full_duplex = mgmt_ctx->agreed_params.full_duplex;
 
-    // Propagate full-duplex flag to physical layer so CSMA is bypassed (C2b path).
-    // phys may be NULL in unit-test environments that have no physical layer instance.
+// Propagate full-duplex flag to physical layer so CSMA is bypassed (C2b path).
+// phys may be NULL in unit-test environments that have no physical layer instance.
     if (phys) {
         ax25_physical_set_duplex(phys, conn->full_duplex);
     }
 
-    // If switching to full-duplex, cancel any T2 ACK timer that may have been
-    // armed during a prior half-duplex exchange.  In full-duplex mode,
-    // start_t2_response() sends RR immediately and never sets t2_running, so a
-    // leftover armed T2 would fire a spurious RR on the next ax25_tick() call,
-    // violating AX.25 v2.2 Section 6.7.1.2.
+// If switching to full-duplex, cancel any T2 ACK timer that may have been
+// armed during a prior half-duplex exchange.  In full-duplex mode,
+// start_t2_response() sends RR immediately and never sets t2_running, so a
+// leftover armed T2 would fire a spurious RR on the next ax25_tick() call,
+// violating AX.25 v2.2 Section 6.7.1.2.
     if (conn->full_duplex) {
         conn->t2_running = false;
         conn->t2_ack_pending = false;
         // t2_pending_nr is irrelevant when t2_running is false — leave unchanged
     }
 
-    // Apply modulo (affects sequence number range)
+// Apply modulo (affects sequence number range)
     if (mgmt_ctx->agreed_params.modulo128) {
         conn->vars.mod = 128;
     } else {
         conn->vars.mod = 8;
     }
 
-    // Apply reject mode (SREJ/REJ support)
+// Apply reject mode (SREJ/REJ support)
     if (mgmt_ctx->agreed_params.selective_reject && mgmt_ctx->agreed_params.implicit_reject) {
         conn->rej_mode = AX25_REJ_MODE_SREJ_REJ;  // Both SREJ and REJ
     } else if (mgmt_ctx->agreed_params.selective_reject) {
@@ -2380,19 +2750,19 @@ uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connect
         conn->rej_mode = AX25_REJ_MODE_NONE;  // No reject support
     }
 
-    // Apply timer values (convert from milliseconds to 10ms ticks)
+// Apply timer values (convert from milliseconds to 10ms ticks)
     conn->timers.t1 = mgmt_ctx->agreed_params.ack_timer / 10;
 
-    // Full-duplex T1 reduction.
-    // The negotiated ack_timer was derived with "take the max" logic, which is
-    // conservative for half-duplex (CSMA backoff + peer key-up + TX/RX contention).
-    // In full-duplex both transmitters are permanently keyed; there is no CSMA,
-    // no peer key-up delay and no channel contention.  Using 50% of the negotiated
-    // value is a safe initial estimate consistent with AX.25 v2.2 Section 6.7.1.1
-    // ("T1 should be at least 2x the measured round-trip time").
-    // ax25_adjust_t1_adaptive() will refine T1 further once TEST-frame RTT
-    // samples are available.  Minimum floor: 10 ticks (100 ms).
-    // All arithmetic is 32-bit integer only -- no floating point.
+// Full-duplex T1 reduction.
+// The negotiated ack_timer was derived with "take the max" logic, which is
+// conservative for half-duplex (CSMA backoff + peer key-up + TX/RX contention).
+// In full-duplex both transmitters are permanently keyed; there is no CSMA,
+// no peer key-up delay and no channel contention.  Using 50% of the negotiated
+// value is a safe initial estimate consistent with AX.25 v2.2 Section 6.7.1.1
+// ("T1 should be at least 2x the measured round-trip time").
+// ax25_adjust_t1_adaptive() will refine T1 further once TEST-frame RTT
+// samples are available.  Minimum floor: 10 ticks (100 ms).
+// All arithmetic is 32-bit integer only -- no floating point.
     if (conn->full_duplex && conn->timers.t1 > 0u) {
         uint16_t fd_t1 = (uint16_t) (conn->timers.t1 / 2u);
         if (fd_t1 < 10u) {
@@ -2401,38 +2771,38 @@ uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connect
         conn->timers.t1 = fd_t1;
     }
 
-    // Apply retry count
+// Apply retry count
     conn->timers.n2 = mgmt_ctx->agreed_params.retries;
 
-    // Apply window size
-    // include PI=8 (Window Size Rx) in its XID, agreed_params.window_size stays at 7
-    // (the modulo-8 XID offer default); applying 7/127 would run the link at ~5.5%
-    // window efficiency; per AX.25 v2.2 the spec default for modulo-128 is 32, so
-    // promote any modulo-8-default value to 32 when we are in modulo-128 mode;
-    // always clamp to the smaller of the protocol maximum and the queue array limit
+// Apply window size
+// include PI=8 (Window Size Rx) in its XID, agreed_params.window_size stays at 7
+// (the modulo-8 XID offer default); applying 7/127 would run the link at ~5.5%
+// window efficiency; per AX.25 v2.2 the spec default for modulo-128 is 32, so
+// promote any modulo-8-default value to 32 when we are in modulo-128 mode;
+// always clamp to the smaller of the protocol maximum and the queue array limit
     uint8_t max_proto_k = (conn->vars.mod == 128) ? 127u : 7u;
     uint8_t max_queue_k = (uint8_t) (AX25_MAX_QUEUE_SIZE - 1);
     uint8_t max_k = (max_proto_k < max_queue_k) ? max_proto_k : max_queue_k;
     uint8_t spec_def_k = (conn->vars.mod == 128) ? 32u : 7u;
     uint8_t req_k = mgmt_ctx->agreed_params.window_size;
-    // promote modulo-8 default to spec default for modulo-128
+// promote modulo-8 default to spec default for modulo-128
     if (conn->vars.mod == 128 && req_k <= 7u) {
         req_k = spec_def_k;
     }
     conn->timers.k = (req_k <= max_k) ? req_k : max_k;
 
-    // Apply maximum I-field length
+// Apply maximum I-field length
     conn->timers.n1 = mgmt_ctx->agreed_params.ifield_length;
 
-    // Reinitialize segmenter with the newly negotiated N1 value.
-    // segment_size = N1 - 2 (1-byte segment header + 1-byte original-PID overhead).
-    // Re-wires callbacks because ax25_segmenter_init zeroes the entire struct.
+// Reinitialize segmenter with the newly negotiated N1 value.
+// segment_size = N1 - 2 (1-byte segment header + 1-byte original-PID overhead).
+// Re-wires callbacks because ax25_segmenter_init zeroes the entire struct.
     ax25_segmenter_init(&conn->segmenter, conn->timers.n1);
     conn->segmenter.transmit_iframe = seg_transmit_cb;
     conn->segmenter.on_reassembly_complete = seg_reassembly_complete_cb;
     conn->segmenter.user_data = conn;
 
-    // Restore error/retransmit callbacks after re-init (ax25_segmenter_init zeroes struct)
+// Restore error/retransmit callbacks after re-init (ax25_segmenter_init zeroes struct)
     conn->segmenter.on_reassembly_error = seg_reassembly_error_cb;
     conn->segmenter.on_request_retransmit = seg_request_retransmit_cb;
 
@@ -2454,7 +2824,7 @@ uint8_t ax25_register_protocol(ax25_connection_t *conn, uint8_t pid, ax25_protoc
         return 1;  // Invalid parameters
     }
 
-    // Check if already registered - update existing entry
+// Check if already registered - update existing entry
     for (uint8_t i = 0; i < AX25_MAX_PROTOCOL_HANDLERS; i++) {
         if (conn->protocols[i].active && conn->protocols[i].pid == pid) {
             // Update existing handler
@@ -2464,7 +2834,7 @@ uint8_t ax25_register_protocol(ax25_connection_t *conn, uint8_t pid, ax25_protoc
         }
     }
 
-    // Find free slot for new registration
+// Find free slot for new registration
     for (uint8_t i = 0; i < AX25_MAX_PROTOCOL_HANDLERS; i++) {
         if (!conn->protocols[i].active) {
             conn->protocols[i].pid = pid;
@@ -2511,7 +2881,7 @@ void ax25_adjust_t1_adaptive(ax25_connection_t *conn) {
         return;
     }
 
-    // Use TEST frame RTT measurements to adjust T1
+// Use TEST frame RTT measurements to adjust T1
     if (conn->test_stats.rtt_count > 0) {
         // Calculate average RTT (already in 10ms ticks from test_stats)
         uint32_t avg_rtt = conn->test_stats.rtt_sum / conn->test_stats.rtt_count;
@@ -2545,7 +2915,7 @@ const ax25_statistics_t* ax25_get_statistics(ax25_connection_t *conn) {
         return NULL;
     }
 
-    // Update current state variables
+// Update current state variables
     conn->stats.current_vs = conn->vars.vs;
     conn->stats.current_vr = conn->vars.vr;
     conn->stats.current_va = conn->vars.va;
@@ -2571,23 +2941,23 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
         return 1;
     }
 
-    // If FX.25 not requested, use standard AX.25
+// If FX.25 not requested, use standard AX.25
     if (!use_fx25) {
         return ax25_send_data(conn, data, len, pid);
     }
 
-    // DL-DATA request: per AX.25 v2.2 Section 6.4.11 and C4 SDL, new I-frames
-    // must not be sent in TIMER_RECOVERY state (retransmission in progress).
-    // Return code 6 ("recovery in progress") instead of allowing transmission so
-    // Layer 3 knows the link is alive but temporarily flow-controlled, not down.
-    // This check is required here because the FX.25 path bypasses ax25_send_data().
+// DL-DATA request: per AX.25 v2.2 Section 6.4.11 and C4 SDL, new I-frames
+// must not be sent in TIMER_RECOVERY state (retransmission in progress).
+// Return code 6 ("recovery in progress") instead of allowing transmission so
+// Layer 3 knows the link is alive but temporarily flow-controlled, not down.
+// This check is required here because the FX.25 path bypasses ax25_send_data().
     if (conn->state == AX25_STATE_TIMER_RECOVERY)
         return 6;  // Recovery in progress - retry later
 
-    // Gate 1: enforce send window BEFORE any encoding or transmission.
-    // Previously these checks appeared after transmit, allowing frames to be
-    // sent when the window was already full (Violation A) and V(S) to be
-    // incremented after a potential ACK arrival (Violation B).
+// Gate 1: enforce send window BEFORE any encoding or transmission.
+// Previously these checks appeared after transmit, allowing frames to be
+// sent when the window was already full (Violation A) and V(S) to be
+// incremented after a potential ACK arrival (Violation B).
     uint8_t outstanding = AX25_OUTSTANDING(conn->vars.vs, conn->vars.va, conn->vars.mod);
     if (outstanding >= conn->timers.k || conn->tx_queue.count >= AX25_MAX_QUEUE_SIZE) {
         return 3;  // Window full - mirrors ax25_send_data() return code
@@ -2596,12 +2966,12 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
         return 5;  // Peer sent RNR - cannot send I-frames
     }
 
-    // Calculate frame size: address(14) + control(1-2) + pid(1) + data(len)
+// Calculate frame size: address(14) + control(1-2) + pid(1) + data(len)
     bool extended = (conn->vars.mod == 128);
     uint16_t ctrl_len = extended ? 2 : 1;
     uint16_t ax25_frame_len = 14 + ctrl_len + 1 + len;
 
-    // Allocate buffer for AX.25 frame (static allocation to avoid malloc on MCU)
+// Allocate buffer for AX.25 frame (static allocation to avoid malloc on MCU)
     uint8_t ax25_frame[256];  // Max reasonable frame size
     if (ax25_frame_len > sizeof(ax25_frame)) {
         return 2;  // Frame too large
@@ -2609,14 +2979,14 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
 
     uint16_t offset = 0;
 
-    // Build address field (destination + source, 7 bytes each)
+// Build address field (destination + source, 7 bytes each)
     memcpy(&ax25_frame[offset], &conn->peer_addr.destination, 7);
     offset += 7;
     memcpy(&ax25_frame[offset], &conn->peer_addr.source, 7);
     offset += 7;
 
-    // Snapshot V(S) and V(R) before any state changes so the control field
-    // is encoded with consistent values even if a rollback is needed later.
+// Snapshot V(S) and V(R) before any state changes so the control field
+// is encoded with consistent values even if a rollback is needed later.
     uint8_t snap_vs = conn->vars.vs;
     uint8_t snap_nr = conn->vars.vr;
 
@@ -2629,30 +2999,30 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
         ax25_frame[offset++] = (snap_nr << 5) | (snap_vs << 1);  // N(R)|N(S)|0
     }
 
-    // Add PID
+// Add PID
     ax25_frame[offset++] = pid;
 
-    // Add data
+// Add data
     memcpy(&ax25_frame[offset], data, len);
     offset += len;
 
-    // Advance V(S) NOW, before fx25_encode() or transmit(), so that any ACK
-    // arriving during or after transmission sees a valid V(S) >= N(R).
+// Advance V(S) NOW, before fx25_encode() or transmit(), so that any ACK
+// arriving during or after transmission sees a valid V(S) >= N(R).
     conn->vars.vs = INC_MOD(conn->vars.vs, conn->vars.mod);
 
-    // Cancel T2 - ACK is piggybacked in the N(R) of this outgoing I-frame
+// Cancel T2 - ACK is piggybacked in the N(R) of this outgoing I-frame
     cancel_t2(conn);
 
-    // Start T1 acknowledgment timer if not already running
+// Start T1 acknowledgment timer if not already running
     if (conn->t1_start_tick == 0) {
         // Use AX25_T1_PENDING (UINT32_MAX) not 1; avoids off-by-one on MCUs
         // that boot with tick counter near zero (see fix 1.3).
         conn->t1_start_tick = AX25_T1_PENDING;
     }
-    // T3 only runs when there are no outstanding frames
+// T3 only runs when there are no outstanding frames
     conn->t3_start_tick = 0;
 
-    // Now wrap with FX.25
+// Now wrap with FX.25
     fx25_frame_t fx25;
     uint8_t mode = fx25_select_mode_for_conditions(ax25_frame_len, channel_quality);
     uint8_t err = fx25_encode(ax25_frame, ax25_frame_len, mode, &fx25);
@@ -2663,7 +3033,7 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
         return 3;  // FX.25 encoding failed
     }
 
-    // Transmit FX.25 frame: correlation tag + RS codeword
+// Transmit FX.25 frame: correlation tag + RS codeword
     if (conn->callbacks.transmit) {
         // Allocate temporary buffer for transmission
         uint16_t tx_len = 8 + fx25.codeword_len;
@@ -2691,10 +3061,10 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
         }
     }
 
-    // Free FX.25 frame resources
+// Free FX.25 frame resources
     fx25_frame_free(&fx25);
 
-    // Update statistics
+// Update statistics
     conn->stats.iframe_sent++;
     if (conn->stats.iframe_sent == 0) {
         conn->stats.iframe_sent = 1;  // Prevent overflow
@@ -2704,15 +3074,13 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
         conn->stats.bytes_sent = len;  // Prevent overflow
     }
 
-    conn->stats.bytes_sent += len;
-
     return 0;
 }
 
 void ax25_connection_cleanup(ax25_connection_t *conn) {
     if (!conn)
         return;
-    // Drain and free every frame still queued for retransmission
+// Drain and free every frame still queued for retransmission
     while (conn->tx_queue.count > 0) {
         free(conn->tx_queue.frames[conn->tx_queue.head]);
         conn->tx_queue.frames[conn->tx_queue.head] = NULL;

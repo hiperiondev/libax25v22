@@ -505,7 +505,8 @@ typedef enum {
  * 3. Process incoming XID with ax25_mgmt_process_xid()
  * 4. Call ax25_mgmt_tick() periodically for timeout handling
  */
-typedef struct {
+typedef struct ax25_mgmt_context_t ax25_mgmt_context_t;
+typedef struct ax25_mgmt_context_t {
     /**
      * @brief Current MDL state machine state
      * @see ax25_mgmt_state_t
@@ -555,7 +556,13 @@ typedef struct {
     ax25_address_t local;                  // local station address stored for XID retransmit
     void (*transmit)(uint8_t*, size_t);   // stored transmit callback for XID retransmit
     ax25_mdl_error_cb_t on_mdl_error;      // MDL-ERROR indication callback, NULL = ignored
-    void *user_data;                       // context pointer passed to on_mdl_error
+
+    // on_mdl_negotiated callback fires when XID exchange completes.
+    // Per AX.25 v2.2 Appendix C5 SDL: MDL-NEGOTIATE confirm delivered to upper layer here.
+    // Upper layer should call ax25_apply_negotiated_params() from this callback.
+    // NULL = no notification; caller polls mgmt_ctx->state manually.
+    void (*on_mdl_negotiated)(ax25_mgmt_context_t *ctx, void *user_data);
+    void *user_data;                       // context pointer passed to on_mdl_error and on_mdl_negotiated
 } ax25_mgmt_context_t;
 
 /*============================================================================*/

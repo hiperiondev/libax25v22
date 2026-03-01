@@ -15,6 +15,7 @@
  * - Broadcast UI detection for connectionless traffic (APRS, beacons).
  * - Registration/unregistration with link ID output for application use.
  * - Tick-based processing for timers in ax25_process_frame().
+ * - Connection table indexed by address pair for O(n) lookup.
  *
  * @section Standards_References
  * - AX.25 v2.2 Sections 2.7, 3.12 (addresses), 6.3 (UI handling)
@@ -43,6 +44,23 @@
 #define AX25_MUX_PRI_ACK    200u /**< S-frames (RR/RNR/REJ/SREJ) - acknowledgment priority */
 #define AX25_MUX_PRI_URGENT 255u /**< U-frames (SABM/SABME/DISC/DM/UA/FRMR) - urgent link control */
 #define AX25_MUX_NO_SEIZED  0xFF
+// connection table definition per AX.25 v2.2 SDL Appendix C3
+// AX25_MAX_CONNECTIONS: maximum simultaneous AX.25 connections indexed by address pair.
+// Matches AX25_MUX_MAX_LINKS so each link slot can have one connection entry.
+#ifndef AX25_MAX_CONNECTIONS
+#define AX25_MAX_CONNECTIONS 8
+#endif
+
+// ax25_conn_t: one entry in the static connection table.
+// Indexed by (dest callsign+SSID, src callsign+SSID) pair for O(n) lookup.
+// dest and src store the AX.25 encoded callsign as 6 printable ASCII chars
+// plus a 1-byte SSID (packed: chars[0..5] = callsign space-padded, chars[6] = SSID 0-15).
+typedef struct {
+    uint8_t active;   // 1 = slot in use, 0 = free
+    char dest[7];  // remote callsign (6 chars space-padded) + SSID byte
+    char src[7];   // local  callsign (6 chars space-padded) + SSID byte
+    ax25_connection_t *conn;    // pointer to the associated connection state machine
+} ax25_conn_t;
 
 typedef void (*ax25_lm_seize_confirm_t)(void *user_data, uint8_t *frame, size_t len);
 
@@ -155,5 +173,25 @@ uint8_t ax25_mux_classify_priority(const uint8_t *frame, size_t len);
  *        (zero changes to ax25_state_machine.c required)
  */
 void ax25_mux_transmit_adapter(void *user_data, uint8_t *frame, size_t len);
+
+//  connection table API per AX.25 v2.2 SDL Appendix C3
+
+// ax25_find_conn: look up an existing connection by (dest, src) address pair.
+// dest: remote callsign key, 6 chars space-padded + SSID as 7th byte.
+// src:  local  callsign key, 6 chars space-padded + SSID as 7th byte.
+// Returns pointer to the matching ax25_conn_t slot, or NULL if not found.
+ax25_conn_t* ax25_find_conn(const char *dest, const char *src);
+
+// ax25_alloc_conn: claim a free slot in the static connection table.
+// dest: remote callsign + SSID key (7 bytes).
+// src:  local  callsign + SSID key (7 bytes).
+// conn: associated connection state machine instance.
+// Returns pointer to the allocated ax25_conn_t on success, NULL if table full
+// or if an entry with the same (dest, src) pair already exists.
+ax25_conn_t* ax25_alloc_conn(const char *dest, const char *src, ax25_connection_t *conn);
+
+// ax25_free_conn: release a connection table slot back to the free list.
+// Safe to call with NULL (no-op).
+void ax25_free_conn(ax25_conn_t *entry);
 
 #endif /* AX25_MUX_H_ */

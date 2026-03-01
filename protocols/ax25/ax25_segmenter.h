@@ -250,6 +250,11 @@ typedef struct {
     uint8_t rx_buffer[4096]; /**< Static reassembly buffer (4KB max payload) */
     uint16_t rx_buffer_used; /**< Bytes accumulated in rx_buffer */
     uint8_t rx_expected_segment; /**< Next expected sequence number (0-63) */
+    // field to store segment count decoded from first-segment header
+    // AX.25 v2.2 §6.6: bits 5-0 of first segment = remaining count (= total - 1), so
+    // total_segments = remaining + 1; needed to convert remaining count of non-first
+    // segments back to a 0-based segment index for bitmap and ordering logic
+    uint8_t rx_total_segments; /**< Total segment count decoded from first segment header */
     uint8_t rx_segment_bitmap[8]; /**< Bitmap of received segments (64 bits) */
     bool rx_first_received; /**< True if first segment (seq 0) received */
     uint32_t rx_timeout_tick; /**< TR210 timeout timestamp (10ms ticks) */

@@ -38,6 +38,9 @@ uint8_t ax25_mgmt_init(ax25_mgmt_context_t *ctx) {
     ctx->on_mdl_error = NULL;   // caller sets after init if MDL-ERROR reporting needed
     ctx->user_data = NULL;   // caller sets after init
     ctx->transmit = NULL;   // set by ax25_mgmt_start_negotiation
+    // initialize on_mdl_negotiated callback to NULL
+    // Caller sets after init if MDL-NEGOTIATE confirm notification is needed.
+    ctx->on_mdl_negotiated = NULL;
 
     return 0;
 }
@@ -345,6 +348,13 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
     }
 
     ctx->state = AX25_MGMT_NEGOTIATED;
+    // deliver MDL-NEGOTIATE confirm to upper layer per AX.25 v2.2 Appendix C5.
+    // agreed_params are fully populated at this point; upper layer may call
+    // ax25_apply_negotiated_params() safely from within this callback.
+    if (ctx->on_mdl_negotiated) {
+        ctx->on_mdl_negotiated(ctx, ctx->user_data);
+    }
+
     return 0;
 }
 

@@ -8,6 +8,11 @@
 #include <string.h>
 #include "ax25_mux.h"
 
+// static connection table per AX.25 v2.2 SDL Appendix C3
+// Provides O(n) lookup of connections by (dest, src) address-pair key.
+// Static allocation: no heap required, safe for all embedded targets.
+static ax25_conn_t conn_table[AX25_MAX_CONNECTIONS];
+
 static bool address_equals(const ax25_address_t *a, const ax25_address_t *b) {
     if (strncmp(a->callsign, b->callsign, 6) != 0)
         return false;
@@ -242,4 +247,50 @@ void ax25_mux_receive_frame(ax25_mux_t *mux, ax25_frame_t *frame, uint32_t curre
             ax25_process_frame(l->conn, frame, current_tick_10ms);
         }
     }
+}
+
+// connection table implementation per AX.25 v2.2 SDL Appendix C3
+
+ax25_conn_t* ax25_find_conn(const char *dest, const char *src) {
+    uint8_t i;
+    // validate arguments before scanning the table
+    if (!dest || !src)
+        return NULL;
+    for (i = 0; i < AX25_MAX_CONNECTIONS; i++) {
+        if (conn_table[i].active && strncmp(conn_table[i].dest, dest, 7) == 0 && strncmp(conn_table[i].src, src, 7) == 0) {
+            return &conn_table[i];
+        }
+    }
+    return NULL;
+}
+
+ax25_conn_t* ax25_alloc_conn(const char *dest, const char *src, ax25_connection_t *conn) {
+    uint8_t i;
+    // validate arguments
+    if (!dest || !src || !conn)
+        return NULL;
+    // reject duplicate (dest, src) pair — first registration wins
+    if (ax25_find_conn(dest, src) != NULL)
+        return NULL;
+    // claim the first free slot
+    for (i = 0; i < AX25_MAX_CONNECTIONS; i++) {
+        if (!conn_table[i].active) {
+            strncpy(conn_table[i].dest, dest, 7);
+            strncpy(conn_table[i].src, src, 7);
+            conn_table[i].conn = conn;
+            conn_table[i].active = 1;
+            return &conn_table[i];
+        }
+    }
+    return NULL;  // table full
+}
+
+void ax25_free_conn(ax25_conn_t *entry) {
+    if (!entry)
+        return;
+    entry->active = 0;
+    entry->conn = NULL;
+    // clear keys so stale data does not cause false positives on future lookups
+    memset(entry->dest, 0, sizeof(entry->dest));
+    memset(entry->src, 0, sizeof(entry->src));
 }

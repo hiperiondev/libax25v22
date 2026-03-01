@@ -255,13 +255,15 @@ typedef struct {
  */
 typedef enum {
     AX25_STATE_DISCONNECTED = 0, /**< No connection established */
-    AX25_STATE_AWAITING_CONNECTION, /**< Sent SABM/SABME, awaiting UA */
+    AX25_STATE_AWAITING_CONNECTION, /**< Sent SABM (mod-8), awaiting UA */
     AX25_STATE_AWAITING_RELEASE, /**< Sent DISC, awaiting UA/DM */
     AX25_STATE_CONNECTED, /**< Information transfer phase */
     AX25_STATE_TIMER_RECOVERY, /**< Retransmitting after T1 expiry */
+    AX25_STATE_AWAITING_CONN_2_2, /**< Sent SABME (mod-128), awaiting UA */
     AX25_STATE_AWAITING_SABM, /**< Received SABM, sending UA */
     AX25_STATE_AWAITING_DISC, /**< Received DISC, sending UA */
-    AX25_STATE_FRAME_REJECT /**< Protocol error, FRMR sent */
+    AX25_STATE_FRAME_REJECT, /**< Protocol error, FRMR sent */
+    AX25_STATE_COUNT /**< Sentinel: total number of states */
 } ax25_link_state_t;
 
 /*============================================================================*/
@@ -515,6 +517,58 @@ typedef struct {
 } ax25_test_stats_t;
 
 /*============================================================================*/
+/* Event-Driven FSM Interface (AX.25 v2.2 Appendix C4 SDL)                   */
+/*============================================================================*/
+
+// ax25_event_t: all events that drive the AX.25 v2.2 Data-Link State Machine.
+// Corresponds to the SDL event inputs in Appendix C4 of the specification.
+typedef enum {
+    AX25_EV_DL_CONNECT = 0,  // Upper layer: request connection (DL-CONNECT request)
+    AX25_EV_DL_DISCONNECT,   // Upper layer: request disconnect (DL-DISCONNECT request)
+    AX25_EV_DL_DATA,         // Upper layer: send data (DL-DATA request)
+    AX25_EV_DL_FLOW_ON,      // Upper layer: clear local busy (DL-FLOW-ON request)
+    AX25_EV_DL_FLOW_OFF,     // Upper layer: set local busy (DL-FLOW-OFF request)
+    AX25_EV_RX_SABM,         // Received SABM command from peer
+    AX25_EV_RX_SABME,        // Received SABME command from peer (mod-128)
+    AX25_EV_RX_DISC,         // Received DISC command from peer
+    AX25_EV_RX_UA,           // Received UA response (F=0) from peer
+    AX25_EV_RX_UA_F1,        // Received UA response with F=1 from peer
+    AX25_EV_RX_DM,           // Received DM response from peer
+    AX25_EV_RX_I,            // Received I-frame from peer
+    AX25_EV_RX_RR,           // Received RR supervisory frame
+    AX25_EV_RX_RNR,          // Received RNR supervisory frame
+    AX25_EV_RX_REJ,          // Received REJ supervisory frame
+    AX25_EV_RX_SREJ,         // Received SREJ supervisory frame
+    AX25_EV_RX_FRMR,         // Received FRMR frame
+    AX25_EV_RX_UI,           // Received UI unnumbered information frame
+    AX25_EV_RX_TEST,         // Received TEST frame (command or response)
+    AX25_EV_T1_EXPIRED,      // T1 acknowledgment timer expired
+    AX25_EV_T2_EXPIRED,      // T2 response delay timer expired
+    AX25_EV_T3_EXPIRED,      // T3 inactive link timer expired
+    AX25_EV_COUNT            // Sentinel: total number of events
+} ax25_event_t;
+
+// ax25_event_data_t: event-specific parameter block.
+// The active union member depends on the ax25_event_t value:
+//   AX25_EV_DL_CONNECT  -> connect.{dest, src}
+//   AX25_EV_DL_DATA     -> data.{data, len, pid}
+//   AX25_EV_RX_*        -> frame (decoded ax25_frame_t*) + tick
+//   AX25_EV_T*_EXPIRED  -> tick (current 10ms tick counter)
+typedef union {
+    struct {
+        ax25_address_t *dest;
+        ax25_address_t *src;
+    } connect;
+    struct {
+        uint8_t *data;
+        size_t len;
+        uint8_t pid;
+    } data;
+    ax25_frame_t *frame;
+    uint32_t tick;
+} ax25_event_data_t;
+
+/*============================================================================*/
 /* Main Connection Context                                                    */
 /*============================================================================*/
 
@@ -618,11 +672,25 @@ typedef struct {
     // optional MDL context pointer for FRMR-to-MDL error bridging
     ax25_mgmt_context_t *mgmt_ctx;  // NULL = MDL bridging disabled
 
+    // MDL transmit trampoline for XID frame delivery.
+    // ax25_mgmt_start_negotiation and ax25_mgmt_process_xid expect a
+    // void (*)(uint8_t*, size_t) transmit function with no user_data argument,
+    // while conn->callbacks.transmit carries void* user_data as first argument.
+    // The caller sets this pointer to a thin wrapper that captures the connection
+    // and forwards to conn->callbacks.transmit. NULL disables automatic XID negotiation
+    // even when mgmt_ctx is set; both must be non-NULL to enable MDL auto-negotiation.
+    void (*mdl_transmit_trampoline)(uint8_t *frame, size_t len);
+
     // Segmenter/reassembler per AX.25 v2.2 Section 2.4 / Appendix C6
     // Automatically applied: ax25_send_data uses it when len > N1,
     // and received PID=0x08 frames are routed through it for reassembly.
     ax25_segmenter_t segmenter;
 } ax25_connection_t;
+
+// ax25_action_fn: function pointer for one (state, event) FSM cell.
+// NULL entries in the dispatch table mean "ignore this event in this state"
+// per the SDL "else" transition convention.
+typedef void (*ax25_action_fn)(ax25_connection_t *conn, const ax25_event_data_t *ev_data);
 
 /*============================================================================*/
 /* Initialization and Connection Management                                   */
@@ -1059,5 +1127,15 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
  * @param conn Connection to clean up (may be NULL, then no-op)
  */
 void ax25_connection_cleanup(ax25_connection_t *conn);
+
+// ax25_process_event: dispatch an event through the FSM sparse action table.
+// This provides direct access to the AX.25 v2.2 Appendix C4 SDL.
+// For received frames prefer ax25_process_frame(); for timers prefer ax25_tick().
+// This function is primarily for testing and explicit SDL-level driving.
+//
+// @param conn     Connection context
+// @param ev       Event identifier (ax25_event_t)
+// @param ev_data  Event parameters (may be NULL for events with no payload)
+void ax25_process_event(ax25_connection_t *conn, ax25_event_t ev, const ax25_event_data_t *ev_data);
 
 #endif /* AX25_STATE_MACHINE_H_ */
