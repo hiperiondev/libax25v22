@@ -204,9 +204,7 @@
  */
 #define KISS_MAX_PORTS         16u    /**< Maximum logical ports per multi-port TNC (port 0xF reserved) */
 #define KISS_MAX_FRAME_SIZE    128u   /**< Maximum raw AX.25 payload in bytes (increase for host use) */
-#define KISS_MAX_PORTS         16u    /**< Maximum logical ports per multi-port TNC (port 0xF reserved) */
-#define KISS_MAX_FRAME_SIZE    128u   /**< Maximum raw AX.25 payload in bytes (increase for host use) */
-// KISS_TX_BUF_SIZE enlarged for SMACK CRC trailer
+
 // SMACK appends 2 CRC bytes each potentially SLIP-escaped to 2 bytes = 4 extra
 #define KISS_TX_BUF_SIZE       (KISS_MAX_FRAME_SIZE * 2u + 8u) /**< Worst-case escaped+framed TX buffer including SMACK CRC */
 #define KISS_SMACK_CRC_SIZE    2u     /**< Bytes appended by SMACK: 16-bit CRC (LSB first) */

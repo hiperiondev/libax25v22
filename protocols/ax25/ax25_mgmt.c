@@ -417,3 +417,199 @@ void ax25_mgmt_notify_frmr_received(ax25_mgmt_context_t *ctx) {
     if (ctx->on_mdl_error)
         ctx->on_mdl_error(AX25_MDL_ERROR_B, ctx->user_data);
 }
+
+// ax25_encode_xid: allocation-free XID info-field encoder.
+// Produces FI + GL + PI/PL/PV parameter list into buf[buf_size].
+// Uses the correct PI values from ax25_mgmt.h (2,3,6,8,9,10,11).
+// The proposal used wrong PI values (0x06 for HDLC opts, 0x19/0x1A/0x11/0x13
+// for window/timer/retries); this implementation uses the correct constants.
+// Returns number of bytes written, or 0 on buffer overflow.
+uint16_t ax25_encode_xid(uint8_t *buf, uint16_t buf_size, uint16_t n1_rx, uint8_t k_rx, uint16_t t1_ms, uint8_t n2, uint16_t t2_ms,
+bool mod128, bool full_duplex) {
+    uint16_t pos = 0;
+
+    // Validate arguments
+    if (!buf || buf_size < XID_INFO_MAX_LEN)
+        return 0;
+
+    // FI: Format Identifier = 0x82 (parameter negotiation per ISO 8885)
+    buf[pos++] = XID_FI_GFI;
+
+    // GL placeholder: back-filled after writing all parameters
+    uint16_t gl_pos = pos;
+    buf[pos++] = 0;
+
+    // PI=2: Class of Procedures (2 bytes PV)
+    // Byte 0: bit0 = half-duplex (always offered), bit1 = full-duplex
+    // Byte 1: reserved (0x00)
+    if (pos + 4u > buf_size)
+        return 0;
+    buf[pos++] = (uint8_t) XID_PI_CLASS_OF_PROCEDURES;
+    buf[pos++] = 2u;
+    buf[pos++] = (uint8_t) (XID_COP_HALF_DUPLEX | (full_duplex ? XID_COP_FULL_DUPLEX : 0u));
+    buf[pos++] = 0x00u;
+
+    // PI=3: HDLC Optional Functions (3 bytes PV per AX.25 v2.2 §4.3.3.7)
+    // Byte 0: RNR(0x01) | REJ(0x02) | SREJ(0x04) | SABM(0x08) | SABME(0x10) | DM(0x20) | DISC(0x40) | UA(0x80)
+    // Byte 1: FRMR(0x01) | UI(0x02) | XID(0x04) | TEST(0x08) | MOD8(0x10) | MOD128(0x20)
+    // Byte 2: reserved
+    if (pos + 5u > buf_size)
+        return 0;
+    buf[pos++] = (uint8_t) XID_PI_HDLC_OPTIONAL_FUNCTIONS;
+    buf[pos++] = 3u;
+    buf[pos++] = (uint8_t) (XID_HDLC_RNR | XID_HDLC_REJ | XID_HDLC_SREJ | XID_HDLC_SABM | (mod128 ? XID_HDLC_SABME : 0u) | XID_HDLC_DM | XID_HDLC_DISC
+            | XID_HDLC_UA);
+    buf[pos++] = (uint8_t) (XID_HDLC_FRMR | XID_HDLC_UI | XID_HDLC_XID | XID_HDLC_TEST | XID_HDLC_MOD8 | (mod128 ? XID_HDLC_MOD128 : 0u));
+    buf[pos++] = 0x00u;
+
+    // PI=6: I-Field Length Receive (2 bytes PV, value in bits per spec)
+    // Convert octets to bits for the wire encoding
+    uint16_t n1_bits = (uint16_t) (n1_rx * 8u);
+    if (pos + 4u > buf_size)
+        return 0;
+    buf[pos++] = (uint8_t) XID_PI_IFIELD_LENGTH_RX;
+    buf[pos++] = 2u;
+    buf[pos++] = (uint8_t) (n1_bits >> 8);
+    buf[pos++] = (uint8_t) (n1_bits & 0xFFu);
+
+    // PI=8: Window Size Receive (1 byte PV)
+    if (pos + 3u > buf_size)
+        return 0;
+    buf[pos++] = (uint8_t) XID_PI_WINDOW_SIZE_RX;
+    buf[pos++] = 1u;
+    buf[pos++] = k_rx;
+
+    // PI=9: Acknowledge Timer T1 (2 bytes PV, value in milliseconds)
+    if (pos + 4u > buf_size)
+        return 0;
+    buf[pos++] = (uint8_t) XID_PI_ACK_TIMER;
+    buf[pos++] = 2u;
+    buf[pos++] = (uint8_t) (t1_ms >> 8);
+    buf[pos++] = (uint8_t) (t1_ms & 0xFFu);
+
+    // PI=10: Retries N2 (1 byte PV)
+    if (pos + 3u > buf_size)
+        return 0;
+    buf[pos++] = (uint8_t) XID_PI_RETRIES;
+    buf[pos++] = 1u;
+    buf[pos++] = n2;
+
+    // PI=11: Response Delay Timer T2 (2 bytes PV, value in milliseconds)
+    if (pos + 4u > buf_size)
+        return 0;
+    buf[pos++] = (uint8_t) XID_PI_RESP_DELAY_TIMER;
+    buf[pos++] = 2u;
+    buf[pos++] = (uint8_t) (t2_ms >> 8);
+    buf[pos++] = (uint8_t) (t2_ms & 0xFFu);
+
+    // Back-fill GL: total bytes of the parameter group (everything after the GL byte)
+    buf[gl_pos] = (uint8_t) (pos - gl_pos - 1u);
+
+    return pos;
+}
+
+// ax25_decode_xid: allocation-free XID info-field decoder.
+// Parses a buffer produced by ax25_encode_xid or any AX.25 v2.2 compliant station.
+// Fills *params with decoded values; defaults are applied for missing parameters.
+// Unknown PI values are silently skipped per AX.25 v2.2 §4.3.3.7.
+// Returns: 0 on success
+//          1 if buf or params is NULL, or len < 2
+//          2 if FI byte is not XID_FI_GFI (not a parameter-negotiation frame)
+uint8_t ax25_decode_xid(const uint8_t *buf, uint16_t len, ax25_negotiated_params_t *params) {
+    if (!buf || !params || len < 2u)
+        return 1;
+
+    // Check FI (Format Identifier): must be 0x82 for parameter negotiation
+    if (buf[0] != XID_FI_GFI)
+        return 2;
+
+    // Apply defaults before parsing so missing parameters keep v2.2 defaults
+    params->full_duplex = false;
+    params->selective_reject = false;
+    params->implicit_reject = false;
+    params->modulo128 = false;
+    params->ifield_length = 256u;
+    params->window_size = 4u;
+    params->ack_timer = 3000u;
+    params->retries = 10u;
+    params->response_delay_timer = 500u;
+
+    // GL byte: total length of the parameter group that follows
+    uint8_t gl = buf[1];
+
+    // Clamp gl to the actual remaining bytes to guard against malformed frames
+    uint16_t group_end = 2u + (uint16_t) gl;
+    if (group_end > len)
+        group_end = len;
+
+    uint16_t pos = 2u;
+
+    // Iterate over PI/PL/PV triplets
+    while (pos + 2u <= group_end) {
+        uint8_t pi = buf[pos];
+        uint8_t pl = buf[pos + 1u];
+        pos += 2u;
+
+        // Guard: skip if PV extends beyond the group boundary
+        if ((uint16_t) (pos + pl) > group_end) {
+            pos = group_end;
+            break;
+        }
+
+        // Decode known parameters; unknown PI silently skipped
+        switch (pi) {
+            case XID_PI_CLASS_OF_PROCEDURES:
+                // PV byte 0: bit1 = full-duplex, bit0 = half-duplex
+                if (pl >= 1u)
+                    params->full_duplex = (buf[pos] & XID_COP_FULL_DUPLEX) != 0u;
+            break;
+
+            case XID_PI_HDLC_OPTIONAL_FUNCTIONS:
+                // PV byte 0: REJ(0x02), SREJ(0x04)
+                // PV byte 1: MOD128(0x20)
+                if (pl >= 1u) {
+                    params->implicit_reject = (buf[pos] & XID_HDLC_REJ) != 0u;
+                    params->selective_reject = (buf[pos] & XID_HDLC_SREJ) != 0u;
+                }
+                if (pl >= 2u)
+                    params->modulo128 = (buf[pos + 1u] & XID_HDLC_MOD128) != 0u;
+            break;
+
+            case XID_PI_IFIELD_LENGTH_RX:
+                // Wire value is in bits; convert to octets; guard against zero
+                if (pl == 2u) {
+                    uint16_t bits = (uint16_t) ((buf[pos] << 8) | buf[pos + 1u]);
+                    params->ifield_length = (bits > 0u) ? (uint16_t) (bits / 8u) : 256u;
+                }
+            break;
+
+            case XID_PI_WINDOW_SIZE_RX:
+                if (pl == 1u)
+                    params->window_size = buf[pos];
+            break;
+
+            case XID_PI_ACK_TIMER:
+                if (pl == 2u)
+                    params->ack_timer = (uint16_t) ((buf[pos] << 8) | buf[pos + 1u]);
+            break;
+
+            case XID_PI_RETRIES:
+                if (pl == 1u)
+                    params->retries = buf[pos];
+            break;
+
+            case XID_PI_RESP_DELAY_TIMER:
+                if (pl == 2u)
+                    params->response_delay_timer = (uint16_t) ((buf[pos] << 8) | buf[pos + 1u]);
+            break;
+
+            default:
+                // Unknown PI: skip silently per AX.25 v2.2 §4.3.3.7
+            break;
+        }
+
+        pos += (uint16_t) pl;
+    }
+
+    return 0;
+}

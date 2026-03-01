@@ -64,9 +64,9 @@ fx25_hdlc_err_t fx25_hdlc_encode(const uint8_t *ax25_frame, size_t ax25_len, uin
     // Step 4: Build complete FX.25 transmission frame
     size_t idx = 0;
 
-    // Preamble (alternating 0x55 pattern for clock recovery)
+    // Preamble: 0x55 clock-sync pattern per this implementation's convention
     for (int i = 0; i < FX25_PREAMBLE_BITS / 8; i++) {
-        output[idx++] = 0x55;  // 01010101 pattern
+        output[idx++] = 0x55;  // 01010101 clock-sync pattern
     }
 
     // Correlation tag (8 bytes)
@@ -77,9 +77,9 @@ fx25_hdlc_err_t fx25_hdlc_encode(const uint8_t *ax25_frame, size_t ax25_len, uin
     memcpy(output + idx, fx25.rs_codeword, fx25.codeword_len);
     idx += fx25.codeword_len;
 
-    // Postamble (more 0x55 for receiver sync)
+    // Postamble: 0x55 clock-sync pattern
     for (int i = 0; i < FX25_POSTAMBLE_BITS / 8; i++) {
-        output[idx++] = 0x55;
+        output[idx++] = 0x55;  // 01010101 clock-sync pattern
     }
 
     *output_len = idx;

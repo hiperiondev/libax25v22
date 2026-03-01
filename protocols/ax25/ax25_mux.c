@@ -92,6 +92,13 @@ void ax25_mux_lm_release(ax25_mux_t *mux, uint8_t link_id) {
         int8_t next = ax25_mux_select_next(mux);
         if (next >= 0) {
             mux->seized_link = (uint8_t) next;
+            // Clear seize_pending on the newly seized link and advance
+            // last_served for correct round-robin fairness.
+            // Without this, seize_pending stays true: ax25_mux_lm_seize_request
+            // would return error 2 for this link on any subsequent request,
+            // and round-robin would stall at the same slot indefinitely.
+            mux->links[next].seize_pending = false;
+            mux->last_served = (uint8_t) next;
             ax25_mux_link_t *nl = &mux->links[next];
             if (nl->lm_seize_confirm && nl->pending_len > 0) {
                 nl->lm_seize_confirm(nl->confirm_user_data, nl->pending_frame, nl->pending_len);
@@ -109,6 +116,12 @@ void ax25_mux_tick(ax25_mux_t *mux, uint32_t current_tick_10ms) {
     int8_t next = ax25_mux_select_next(mux);
     if (next >= 0) {
         mux->seized_link = (uint8_t) next;
+        // Clear seize_pending and advance last_served when granting the
+        // channel via the tick path, mirroring ax25_mux_get_next_to_serve().
+        // Without this the link cannot re-request the channel and round-robin
+        // does not advance.
+        mux->links[next].seize_pending = false;
+        mux->last_served = (uint8_t) next;
         ax25_mux_link_t *l = &mux->links[next];
         if (l->lm_seize_confirm && l->pending_len > 0) {
             l->lm_seize_confirm(l->confirm_user_data, l->pending_frame, l->pending_len);

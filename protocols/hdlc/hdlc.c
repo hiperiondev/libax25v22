@@ -313,3 +313,42 @@ int hdlc_tx_interframe_fill(unsigned char *buf, int buf_len, int fill_count) {
         buf[i] = (unsigned char) HDLC_FLAG_BYTE;
     return fill_count;
 }
+
+// NRZI encoder/decoder implementation per AX.25 v2.2 §3.8.
+// See hdlc.h for full usage documentation and pipeline diagram.
+
+// hdlc_nrzi_init: reset encoder and decoder state.
+// HDLC channel idle is continuous mark (1-bits), so both levels start at 1.
+void hdlc_nrzi_init(nrzi_t *n) {
+    if (!n)
+        return;
+    n->last_level = 1u;  // HDLC idle = mark = 1
+    n->prev_level = 1u;  // receiver starts at same idle level
+}
+
+// hdlc_nrzi_encode_bit: NRZ -> NRZI.
+// A 0-bit causes a transition; a 1-bit leaves the level unchanged.
+// Returns the new channel level (0 or 1) to transmit.
+uint8_t hdlc_nrzi_encode_bit(nrzi_t *n, uint8_t nrz_bit) {
+    if (!n)
+        return 0u;
+    // 0 = transition: flip the current output level
+    if (nrz_bit == 0u)
+        n->last_level ^= 1u;
+    // 1 = no transition: last_level is unchanged
+    return n->last_level;
+}
+
+// hdlc_nrzi_decode_bit: NRZI -> NRZ.
+// A transition relative to the previous level means NRZ 0.
+// No transition means NRZ 1.
+// Returns the recovered NRZ bit (0 or 1) for hdlc_rx_bit().
+uint8_t hdlc_nrzi_decode_bit(nrzi_t *n, uint8_t nrzi_bit) {
+    uint8_t nrz;
+    if (!n)
+        return 0u;
+    // transition detected = NRZ 0; same level = NRZ 1
+    nrz = (nrzi_bit != n->prev_level) ? 0u : 1u;
+    n->prev_level = nrzi_bit;  // update state for next bit
+    return nrz;
+}

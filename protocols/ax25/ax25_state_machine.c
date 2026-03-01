@@ -402,6 +402,11 @@ static void start_t2_response(ax25_connection_t *conn, uint32_t current_tick) {
     conn->t2_running = true;
     conn->t2_ack_pending = true;
     conn->t2_pending_nr = conn->vars.vr;
+
+    // arm T101 PRIACK alongside T2 whenever a deferred ACK is pending
+    // T101 provides the outer 2 s bound; T2 provides the inner (1.5 s) bound.
+    // Whichever fires first will flush the pending RR/RNR.
+    ax25_timer_start(&conn->t101, AX25_T101_PRIACK_MS, (uint32_t) (current_tick * 10u));
 }
 
 // Cancel T2 timer when sending I-frame (ACK is piggybacked)
@@ -409,6 +414,8 @@ static void start_t2_response(ax25_connection_t *conn, uint32_t current_tick) {
 static void cancel_t2(ax25_connection_t *conn) {
     conn->t2_running = false;
     conn->t2_ack_pending = false;
+    // disarm T101 when the ACK is piggybacked on an I-frame
+    ax25_timer_stop(&conn->t101);
 }
 
 // Dispatch received I-frame data to appropriate protocol handler
@@ -540,8 +547,14 @@ static void handle_ui_frame(ax25_connection_t *conn, ax25_unnumbered_information
 // so registered handlers receive them. Falling back to on_data only when
 // no registered handler exists maintains backward compatibility.
     if (ui->payload_len > 0 && ui->payload) {
+        // Fire on_ui_data before dispatch_to_protocol so the upper layer
+        // receives the source address per DL-UNIT-DATA indication semantics.
+        // APRS and other connectionless protocols need the sender callsign,
+        // which is not carried by the on_data(data, len, pid) signature.
+        if (conn->callbacks.on_ui_data) {
+            conn->callbacks.on_ui_data(conn->user_data, &ui->base.base.header.source, ui->payload, ui->payload_len, ui->pid);
+        }
         dispatch_to_protocol(conn, ui->payload, ui->payload_len, ui->pid);
-
     }
 }
 
@@ -1483,12 +1496,12 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     memset(conn, 0, sizeof(ax25_connection_t));
     conn->state = AX25_STATE_DISCONNECTED;  //
     conn->vars.mod = 8;                    // Default to modulo 8
-    conn->timers.t1 = 300;                 // 3 seconds default (300 * 10ms = 3000ms)
-    conn->timers.t2 = 150;                 // 1.5 seconds default (150 * 10ms = 1500ms)
-    conn->timers.t3 = 3000;                // 30 seconds default (3000 * 10ms = 30000ms)
-    conn->timers.n2 = 10;                  //
-    conn->timers.k = 7;                    //
-    conn->timers.n1 = 256;                 //
+    conn->timers.t1 = (uint16_t) (AX25_DEFAULT_T1_MS / 10u);  // 3000ms -> 300 ticks
+    conn->timers.t2 = (uint16_t) (AX25_DEFAULT_T2_MS / 10u);  // 1500ms -> 150 ticks
+    conn->timers.t3 = (uint16_t) (AX25_DEFAULT_T3_MS / 10u);  // 30000ms -> 3000 ticks
+    conn->timers.n2 = (uint8_t) AX25_DEFAULT_N2;             // 10 retries
+    conn->timers.k = (uint8_t) AX25_DEFAULT_K_MOD8;         // 7 for mod-8 default
+    conn->timers.n1 = (uint16_t) AX25_DEFAULT_N1;             // 256 octets
     conn->t3_timeout = 18000;              // 30 minutes default (18000 * 10ms = 180000ms)
     conn->callbacks = *cb;                 //
     conn->user_data = user_data;           //
@@ -1511,6 +1524,9 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     conn->t2_running = false;              // T2 timer not running initially
     conn->t2_ack_pending = false;          // No pending ACK
     conn->t2_pending_nr = 0;               // Clear pending N(R)
+    // T101 PRIACK timer initialisation
+    // Zero-initialise the ax25_timer_t so running = 0 (stopped).
+    memset(&conn->t101, 0, sizeof(ax25_timer_t));
 
 // Initialize TEST statistics
     memset(&conn->test_stats, 0, sizeof(ax25_test_stats_t));
@@ -1770,6 +1786,29 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
 
             conn->t2_ack_pending = false;
         }
+
+        // disarm T101 when T2 fires first
+        ax25_timer_stop(&conn->t101);
+    }
+
+    // T101 PRIACK expire — flush deferred ACK if T2 has not fired yet
+    // Converts 10ms ticks to ms for ax25_timer_t comparison.
+    // T101 is the outer bound (2 s); T2 is the inner bound (1.5 s default).
+    // If T101 fires before T2 (e.g. T2 was extended or T2 not running), we send
+    // the pending RR/RNR immediately so the peer receives an ACK within 2 s.
+    uint32_t now_ms = current_tick_10ms * 10u;
+    if (ax25_timer_expired(&conn->t101, now_ms)) {
+        ax25_timer_stop(&conn->t101);
+        // Only flush if a deferred ACK is still outstanding
+        if (conn->t2_ack_pending) {
+            conn->t2_running = false;
+            conn->t2_ack_pending = false;
+            if (conn->local_busy) {
+                send_rnr(conn, false);
+            } else {
+                send_rr(conn, false);
+            }
+        }
     }
 
 // T3: Inactive link timer expiration
@@ -1947,16 +1986,18 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
             conn->vars.vs = conn->vars.vr = conn->vars.va = 0;
             conn->vars.mod = (frame->type == AX25_FRAME_UNNUMBERED_SABME) ? 128u : 8u;
 
-            // For modulo-8: max k = 7 (M-1). For modulo-128: max k = 127,
-            // further bounded by queue capacity.
-            uint8_t proto_max_k = (conn->vars.mod == 128u) ? 127u : 7u;
+            // For mod-8: max k = 7 (M-1 per §4.2.2.4).
+            // For mod-128: max k = 63 per PE1CHL §5 (EMAXFRAME <= 63) to prevent
+            // N(S) resequencing ambiguity. Using 127 makes old retransmitted frames
+            // indistinguishable from new frames beyond V(R) when N(S) wraps.
+            uint8_t proto_max_k = (conn->vars.mod == 128u) ? AX25_K_MAX_MOD128 : AX25_K_MAX_MOD8;
             uint8_t queue_max_k = (uint8_t) (AX25_MAX_QUEUE_SIZE - 1u);
             uint8_t effective_max = (proto_max_k < queue_max_k) ? proto_max_k : queue_max_k;
             // Preserve XID-negotiated k if still within range for the new modulus.
             // Clamp if too large (e.g. mod-128 k=15 -> mod-8 clamped to 7).
             // Fill spec default if k is zero (invalid).
             if (conn->timers.k == 0u || conn->timers.k > effective_max) {
-                uint8_t spec_default = (conn->vars.mod == 128u) ? 32u : 7u;
+                uint8_t spec_default = (conn->vars.mod == 128u) ? (uint8_t) AX25_DEFAULT_K_MOD128 : (uint8_t) AX25_DEFAULT_K_MOD8;
                 conn->timers.k = (spec_default <= effective_max) ? spec_default : effective_max;
             }
 
@@ -2119,7 +2160,7 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
             if ((conn->state == AX25_STATE_AWAITING_CONNECTION || conn->state == AX25_STATE_AWAITING_CONN_2_2) && conn->want_mod128) {
                 conn->want_mod128 = 0;
                 conn->vars.mod = 8;
-                conn->timers.k = 7;
+                conn->timers.k = (uint8_t) AX25_DEFAULT_K_MOD8;
                 conn->retry_count = 0;
                 send_sabm(conn, false);
                 conn->state = AX25_STATE_AWAITING_CONNECTION;  // now using mod-8
@@ -2286,7 +2327,7 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                 if (conn->want_mod128) {
                     conn->want_mod128 = 0;
                     conn->vars.mod = 8;
-                    conn->timers.k = 7;
+                    conn->timers.k = (uint8_t) AX25_DEFAULT_K_MOD8;
                     conn->retry_count = 0;
                     send_sabm(conn, false);
                     conn->state = AX25_STATE_AWAITING_CONNECTION;  // now using mod-8
@@ -2365,11 +2406,17 @@ uint8_t ax25_connect(ax25_connection_t *conn, ax25_address_t *dest, ax25_address
     if (conn->want_mod128) {
         // Request mod-128 extended sequence numbering via SABME
         conn->vars.mod = 128;
-        // Apply spec default window size for mod-128 unless caller pre-configured a
-        // larger value; clamp to queue capacity so the queue never overflows.
-        if (conn->timers.k <= 7u) {
+        // promote k to mod-128 default when still at mod-8 default,
+        // then clamp to AX25_K_MAX_MOD128 (63) per PE1CHL §5.
+        // Any k > 63 in mod-128 creates an N(S) resequencing ambiguity.
+        if (conn->timers.k <= (uint8_t) AX25_DEFAULT_K_MOD8) {
             uint8_t queue_max = (uint8_t) (AX25_MAX_QUEUE_SIZE - 1u);
-            conn->timers.k = (32u <= queue_max) ? 32u : queue_max;
+            uint8_t promoted = (uint8_t) AX25_DEFAULT_K_MOD128;
+            conn->timers.k = (promoted <= queue_max) ? promoted : queue_max;
+        }
+        // Clamp caller-supplied k to the PE1CHL §5 EMAXFRAME limit
+        if (conn->timers.k > (uint8_t) AX25_K_MAX_MOD128) {
+            conn->timers.k = (uint8_t) AX25_K_MAX_MOD128;
         }
         send_sabm(conn, true);  // true = SABME
         conn->state = AX25_STATE_AWAITING_CONN_2_2;  // State 5: awaiting UA to SABME
@@ -2780,10 +2827,13 @@ uint8_t ax25_apply_negotiated_params(ax25_mgmt_context_t *mgmt_ctx, ax25_connect
 // window efficiency; per AX.25 v2.2 the spec default for modulo-128 is 32, so
 // promote any modulo-8-default value to 32 when we are in modulo-128 mode;
 // always clamp to the smaller of the protocol maximum and the queue array limit
-    uint8_t max_proto_k = (conn->vars.mod == 128) ? 127u : 7u;
+    // use AX25_K_MAX_MOD128 (63) per PE1CHL §5 — not 127
+    // Allowing k=127 in mod-128 causes N(S) resequencing ambiguity: a frame with
+    // N(S) = V(R)+64 mod 128 cannot be distinguished from a retransmit of V(R)-64.
+    uint8_t max_proto_k = (conn->vars.mod == 128) ? (uint8_t) AX25_K_MAX_MOD128 : (uint8_t) AX25_K_MAX_MOD8;
     uint8_t max_queue_k = (uint8_t) (AX25_MAX_QUEUE_SIZE - 1);
     uint8_t max_k = (max_proto_k < max_queue_k) ? max_proto_k : max_queue_k;
-    uint8_t spec_def_k = (conn->vars.mod == 128) ? 32u : 7u;
+    uint8_t spec_def_k = (conn->vars.mod == 128) ? (uint8_t) AX25_DEFAULT_K_MOD128 : (uint8_t) AX25_DEFAULT_K_MOD8;
     uint8_t req_k = mgmt_ctx->agreed_params.window_size;
 // promote modulo-8 default to spec default for modulo-128
     if (conn->vars.mod == 128 && req_k <= 7u) {

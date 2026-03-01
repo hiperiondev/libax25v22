@@ -469,4 +469,58 @@ int hdlc_rx_bit(hdlc_rx_t *h, uint8_t bit);
 // Returns number of bytes actually written (capped at buf_len).
 int hdlc_tx_interframe_fill(unsigned char *buf, int buf_len, int fill_count);
 
+// NRZI (Non-Return-to-Zero Inverted) codec per AX.25 v2.2 §3.8 and HDLC spec.
+//
+// AX.25 over radio uses NRZI encoding:
+//   NRZ 0-bit  ->  level transition on the channel
+//   NRZ 1-bit  ->  no transition (level unchanged)
+//
+// KISS-mode TNCs perform NRZI encoding and decoding internally in hardware or
+// firmware, so callers that drive a KISS TNC MUST NOT call these functions —
+// doing so would double-encode the bit stream and corrupt every frame.
+//
+// These functions are intended ONLY for software modems / bit-bang hardware
+// implementations that drive the audio or GPIO channel directly, where the
+// application is responsible for the full bit-level pipeline:
+//
+//   TX pipeline:  AX.25 frame bytes
+//                   -> hdlc_frame_encode()   (bit stuffing, flag framing)
+//                   -> per-bit loop calling hdlc_nrzi_encode_bit()
+//                   -> GPIO / audio DAC
+//
+//   RX pipeline:  GPIO / audio ADC
+//                   -> per-bit loop calling hdlc_nrzi_decode_bit()
+//                   -> hdlc_rx_bit()         (bit destuffing, frame assembly)
+//                   -> AX.25 frame bytes
+//
+// Initialize nrzi_t with hdlc_nrzi_init() before first use.
+// One nrzi_t instance is required per physical channel (not per link).
+
+// nrzi_t: state for one NRZI encoder+decoder pair on a single channel.
+// last_level: last NRZI output level produced by the encoder (TX side).
+// prev_level: last NRZI input level seen by the decoder (RX side).
+// Both fields start at 1 (mark = HDLC channel idle = continuous 1-bits).
+typedef struct {
+    uint8_t last_level;  // encoder: last transmitted NRZI level (0 or 1)
+    uint8_t prev_level;  // decoder: last received  NRZI level (0 or 1)
+} nrzi_t;
+
+// hdlc_nrzi_init: Initialize encoder and decoder state for a fresh channel.
+// Must be called once before hdlc_nrzi_encode_bit / hdlc_nrzi_decode_bit.
+// Safe to call again to reset after a link reset or carrier loss.
+void hdlc_nrzi_init(nrzi_t *n);
+
+// hdlc_nrzi_encode_bit: encode one NRZ data bit to NRZI channel level.
+// nrz_bit: 0 or 1 from the bit-stuffed HDLC bit stream (TX path).
+// Returns: NRZI output level to place on the channel (0 or 1).
+// Call once per bit, in order, after bit stuffing (hdlc_frame_encode output).
+uint8_t hdlc_nrzi_encode_bit(nrzi_t *n, uint8_t nrz_bit);
+
+// hdlc_nrzi_decode_bit: decode one NRZI channel level back to an NRZ bit.
+// nrzi_bit: raw level sampled from the channel (0 or 1) (RX path).
+// Returns: NRZ bit (0 = transition seen, 1 = no transition) to feed into
+//          hdlc_rx_bit() for bit destuffing and frame assembly.
+// Call once per received bit, in order, before hdlc_rx_bit().
+uint8_t hdlc_nrzi_decode_bit(nrzi_t *n, uint8_t nrzi_bit);
+
 #endif /* HDLC_H_ */

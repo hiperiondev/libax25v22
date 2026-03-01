@@ -159,6 +159,8 @@ uint8_t fx25_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mode_id,
     }
     memset(full_message, 0, shorten);
     memcpy(full_message + shorten, ax25_frame, ax25_len);
+
+    // Pad unused data bytes with 0x00
     if (ax25_len < mode->data_bytes) {
         memset(full_message + shorten + ax25_len, 0, mode->data_bytes - ax25_len);
     }

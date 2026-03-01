@@ -66,6 +66,93 @@
  */
 #define AX25_T1_PENDING  UINT32_MAX /**< Sentinel to arm T1 on next tick() call */
 
+// All defaults follow AX.25 v2.2 §6.7.2 and PE1CHL §5.
+// Override at build time with -DAX25_DEFAULT_T1_MS=<value> etc.
+
+// T1: Acknowledgment timer default — 3000 ms (§6.7.1.1)
+// Stored as 10ms ticks in ax25_timers_t.t1: 3000/10 = 300 ticks.
+#ifndef AX25_DEFAULT_T1_MS
+#define AX25_DEFAULT_T1_MS  3000u
+#endif
+// T2: Response delay timer default — 3000 ms (§6.7.1.2).
+// Spec says T2 < T1; default kept at 1500 ms (half of T1) for piggybacking.
+// Stored as 10ms ticks: 1500/10 = 150 ticks.
+#ifndef AX25_DEFAULT_T2_MS
+#define AX25_DEFAULT_T2_MS  1500u
+#endif
+// T3: Inactive link timer default — 30000 ms (§6.7.1.3).
+// Stored as 10ms ticks: 30000/10 = 3000 ticks.
+#ifndef AX25_DEFAULT_T3_MS
+#define AX25_DEFAULT_T3_MS  30000u
+#endif
+
+// N1: Maximum I-field length in octets (§6.7.2).
+#ifndef AX25_DEFAULT_N1
+#define AX25_DEFAULT_N1  256u
+#endif
+
+// N2: Maximum number of retransmission attempts (§6.7.2).
+#ifndef AX25_DEFAULT_N2
+#define AX25_DEFAULT_N2  10u
+#endif
+
+// k: Window size for mod-8 connections.
+// Maximum permitted value: M-1 = 7 per §4.2.2.4.
+#ifndef AX25_DEFAULT_K_MOD8
+#define AX25_DEFAULT_K_MOD8  7u
+#endif
+// Maximum k for mod-8: protocol maximum = 7.
+#define AX25_K_MAX_MOD8  7u
+
+// k: Window size default for mod-128 connections.
+// Spec default: 32 per §6.7.2 / PE1CHL §5.
+#ifndef AX25_DEFAULT_K_MOD128
+#define AX25_DEFAULT_K_MOD128  32u
+#endif
+// Maximum k for mod-128: MUST be <= 63 per PE1CHL §5 to avoid N(S) ambiguity.
+// PE1CHL §5 explicitly states EMAXFRAME <= 63 so the receiver can always
+// distinguish retransmitted old frames from new frames beyond V(R).
+// Allowing k=127 creates an irresolvable resequencing ambiguity.
+#define AX25_K_MAX_MOD128  63u
+
+// Non-blocking tick-driven timer (32-bit milliseconds).
+// Handles 32-bit wrap-around; 2^32 ms ~= 49.7 days — sufficient for AX.25.
+// All fields are in milliseconds; caller converts 10ms ticks via * 10u before calling.
+typedef struct {
+    uint32_t start_ms;    // tick value (ms) when timer was started
+    uint32_t duration_ms;  // how long the timer runs (ms)
+    uint8_t running;     // 1 = active, 0 = stopped
+} ax25_timer_t;
+
+// ax25_timer_start: arm the timer with a duration and current time in ms.
+static inline void ax25_timer_start(ax25_timer_t *t, uint32_t duration_ms, uint32_t now_ms) {
+    t->start_ms = now_ms;
+    t->duration_ms = duration_ms;
+    t->running = 1u;
+}
+
+// ax25_timer_stop: disarm the timer (no-op on NULL guarded by caller).
+static inline void ax25_timer_stop(ax25_timer_t *t) {
+    t->running = 0u;
+}
+
+// ax25_timer_expired: returns 1 if timer is running and has expired.
+// Subtraction wraps correctly even when now_ms has wrapped past start_ms.
+static inline uint8_t ax25_timer_expired(const ax25_timer_t *t, uint32_t now_ms) {
+    if (!t->running)
+        return 0u;
+    return ((now_ms - t->start_ms) >= t->duration_ms) ? 1u : 0u;
+}
+
+// T101: Priority Window (PRIACK) default duration — 2000 ms per §6.7.1 timers table.
+// Bounds the piggyback-ACK opportunity window in the connection layer.
+// When T101 fires before an outgoing I-frame has been queued, a standalone
+// RR (or RNR if locally busy) is sent so the peer is not left waiting.
+// Override at compile time with -DAX25_T101_PRIACK_MS=<ms>.
+#ifndef AX25_T101_PRIACK_MS
+#define AX25_T101_PRIACK_MS 2000u
+#endif
+
 /*============================================================================*/
 /* FRMR Reason Code Definitions                                               */
 /*============================================================================*/
@@ -90,22 +177,31 @@
 #define FRMR_Y  0x04 /**< Information field exceeded maximum length N1 */
 #define FRMR_Z  0x08 /**< Invalid N(R) received - acknowledgment error */
 
-// DL-ERROR indication codes per AX.25 v2.2 Section 17.2 / Appendix C4
+// DL-ERROR indication codes per AX.25 v2.2 §17.2 / Appendix C4 SDL.
+// Complete set A-V (22 codes); original ended at N=13.
 typedef enum {
-    AX25_DL_ERROR_A = 0,  // N(S) out of range
-    AX25_DL_ERROR_B = 1,  // FRMR received - link reset required
-    AX25_DL_ERROR_C = 2,  // UA received without F=1 in AWAITING_CONNECTION
-    AX25_DL_ERROR_D = 3,  // DM received in connected state
-    AX25_DL_ERROR_E = 4,  // Frame received in incorrect state
-    AX25_DL_ERROR_F = 5,  // FRMR sent by us - protocol violation detected
-    AX25_DL_ERROR_G = 6,  // I field exceeded maximum length N1
-    AX25_DL_ERROR_H = 7,  // FRMR received after FRMR sent - link failure
-    AX25_DL_ERROR_I = 8,  // Information field not permitted in this frame type
-    AX25_DL_ERROR_J = 9,  // N(R) sequence error - invalid N(R) received (Z condition)
-    AX25_DL_ERROR_K = 10,  // Reserved
+    AX25_DL_ERROR_A = 0,   // F=1 received unexpectedly in connected state
+    AX25_DL_ERROR_B = 1,   // FRMR received - link reset required
+    AX25_DL_ERROR_C = 2,   // UA received without F=1 in AWAITING_CONNECTION
+    AX25_DL_ERROR_D = 3,   // DM received in connected state
+    AX25_DL_ERROR_E = 4,   // Frame received in incorrect state
+    AX25_DL_ERROR_F = 5,   // FRMR sent by us - protocol violation detected
+    AX25_DL_ERROR_G = 6,   // I field exceeded maximum length N1
+    AX25_DL_ERROR_H = 7,   // FRMR received after FRMR sent - link failure
+    AX25_DL_ERROR_I = 8,   // Information field not permitted in this frame type
+    AX25_DL_ERROR_J = 9,   // N(R) sequence error - invalid N(R) received (Z condition)
+    AX25_DL_ERROR_K = 10,  // DM received with F=1 in AWAITING_CONNECTION (connect refused)
     AX25_DL_ERROR_L = 11,  // Control field invalid or not implemented
     AX25_DL_ERROR_M = 12,  // I frame received while not in information transfer state
-    AX25_DL_ERROR_N = 13  // N2 retries exceeded - T1 timer exhaustion
+    AX25_DL_ERROR_N = 13,  // N2 retries exceeded - T1 timer exhaustion
+    AX25_DL_ERROR_O = 14,  // DM received in AWAITING_RELEASE (peer confirmed disconnect)
+    AX25_DL_ERROR_P = 15,  // N2 retransmissions exceeded in AWAITING_RELEASE
+    AX25_DL_ERROR_Q = 16,  // DM received in AWAITING_CONNECTION (connection refused)
+    AX25_DL_ERROR_R = 17,  // FRMR received in AWAITING_CONNECTION or AWAITING_RELEASE
+    AX25_DL_ERROR_S = 18,  // UA received in wrong state (not awaiting connect or release)
+    AX25_DL_ERROR_T = 19,  // SABM or SABME received while in AWAITING_RELEASE state
+    AX25_DL_ERROR_U = 20,  // XID received but XID negotiation not implemented
+    AX25_DL_ERROR_V = 21   // Unrecognised control field in FRAME_REJECT state
 } ax25_dl_error_t;
 
 /*============================================================================*/
@@ -459,6 +555,13 @@ typedef struct {
     // DL-ERROR indication per AX.25 v2.2 Section 17.2
     void (*on_dl_error)(void *user_data, ax25_dl_error_t error);  // NULL = errors ignored
 
+    // DL-UNIT-DATA indication per AX.25 v2.2 Appendix D.4.
+    // on_data does not supply the sender address; connectionless protocols
+    // such as APRS and NET/ROM require the source callsign from every UI frame.
+    // Invoked for all received UI frames before dispatch_to_protocol.
+    // Set to NULL if the upper layer does not need UI source-address notification.
+    void (*on_ui_data)(void *user_data, const ax25_address_t *src, uint8_t *data, size_t len, uint8_t pid);
+
 } ax25_callbacks_t;
 
 /*============================================================================*/
@@ -657,6 +760,14 @@ typedef struct {
     bool t2_running; /**< T2 timer active */
     bool t2_ack_pending; /**< Delayed ACK pending T2 expiry */
     uint8_t t2_pending_nr; /**< N(R) value for delayed ACK */
+
+    // T101 PRIACK timer per §6.7.1 timers table
+    // T101 bounds the piggyback-ACK opportunity window. Started whenever an
+    // I-frame is received and a deferred RR ACK is pending (same trigger as T2).
+    // When T101 expires before T2, a standalone RR/RNR is sent immediately so
+    // the peer is not left unacknowledged for longer than 2 s (AX.25 §6.7.1).
+    // Uses ax25_timer_t (ms resolution) driven by ax25_tick (10ms ticks * 10u).
+    ax25_timer_t t101;  // T101 Priority Window (PRIACK) 2 s timer
 
     /* Link quality monitoring */
     ax25_test_stats_t test_stats; /**< TEST frame RTT statistics */

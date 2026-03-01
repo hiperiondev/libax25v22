@@ -136,6 +136,17 @@
  */
 #define XID_PI_RESP_DELAY_TIMER        11
 
+// XID frame structure constants per ISO 8885 / AX.25 v2.2 §4.3.3.7
+// FI: Format Identifier = 0x82 identifies the parameter negotiation group
+// GID: Group Identifier = 0x80 identifies the HDLC optional functions group
+#define XID_FI_GFI      0x82u
+#define XID_GID_PARAMS  0x80u
+
+// Maximum byte length of the XID info field produced by ax25_encode_xid.
+// 2(FI+GL) + 4(PI=2 COP) + 5(PI=3 HOF) + 4(PI=6 N1) + 3(PI=8 k)
+// + 4(PI=9 T1) + 3(PI=10 N2) + 4(PI=11 T2) = 29 bytes maximum
+#define XID_INFO_MAX_LEN 32u
+
 /** @} *//* end of XID_Parameter_Identifiers */
 
 /*============================================================================*/
@@ -700,5 +711,32 @@ void ax25_mgmt_tick(ax25_mgmt_context_t *ctx, uint32_t current_tick);
 
 // MDL-ERROR code B: notification on FRMR received in AWAITING_RESPONSE
 void ax25_mgmt_notify_frmr_received(ax25_mgmt_context_t *ctx);
+
+// ax25_encode_xid: allocation-free XID info-field encoder for MCU targets.
+// Encodes the XID information field (FI, GL, and PI/PL/PV parameters) into
+// buf[buf_size] with no dynamic allocation required.
+// Returns number of bytes written, or 0 if the buffer is too small.
+// All PI values match ax25_mgmt.h constants (PI=2,3,6,8,9,10,11).
+// Parameters:
+//   buf        - output buffer (must be at least XID_INFO_MAX_LEN bytes)
+//   buf_size   - size of buf in bytes
+//   n1_rx      - I-field length receive in octets (PI=6); encoded as bits on wire
+//   k_rx       - window size receive in frames   (PI=8)
+//   t1_ms      - T1 ack timer in milliseconds    (PI=9)
+//   n2         - retry count N2                  (PI=10)
+//   t2_ms      - T2 response delay timer in ms   (PI=11)
+//   mod128     - true to advertise modulo-128 (SABME + MOD128 bits set in PI=3)
+//   full_duplex - true to advertise full-duplex capability in PI=2
+uint16_t ax25_encode_xid(uint8_t *buf, uint16_t buf_size, uint16_t n1_rx, uint8_t k_rx, uint16_t t1_ms, uint8_t n2, uint16_t t2_ms,
+bool mod128, bool full_duplex);
+
+// ax25_decode_xid: allocation-free XID info-field decoder for MCU targets.
+// Parses the XID information field (from ax25_encode_xid or any compliant
+// remote station) and fills *params with the decoded values.
+// Unknown PI values are silently skipped per AX.25 v2.2 §4.3.3.7.
+// Default values are applied for any PI not present in the buffer.
+// Returns 0 on success, 1 if buf/params are NULL or len < 2,
+//         2 if FI does not equal XID_FI_GFI (not a parameter-negotiation frame).
+uint8_t ax25_decode_xid(const uint8_t *buf, uint16_t len, ax25_negotiated_params_t *params);
 
 #endif /* AX25_MGMT_H_ */

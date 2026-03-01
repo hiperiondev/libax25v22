@@ -132,7 +132,6 @@ uint8_t ax25_kiss_crc8_xor(const uint8_t *data, size_t len) {
     }
     return chk;
 }
-// end modified part
 
 // smack_crc_frame: internal incremental CRC helper
 // Computes SMACK CRC-16 over type_byte then payload without a contiguous
@@ -275,6 +274,9 @@ static uint8_t kiss_build_and_send(ax25_kiss_ctx_t *ctx, uint8_t type_byte, cons
     tx[pos++] = KISS_FEND;
 
     ctx->serial_write(tx, pos, ctx->user_data);
+    // Update tx_bytes with actual encoded bytes written to serial
+    ctx->stats.tx_bytes += (uint32_t) pos;
+
     return KISS_OK;
 }
 
@@ -391,6 +393,10 @@ static void kiss_dispatch_frame(ax25_kiss_ctx_t *ctx) {
             if (ctx->rx_len >= 1u) {
                 ctx->ports[port].txdelay = ctx->rx_buf[0];
             }
+
+            // Count received command frames
+            ctx->stats.rx_cmd_frames++;
+
         break;
 
         case KISS_CMD_PERSISTENCE:
@@ -398,6 +404,9 @@ static void kiss_dispatch_frame(ax25_kiss_ctx_t *ctx) {
             if (ctx->rx_len >= 1u) {
                 ctx->ports[port].persistence = ctx->rx_buf[0];
             }
+
+            // Count received command frames
+            ctx->stats.rx_cmd_frames++;
         break;
 
         case KISS_CMD_SLOTTIME:
@@ -405,6 +414,9 @@ static void kiss_dispatch_frame(ax25_kiss_ctx_t *ctx) {
             if (ctx->rx_len >= 1u) {
                 ctx->ports[port].slottime = ctx->rx_buf[0];
             }
+
+            // Count received command frames
+            ctx->stats.rx_cmd_frames++;
         break;
 
         case KISS_CMD_TXTAIL:
@@ -412,6 +424,9 @@ static void kiss_dispatch_frame(ax25_kiss_ctx_t *ctx) {
             if (ctx->rx_len >= 1u) {
                 ctx->ports[port].txtail = ctx->rx_buf[0];
             }
+
+            // Count received command frames
+            ctx->stats.rx_cmd_frames++;
         break;
 
         case KISS_CMD_FULLDUPLEX:
@@ -419,11 +434,13 @@ static void kiss_dispatch_frame(ax25_kiss_ctx_t *ctx) {
             if (ctx->rx_len >= 1u) {
                 ctx->ports[port].full_duplex = (ctx->rx_buf[0] != 0u);
             }
+
+            // Count received command frames
+            ctx->stats.rx_cmd_frames++;
         break;
 
         case KISS_CMD_SETHARDWARE:
             // Hardware-specific: copy raw bytes into port hardware buffer
-        {
             size_t copy_len = ctx->rx_len;
             if (copy_len > sizeof(ctx->ports[port].hardware)) {
                 copy_len = sizeof(ctx->ports[port].hardware);
@@ -433,7 +450,9 @@ static void kiss_dispatch_frame(ax25_kiss_ctx_t *ctx) {
             if (ctx->on_hardware) {
                 ctx->on_hardware(ctx, port, ctx->ports[port].hardware, ctx->ports[port].hardware_len, ctx->user_data);
             }
-        }
+
+            // Count received command frames
+            ctx->stats.rx_cmd_frames++;
         break;
 
         default:
@@ -499,6 +518,9 @@ void ax25_kiss_receive_byte(ax25_kiss_ctx_t *ctx, uint8_t byte) {
     if (!ctx) {
         return;
     }
+
+    // Count every byte fed into the state machine
+    ctx->stats.rx_bytes++;
 
     switch (ctx->rx_state) {
         case KISS_RX_IDLE:
@@ -591,6 +613,9 @@ void ax25_kiss_receive_byte(ax25_kiss_ctx_t *ctx, uint8_t byte) {
             } else {
                 if (ctx->rx_len < KISS_MAX_FRAME_SIZE) {
                     ctx->rx_buf[ctx->rx_len++] = unescaped;
+                } else {
+                    // Buffer full: count overflow, byte is dropped
+                    ctx->stats.rx_overflows++;
                 }
             }
         }
@@ -615,6 +640,9 @@ void ax25_kiss_receive_bytes(ax25_kiss_ctx_t *ctx, const uint8_t *data, size_t l
 }
 
 uint8_t ax25_kiss_send_frame(ax25_kiss_ctx_t *ctx, uint8_t port, const uint8_t *frame, size_t len) {
+    uint8_t result;
+    uint8_t type_byte;
+
     if (!ctx) {
         return KISS_ERR_NULL;
     }
@@ -629,11 +657,20 @@ uint8_t ax25_kiss_send_frame(ax25_kiss_ctx_t *ctx, uint8_t port, const uint8_t *
         return KISS_ERR_FRAME_SIZE;
     }
 
-    uint8_t type_byte = KISS_TYPE_BYTE(port, KISS_CMD_DATA);
-    return kiss_build_and_send(ctx, type_byte, frame, len);
+    type_byte = KISS_TYPE_BYTE(port, KISS_CMD_DATA);
+    result = kiss_build_and_send(ctx, type_byte, frame, len);
+    if (result == KISS_OK) {
+        // Increment data frame transmit counter on success
+        ctx->stats.tx_frames++;
+    }
+
+    return result;
 }
 
 uint8_t ax25_kiss_send_command(ax25_kiss_ctx_t *ctx, uint8_t port, uint8_t cmd, const uint8_t *data, size_t len) {
+    uint8_t type_byte;
+    uint8_t result;
+
     if (!ctx) {
         return KISS_ERR_NULL;
     }
@@ -653,8 +690,14 @@ uint8_t ax25_kiss_send_command(ax25_kiss_ctx_t *ctx, uint8_t port, uint8_t cmd, 
         return KISS_ERR_FRAME_SIZE;
     }
 
-    uint8_t type_byte = KISS_TYPE_BYTE(port, cmd);
-    return kiss_build_and_send(ctx, type_byte, data, len);
+    type_byte = KISS_TYPE_BYTE(port, cmd);
+    result = kiss_build_and_send(ctx, type_byte, data, len);
+    if (result == KISS_OK) {
+        // Increment command frame transmit counter on success
+        ctx->stats.tx_cmd_frames++;
+    }
+
+    return result;
 }
 
 uint8_t ax25_kiss_send_return(ax25_kiss_ctx_t *ctx) {

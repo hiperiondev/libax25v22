@@ -138,11 +138,6 @@ bool CRC_verify(unsigned char *frame, size_t len) {
         return false;
     }
 
-    // The standard CRC-16/IBM-SDLC residue 0xF0B8 applies when the FCS bytes are
-    // bit-reversed before feeding back through the CRC engine (MSB-first FCS).
-    // This implementation processes bytes LSB-first and appends FCS as [lo, hi]
-    // (low byte first, high byte second) without bit-reversal, which yields
-    // residue 0x0F47. Verified empirically against all data payloads.
     uint16_t result = CRC(frame, len);
 
     return (result == 0x0F47);
