@@ -213,16 +213,6 @@ typedef enum HDLC_ERROR_E {
     if ((bit_val)) { \
         byte |= (1u << bitIndex); \
         cnt++; \
-        if (cnt == 5) { \
-            bitIndex++; \
-            if (bitIndex > 7) { \
-                if (encodedIndex >= maxEncodedLen) { overflow = 1; break; } \
-                encodedFrame[encodedIndex++] = byte; \
-                byte = 0; \
-                bitIndex = 0; \
-            } \
-            cnt = 0; \
-        } \
     } else { \
         cnt = 0; \
     } \
@@ -233,14 +223,22 @@ typedef enum HDLC_ERROR_E {
         byte = 0; \
         bitIndex = 0; \
     } \
+    if (cnt == 5) { \
+        cnt = 0; \
+        bitIndex++; \
+        if (bitIndex > 7) { \
+            if (encodedIndex >= maxEncodedLen) { overflow = 1; break; } \
+            encodedFrame[encodedIndex++] = byte; \
+            byte = 0; \
+            bitIndex = 0; \
+        } \
+    } \
 } while(0)
 
 // Returns the minimum output buffer size required by hdlc_frame_encode
 // for a raw input frame of frameLen bytes (before CRC or bit stuffing).
-// Formula: worst-case bit-stuffed (frameLen+2 CRC bytes)*9 bits / 8, rounded
-// up to bytes, plus 2 flag bytes.
 static inline int hdlc_encoded_size_max(int frameLen) {
-    return (((frameLen + 2) * 9 + 7) / 8) + 2;
+    return (((frameLen + 2) * 48 + 39) / 40) + 2;
 }
 
 /*============================================================================*/

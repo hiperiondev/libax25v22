@@ -41,6 +41,7 @@
 #include "test_fx25_channel.h"
 #include "test_ax25_kiss_smack.h"
 #include "test_il2p.h"
+#include "test_ax25_hdlc_advanced.h"
 
 int errors = 0;
 
@@ -65,6 +66,7 @@ int main() {
     errors += test_fx25_channel_main();
     errors += test_ax25_kiss_smack_main();
     errors += test_il2p_main();
+    errors += test_ax25_hdlc_advanced_main();
 
     printf("\n----------------------------------------------------------------------------------\n");
     printf("All tests Completed. %s\n", errors == 0 ? "All tests passed" : "Some tests failed");
