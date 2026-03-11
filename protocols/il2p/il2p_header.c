@@ -196,14 +196,12 @@ bool il2p_header_from_ax25(const ax25_frame_t *frame, uint16_t payload_len, il2p
     memset(hdr, 0, sizeof(il2p_header_t));
     hdr->payload_byte_count = payload_len;
 
-    // start modified part
     // ax25_frame_t is a base struct; repeaters count is in header.repeaters.num_repeaters
     // (not header.num_repeaters as in the original erroneous code)
     if (frame->header.repeaters.num_repeaters > 0) {
         hdr->hdr_type = IL2P_HDR_TYPE_0_TRANSPARENT;
         return true;
     }
-    // end modified part
 
     // Try to SIXBIT-encode destination callsign
     uint8_t dest_sb[6], src_sb[6];
@@ -220,7 +218,6 @@ bool il2p_header_from_ax25(const ax25_frame_t *frame, uint16_t payload_len, il2p
         return true;
     }
 
-    // start modified part
     // ax25_frame_t is a base struct; frame type uses the exact enum values from ax25.h.
     // There is no AX25_FRAME_INFORMATION, AX25_FRAME_SUPERVISORY, or AX25_FRAME_UNNUMBERED
     // generic enum value -- only the specific variants with _8BIT/_16BIT/_RR_ etc.
@@ -341,7 +338,6 @@ bool il2p_header_from_ax25(const ax25_frame_t *frame, uint16_t payload_len, il2p
         (void) uframe;
         ctrl7 = (uint8_t) ((pf << 6u) | (opcode << 1u) | c_bit);
     }
-    // end modified part
 
     // Fill in Type 1 header
     hdr->hdr_type = IL2P_HDR_TYPE_1_TRANSLATED;

@@ -58,17 +58,10 @@
 /**
  * @defgroup TimerConstants Timer Management Constants
  * @brief Special values for timer state management
- *
- * The T1 timer uses a sentinel value to indicate that it should be armed
- * on the next call to ax25_tick(). This avoids race conditions where
- * the timer would be set to the current tick value, causing immediate
- * expiration in the same processing cycle.
  */
-#define AX25_T1_PENDING  UINT32_MAX /**< Sentinel to arm T1 on next tick() call */
 
 // All defaults follow AX.25 v2.2 §6.7.2 and PE1CHL §5.
 // Override at build time with -DAX25_DEFAULT_T1_MS=<value> etc.
-
 // T1: Acknowledgment timer default — 3000 ms (§6.7.1.1)
 // Stored as 10ms ticks in ax25_timers_t.t1: 3000/10 = 300 ticks.
 #ifndef AX25_DEFAULT_T1_MS
@@ -89,6 +82,13 @@
 // N1: Maximum I-field length in octets (§6.7.2).
 #ifndef AX25_DEFAULT_N1
 #define AX25_DEFAULT_N1  256u
+#endif
+
+// SREJ buffer slot size: tied to N1 so the buffer is never
+// larger than the maximum negotiated I-field. Override at
+// compile time with -DMAX_SREJ_BUFFER_SIZE=128 on MCUs.
+#ifndef AX25_SREJ_BUFFER_SIZE
+#define AX25_SREJ_BUFFER_SIZE  AX25_DEFAULT_N1
 #endif
 
 // N2: Maximum number of retransmission attempts (§6.7.2).
@@ -606,7 +606,7 @@ typedef enum {
  *
  * @section RTT_Calculation
  * RTT measured from TEST command transmission to TEST response reception.
- * Average RTT = (rtt_sum / rtt_count) * 10ms.
+ * EMA RTT (alpha=1/8). ema_rtt * 10ms gives milliseconds.
  * Used to set T1 = 2 * RTT + margin.
  */
 typedef struct {
@@ -614,8 +614,8 @@ typedef struct {
     uint16_t test_received; /**< TEST responses received */
     uint16_t test_lost; /**< TEST timeouts (no response) */
     uint32_t last_test_tick; /**< Timestamp of last TEST command (10ms) */
-    uint32_t rtt_sum; /**< Sum of all RTT measurements (10ms ticks) */
-    uint16_t rtt_count; /**< Number of valid RTT measurements */
+    uint32_t ema_rtt; /**< EMA of RTT in 10ms ticks; 0 = no data yet */
+    uint8_t ema_seeded; /**< 1 once first sample loaded */
     uint8_t test_sequence; /**< TEST sequence number for tracking */
 } ax25_test_stats_t;
 
@@ -707,10 +707,14 @@ typedef struct {
     ax25_callbacks_t callbacks; /**< Upper layer callback interface */
     void *user_data; /**< Upper layer context pointer */
 
-    /* Timer tracking (10ms tick resolution) */
-    uint32_t t1_start_tick; /**< T1 start timestamp (0 = stopped) */
-    uint32_t t2_start_tick; /**< T2 start timestamp (0 = stopped) */
-    uint32_t t3_start_tick; /**< T3 start timestamp (0 = stopped) */
+    // Raw tick fields t1_start_tick / t2_start_tick / t3_start_tick removed.
+    // ax25_timer_t carries start_ms, duration_ms and a running flag, eliminating
+    // both the UINT32_MAX sentinel and the separate t2_running flag.
+    // last_tick_10ms caches the most recent tick for helpers that have no tick param.
+    ax25_timer_t t1;             // T1 acknowledgment timer
+    ax25_timer_t t2;             // T2 response delay timer (running replaces t2_running)
+    ax25_timer_t t3;             // T3 inactive link timer
+    uint32_t last_tick_10ms;     // last tick seen; updated by ax25_tick/ax25_process_frame
     uint8_t retry_count; /**< Current retry counter for T1 expiry */
 
     /* Flow control state */
@@ -744,7 +748,7 @@ typedef struct {
     bool rej_exception; /**< REJ recovery in progress */
 
     /* SREJ frame buffering per Section 6.4.4.2 */
-    uint8_t srej_buffer[AX25_MAX_QUEUE_SIZE][256]; /**< Buffered out-of-seq frames */
+    uint8_t srej_buffer[AX25_MAX_QUEUE_SIZE][AX25_SREJ_BUFFER_SIZE];  // Buffered out-of-seq frames (was magic literal 256)
     uint8_t srej_buffer_len[AX25_MAX_QUEUE_SIZE]; /**< Buffered frame lengths */
     uint8_t srej_buffer_ns[AX25_MAX_QUEUE_SIZE]; /**< Buffered frame N(S) values */
     uint8_t srej_buffer_pid[AX25_MAX_QUEUE_SIZE]; /**< Buffered frame PID values - required for correct DL-DATA indication on reorder */
@@ -756,8 +760,6 @@ typedef struct {
     uint8_t frmr_info_len; /**< Length of stored FRMR info */
     uint8_t frmr_retry_count; /**< FRMR retransmission counter */
 
-    /* T2 response delay state per Section 6.7.1.2 */
-    bool t2_running; /**< T2 timer active */
     bool t2_ack_pending; /**< Delayed ACK pending T2 expiry */
     uint8_t t2_pending_nr; /**< N(R) value for delayed ACK */
 
@@ -1057,7 +1059,7 @@ uint8_t ax25_send_test_command(ax25_connection_t *conn, uint8_t *payload, size_t
  * @return Average RTT in milliseconds, 0 if no measurements
  *
  * @section Calculation
- * Returns (rtt_sum / rtt_count) * 10ms.
+ * Returns ema_rtt * 10ms. Returns 0 if no measurement taken yet.
  * Used for adaptive T1 adjustment per Section 6.7.1.1.
  */
 uint32_t ax25_get_average_rtt_ms(ax25_connection_t *conn);

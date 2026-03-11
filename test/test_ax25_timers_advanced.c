@@ -44,28 +44,28 @@
 static uint32_t assert_count = 0;
 
 // Capture buffer for state machine transmissions
-static uint8_t  captured_buffer[2048];
-static size_t   captured_len    = 0;
-static uint32_t transmit_count  = 0;
+static uint8_t captured_buffer[2048];
+static size_t captured_len = 0;
+static uint32_t transmit_count = 0;
 
 // Per-transmission capture log (records each call independently)
 #define MAX_TX_LOG 64
-static uint8_t  tx_log_buf[MAX_TX_LOG][512];
-static size_t   tx_log_len[MAX_TX_LOG];
+static uint8_t tx_log_buf[MAX_TX_LOG][512];
+static size_t tx_log_len[MAX_TX_LOG];
 static uint32_t tx_log_tick[MAX_TX_LOG];
 static uint32_t tx_log_index = 0;
-static uint32_t global_tick  = 0; // set by driver before each tick call
+static uint32_t global_tick = 0;  // set by driver before each tick call
 
 // PTT / physical-layer capture
-static bool     ptt_state    = false;
+static bool ptt_state = false;
 static uint32_t ptt_on_count = 0;
-static uint32_t ptt_off_count= 0;
-static bool     simulated_carrier = false;
-static uint32_t phys_send_count   = 0;
+static uint32_t ptt_off_count = 0;
+static bool simulated_carrier = false;
+static uint32_t phys_send_count = 0;
 
 // DL-ERROR capture
-static ax25_dl_error_t last_dl_error      = (ax25_dl_error_t)0xFF;
-static uint32_t        dl_error_call_count = 0;
+static ax25_dl_error_t last_dl_error = (ax25_dl_error_t) 0xFF;
+static uint32_t dl_error_call_count = 0;
 
 // Hardcoded shifted callsign bytes (SSID=0)
 // TEST1 = 0xA8 0x8A 0xA6 0xA8 0x62 0x40
@@ -78,20 +78,20 @@ static const uint8_t test2_call[6] = { 0xA8, 0x8A, 0xA6, 0xA8, 0x64, 0x40 };
 // ============================================================================
 
 static void reset_capture(void) {
-    captured_len   = 0;
+    captured_len = 0;
     transmit_count = 0;
-    tx_log_index   = 0;
+    tx_log_index = 0;
 }
 
 static void reset_ptt_state(void) {
-    ptt_state     = false;
-    ptt_on_count  = 0;
+    ptt_state = false;
+    ptt_on_count = 0;
     ptt_off_count = 0;
     phys_send_count = 0;
 }
 
 static void capture_transmit(void *user_data, uint8_t *data, size_t len) {
-    (void)user_data;
+    (void) user_data;
     if (len <= sizeof(captured_buffer)) {
         memcpy(captured_buffer, data, len);
         captured_len = len;
@@ -100,33 +100,35 @@ static void capture_transmit(void *user_data, uint8_t *data, size_t len) {
     // log individual frames for backoff analysis
     if (tx_log_index < MAX_TX_LOG && len <= 512) {
         memcpy(tx_log_buf[tx_log_index], data, len);
-        tx_log_len[tx_log_index]  = len;
+        tx_log_len[tx_log_index] = len;
         tx_log_tick[tx_log_index] = global_tick;
         tx_log_index++;
     }
 }
 
 static void dl_error_callback(void *user_data, ax25_dl_error_t error) {
-    (void)user_data;
+    (void) user_data;
     last_dl_error = error;
     dl_error_call_count++;
     DEBUG_VAR("DL-ERROR code received", (unsigned)error);
 }
 
 static void ptt_control_callback(bool on, void *user_data) {
-    (void)user_data;
+    (void) user_data;
     ptt_state = on;
-    if (on) ptt_on_count++;
-    else     ptt_off_count++;
+    if (on)
+        ptt_on_count++;
+    else
+        ptt_off_count++;
 }
 
 static bool carrier_detect_callback(void *user_data) {
-    (void)user_data;
+    (void) user_data;
     return simulated_carrier;
 }
 
 static void send_data_callback(const uint8_t *data, size_t len, void *user_data) {
-    (void)user_data;
+    (void) user_data;
     if (len <= sizeof(captured_buffer)) {
         memcpy(captured_buffer, data, len);
         captured_len = len;
@@ -136,8 +138,14 @@ static void send_data_callback(const uint8_t *data, size_t len, void *user_data)
 }
 
 static void cleanup_addresses(ax25_address_t **dest, ax25_address_t **src) {
-    if (dest && *dest) { free(*dest); *dest = NULL; }
-    if (src  && *src ) { free(*src);  *src  = NULL; }
+    if (dest && *dest) {
+        free(*dest);
+        *dest = NULL;
+    }
+    if (src && *src) {
+        free(*src);
+        *src = NULL;
+    }
 }
 
 // Build a raw 15-byte UA frame (TEST2 -> TEST1, F=1)
@@ -146,13 +154,11 @@ static void build_ua_frame(uint8_t out[15]) {
     out[6] = 0x60;
     memcpy(out + 7, test2_call, 6);
     out[13] = 0x61;
-    out[14] = 0x73; // UA modifier, F=1
+    out[14] = 0x73;  // UA modifier, F=1
 }
 
 // Establish a CONNECTED link; returns 0 on success, -1 on failure
-static int establish_connection(ax25_connection_t *conn,
-                                ax25_address_t    *dest,
-                                ax25_address_t    *src) {
+static int establish_connection(ax25_connection_t *conn, ax25_address_t *dest, ax25_address_t *src) {
     reset_capture();
     if (ax25_connect(conn, dest, src) != 0)
         return -1;
@@ -162,7 +168,8 @@ static int establish_connection(ax25_connection_t *conn,
 
     uint8_t decode_err = 0;
     ax25_frame_t *ua = ax25_frame_decode(ua_raw, 15, MODULO128_FALSE, &decode_err);
-    if (!ua) return -1;
+    if (!ua)
+        return -1;
 
     reset_capture();
     ax25_process_frame(conn, ua, 1);
@@ -179,7 +186,7 @@ static void send_rr_ack(ax25_connection_t *conn, uint8_t nr, uint32_t tick) {
     memcpy(rr_raw + 7, test2_call, 6);
     rr_raw[13] = 0x61;
     // RR control: bits[7:5]=N(R)<<5, bits[4]=P/F=0, bits[3:0]=0001
-    rr_raw[14] = (uint8_t)((nr << 5) | 0x01);
+    rr_raw[14] = (uint8_t) ((nr << 5) | 0x01);
 
     uint8_t decode_err = 0;
     ax25_frame_t *f = ax25_frame_decode(rr_raw, 15, MODULO128_FALSE, &decode_err);
@@ -200,7 +207,7 @@ static void inject_test_response(ax25_connection_t *conn, uint32_t tick) {
     // The actual wire byte = 0xE3 | (pf ? 0x10 : 0x00) when P=1 -> 0xF3
     uint8_t test_rsp_raw[15];
     memcpy(test_rsp_raw + 0, test1_call, 6);
-    test_rsp_raw[6] = 0x60; // last addr byte for dest, C/R bits handled by decoder
+    test_rsp_raw[6] = 0x60;  // last addr byte for dest, C/R bits handled by decoder
     memcpy(test_rsp_raw + 7, test2_call, 6);
     test_rsp_raw[13] = 0x61;
     // TEST response control = 0xF3 (modifier 0xE3, F=1)
@@ -224,15 +231,13 @@ static int test_t1_adaptive_rtt_proportional(void) {
     DEBUG_PRINT("T1 adaptive: verify T1 = 2*avg_RTT + margin (half-duplex)");
 
     ax25_connection_t conn;
-    ax25_callbacks_t cb = { .transmit = capture_transmit,
-                            .on_dl_error = dl_error_callback };
-    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0,
-                "Connection init succeeded", 0);
+    ax25_callbacks_t cb = { .transmit = capture_transmit, .on_dl_error = dl_error_callback };
+    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0, "Connection init succeeded", 0);
 
     conn.full_duplex = false;
-    // Inject synthetic RTT measurements: 3 samples of 50 ticks each
-    conn.test_stats.rtt_sum   = 150; // 3 * 50 ticks
-    conn.test_stats.rtt_count = 3;
+    // Inject EMA RTT = 50 ticks (equivalent to 3 samples of 50 ticks)
+    conn.test_stats.ema_rtt = 50;
+    conn.test_stats.ema_seeded = 1u;
 #ifdef DEBUG_ENABLE
     uint16_t t1_before = conn.timers.t1;
 #endif
@@ -245,8 +250,7 @@ static int test_t1_adaptive_rtt_proportional(void) {
     // Expected: avg_rtt=50, margin=30(HD), new_t1 = 50*2+30 = 130
     uint16_t expected = 130;
     DEBUG_VAR("Expected T1 (ticks)", expected);
-    TEST_ASSERT(t1_after == expected,
-                "T1 set to 2*avg_RTT+margin (half-duplex, 50 tick RTT)", t1_after);
+    TEST_ASSERT(t1_after == expected, "T1 set to 2*avg_RTT+margin (half-duplex, 50 tick RTT)", t1_after);
 
     ax25_connection_cleanup(&conn);
     return 0;
@@ -259,21 +263,18 @@ static int test_t1_adaptive_fullduplex_margin(void) {
 
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = capture_transmit };
-    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0,
-                "Connection init succeeded", 0);
+    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0, "Connection init succeeded", 0);
 
     conn.full_duplex = true;
-    // 2 samples: 20 + 40 = 60 ticks total -> avg = 30
-    conn.test_stats.rtt_sum   = 60;
-    conn.test_stats.rtt_count = 2;
+    // EMA RTT = 30 ticks (equivalent to avg of 20+40 ticks)
+    conn.test_stats.ema_rtt = 30;
+    conn.test_stats.ema_seeded = 1u;
 
     ax25_adjust_t1_adaptive(&conn);
     // Expected: 30*2 + 10 = 70
     uint16_t expected = 70;
-    DEBUG_VAR("T1 after adaptive FD (ticks)", conn.timers.t1);
-    DEBUG_VAR("Expected T1 FD (ticks)", expected);
-    TEST_ASSERT(conn.timers.t1 == expected,
-                "T1 full-duplex margin = 10 ticks", conn.timers.t1);
+    DEBUG_VAR("T1 after adaptive FD (ticks)", conn.timers.t1);DEBUG_VAR("Expected T1 FD (ticks)", expected);
+    TEST_ASSERT(conn.timers.t1 == expected, "T1 full-duplex margin = 10 ticks", conn.timers.t1);
 
     ax25_connection_cleanup(&conn);
     return 0;
@@ -286,38 +287,30 @@ static int test_t1_adaptive_min_clamp(void) {
 
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = capture_transmit };
-    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0,
-                "Connection init succeeded", 0);
+    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0, "Connection init succeeded", 0);
 
-    conn.full_duplex = false;
-    // RTT = 1 tick -> 2*1+30 = 32 -> above min, so set RTT=0 to get margin only
-    conn.test_stats.rtt_sum   = 0; // avg = 0 -> 0*2+30 = 30 -> above min
-    conn.test_stats.rtt_count = 1;
-    // force a result below 10: artificially set rtt_sum so avg_rtt*2+margin<10
-    // avg=0, margin(HD)=30 -> 30, above 10 -> clamp not triggered by HD margin
-    // Use FD: margin=10, avg=0 -> 0+10=10 -> exactly at min (not below)
     conn.full_duplex = true;
-    // rtt_sum=0, count=1 -> avg=0 -> new_t1=0*2+10=10 -> exactly min
+    // EMA RTT = 0 ticks -> new_t1 = 0*2+10 = 10 -> exactly at min
+    conn.test_stats.ema_rtt = 0;
+    conn.test_stats.ema_seeded = 1u;
+
+    // avg=0, margin(HD)=30 -> 30, above 10 -> clamp not triggered by HD margin
+    // ema_rtt=0, ema_seeded=1, FD margin=10 -> 0*2+10=10 -> exactly min
     ax25_adjust_t1_adaptive(&conn);
     DEBUG_VAR("T1 at min boundary (ticks)", conn.timers.t1);
-    TEST_ASSERT(conn.timers.t1 >= 10,
-                "T1 >= minimum (10 ticks = 100ms)", conn.timers.t1);
+    TEST_ASSERT(conn.timers.t1 >= 10, "T1 >= minimum (10 ticks = 100ms)", conn.timers.t1);
 
     // Now force below minimum by giving negative-equivalent count trick:
     // The only way to go below min is avg*2+margin < 10
     // With FD margin=10: need avg<0, impossible with unsigned.
     // Confirm clamp holds if we manually set timers.t1 too low
-    conn.timers.t1 = 2; // artificially low
-    // Simulate a scenario where formula gives 8 < 10:
-    // avg_rtt = 0 (sum=0, count=1), margin=10 (FD): result=10 -> clamp not needed
-    // To test clamp: temporarily patch margin. We cannot; instead verify
-    // the result is always >= 10 after a call.
-    conn.test_stats.rtt_sum   = 0;
-    conn.test_stats.rtt_count = 1;
+    conn.timers.t1 = 2;  // artificially low
+    // ema_rtt=0, ema_seeded=1, FD margin=10: result=10 -> clamp not needed
+    conn.test_stats.ema_rtt = 0;
+    conn.test_stats.ema_seeded = 1u;
     ax25_adjust_t1_adaptive(&conn);
     DEBUG_VAR("T1 after second adaptive (ticks)", conn.timers.t1);
-    TEST_ASSERT(conn.timers.t1 >= 10,
-                "T1 never below minimum after adaptive call", conn.timers.t1);
+    TEST_ASSERT(conn.timers.t1 >= 10, "T1 never below minimum after adaptive call", conn.timers.t1);
 
     ax25_connection_cleanup(&conn);
     return 0;
@@ -330,19 +323,17 @@ static int test_t1_adaptive_max_clamp(void) {
 
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = capture_transmit };
-    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0,
-                "Connection init succeeded", 0);
+    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0, "Connection init succeeded", 0);
 
     conn.full_duplex = false;
-    // avg_rtt = 2000 -> 2*2000+30 = 4030 -> clamped to 3000
-    conn.test_stats.rtt_sum   = 2000;
-    conn.test_stats.rtt_count = 1;
-    DEBUG_VAR("RTT sum injected (ticks)", conn.test_stats.rtt_sum);
+    // ema_rtt=2000 -> 2*2000+30 = 4030 -> clamped to 3000
+    conn.test_stats.ema_rtt = 2000;
+    conn.test_stats.ema_seeded = 1u;
+    DEBUG_VAR("EMA RTT injected (ticks)", conn.test_stats.ema_rtt);
 
     ax25_adjust_t1_adaptive(&conn);
     DEBUG_VAR("T1 after adaptive large RTT (ticks)", conn.timers.t1);
-    TEST_ASSERT(conn.timers.t1 == 3000,
-                "T1 clamped to maximum 3000 ticks (30s)", conn.timers.t1);
+    TEST_ASSERT(conn.timers.t1 == 3000, "T1 clamped to maximum 3000 ticks (30s)", conn.timers.t1);
 
     ax25_connection_cleanup(&conn);
     return 0;
@@ -351,24 +342,22 @@ static int test_t1_adaptive_max_clamp(void) {
 // Test 7.1.e: No adjustment when no RTT samples available
 static int test_t1_adaptive_no_samples(void) {
     printf("\n--- test_t1_adaptive_no_samples ---\n");
-    DEBUG_PRINT("T1 adaptive: no change when rtt_count = 0");
+    DEBUG_PRINT("T1 adaptive: no change when ema_seeded = 0");
 
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = capture_transmit };
-    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0,
-                "Connection init succeeded", 0);
+    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0, "Connection init succeeded", 0);
 
     uint16_t t1_default = conn.timers.t1;
     DEBUG_VAR("T1 default before (ticks)", t1_default);
 
-    // No RTT samples
-    conn.test_stats.rtt_count = 0;
-    conn.test_stats.rtt_sum   = 0;
+    // No RTT samples: ema_seeded=0 (already zero from init, set explicitly for clarity)
+    conn.test_stats.ema_seeded = 0;
+    conn.test_stats.ema_rtt = 0;
     ax25_adjust_t1_adaptive(&conn);
 
     DEBUG_VAR("T1 after no-samples adaptive (ticks)", conn.timers.t1);
-    TEST_ASSERT(conn.timers.t1 == t1_default,
-                "T1 unchanged when no RTT samples", conn.timers.t1);
+    TEST_ASSERT(conn.timers.t1 == t1_default, "T1 unchanged when no RTT samples", conn.timers.t1);
 
     ax25_connection_cleanup(&conn);
     return 0;
@@ -382,14 +371,13 @@ static int test_t1_adaptive_progressive_refinement(void) {
 
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = capture_transmit };
-    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0,
-                "Connection init succeeded", 0);
+    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0, "Connection init succeeded", 0);
 
     conn.full_duplex = false;
 
     uint8_t parse_err = 0;
     ax25_address_t *dest = ax25_address_from_string("TEST2-0", &parse_err);
-    ax25_address_t *src  = ax25_address_from_string("TEST1-0", &parse_err);
+    ax25_address_t *src = ax25_address_from_string("TEST1-0", &parse_err);
     TEST_ASSERT(dest && src, "Addresses allocated", 0);
 
     int res = establish_connection(&conn, dest, src);
@@ -417,25 +405,19 @@ static int test_t1_adaptive_progressive_refinement(void) {
         // Advance 20 ticks (RTT = 200ms)
         tick += 20;
         inject_test_response(&conn, tick);
-        DEBUG_VAR("RTT sample injected (ticks)", (uint32_t)20);
-        DEBUG_VAR("rtt_count now", conn.test_stats.rtt_count);
-        DEBUG_VAR("rtt_sum now", conn.test_stats.rtt_sum);
+        DEBUG_VAR("RTT sample injected (ticks)", (uint32_t)20); DEBUG_VAR("ema_seeded now", conn.test_stats.ema_seeded); DEBUG_VAR("ema_rtt now", conn.test_stats.ema_rtt);
 
         ax25_adjust_t1_adaptive(&conn);
         DEBUG_VAR("T1 after iteration %d (ticks)", conn.timers.t1);
     }
 
-    // After 5 samples of RTT=20: avg=20, T1=2*20+30=70
+    // After 5 samples all equal to 20: EMA converges to 20 -> T1=2*20+30=70
     uint16_t expected = 70;
-    DEBUG_VAR("Final T1 (ticks)", conn.timers.t1);
-    DEBUG_VAR("Expected T1 (ticks)", expected);
-    TEST_ASSERT(conn.timers.t1 == expected,
-                "T1 converges to 2*RTT+margin after 5 samples", conn.timers.t1);
+    DEBUG_VAR("Final T1 (ticks)", conn.timers.t1);DEBUG_VAR("Expected T1 (ticks)", expected);
+    TEST_ASSERT(conn.timers.t1 == expected, "T1 converges to 2*RTT+margin after 5 samples", conn.timers.t1);
 
     // Verify T1 decreased from the (much larger) default
-    TEST_ASSERT(conn.timers.t1 < t1_initial,
-                "T1 reduced below initial default after RTT sampling",
-                conn.timers.t1);
+    TEST_ASSERT(conn.timers.t1 < t1_initial, "T1 reduced below initial default after RTT sampling", conn.timers.t1);
 
     // Drain the tx queue before cleanup
     send_rr_ack(&conn, conn.vars.vs, tick);
@@ -451,8 +433,7 @@ static int test_t1_get_avg_rtt_no_samples(void) {
 
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = capture_transmit };
-    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0,
-                "Connection init succeeded", 0);
+    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0, "Connection init succeeded", 0);
 
     uint32_t avg = ax25_get_average_rtt_ms(&conn);
     DEBUG_VAR("Average RTT ms (no samples)", avg);
@@ -465,20 +446,19 @@ static int test_t1_get_avg_rtt_no_samples(void) {
 // Test 7.1.h: ax25_get_average_rtt_ms returns correct value
 static int test_t1_get_avg_rtt_with_samples(void) {
     printf("\n--- test_t1_get_avg_rtt_with_samples ---\n");
-    DEBUG_PRINT("ax25_get_average_rtt_ms returns sum/count * 10ms");
+    DEBUG_PRINT("ax25_get_average_rtt_ms returns ema_rtt * 10ms");
 
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = capture_transmit };
-    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0,
-                "Connection init succeeded", 0);
+    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0, "Connection init succeeded", 0);
 
-    // 4 samples totalling 100 ticks -> avg = 25 ticks -> 250ms
-    conn.test_stats.rtt_sum   = 100;
-    conn.test_stats.rtt_count = 4;
+    // EMA RTT = 25 ticks -> 250ms (equivalent to avg of 4 x 25-tick samples)
+    conn.test_stats.ema_rtt = 25;
+    conn.test_stats.ema_seeded = 1u;
 
     uint32_t avg = ax25_get_average_rtt_ms(&conn);
     DEBUG_VAR("Average RTT ms (expected 250)", avg);
-    TEST_ASSERT(avg == 250, "Average RTT = 250ms for 4 samples of 25 ticks", avg);
+    TEST_ASSERT(avg == 250, "Average RTT = 250ms for EMA of 25 ticks", avg);
 
     ax25_connection_cleanup(&conn);
     return 0;
@@ -497,20 +477,17 @@ static int test_backoff_n2_exhaustion(void) {
     DEBUG_PRINT("Backoff: N2 retries exhausted -> DISCONNECTED + DL-ERROR-N");
 
     ax25_connection_t conn;
-    ax25_callbacks_t cb = { .transmit     = capture_transmit,
-                            .on_dl_error  = dl_error_callback };
-    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0,
-                "Connection init succeeded", 0);
+    ax25_callbacks_t cb = { .transmit = capture_transmit, .on_dl_error = dl_error_callback };
+    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0, "Connection init succeeded", 0);
 
     // Use very short T1 and small N2 for fast test
     conn.timers.t1 = 5;   // 50ms
     conn.timers.n2 = 3;   // 3 retries
-    DEBUG_VAR("T1 configured (ticks)", conn.timers.t1);
-    DEBUG_VAR("N2 configured (retries)", conn.timers.n2);
+    DEBUG_VAR("T1 configured (ticks)", conn.timers.t1);DEBUG_VAR("N2 configured (retries)", conn.timers.n2);
 
     uint8_t parse_err = 0;
     ax25_address_t *dest = ax25_address_from_string("TEST2-0", &parse_err);
-    ax25_address_t *src  = ax25_address_from_string("TEST1-0", &parse_err);
+    ax25_address_t *src = ax25_address_from_string("TEST1-0", &parse_err);
     TEST_ASSERT(dest && src, "Addresses allocated", 0);
 
     int res = establish_connection(&conn, dest, src);
@@ -522,7 +499,7 @@ static int test_backoff_n2_exhaustion(void) {
     // Send one I-frame and do NOT acknowledge it
     const uint8_t payload[] = { 'D', 'A', 'T', 'A' };
     reset_capture();
-    uint8_t snd = ax25_send_data(&conn, (uint8_t*)payload, sizeof(payload), 0xF0);
+    uint8_t snd = ax25_send_data(&conn, (uint8_t*) payload, sizeof(payload), 0xF0);
     if (snd != 0) {
         DEBUG_VAR("send_data error", snd);
         cleanup_addresses(&dest, &src);
@@ -530,33 +507,26 @@ static int test_backoff_n2_exhaustion(void) {
     }
 
     dl_error_call_count = 0;
-    last_dl_error = (ax25_dl_error_t)0xFF;
+    last_dl_error = (ax25_dl_error_t) 0xFF;
 
     // Drive ticks: let T1 expire N2+1 times (N2 retries + final disconnect)
     // Each expiry is separated by timers.t1 ticks; run enough ticks to cover all
-    uint32_t max_ticks = (uint32_t)(conn.timers.t1 + 2) * (conn.timers.n2 + 2) + 10;
+    uint32_t max_ticks = (uint32_t) (conn.timers.t1 + 2) * (conn.timers.n2 + 2) + 10;
     DEBUG_VAR("Driving ticks", max_ticks);
     for (uint32_t i = 1; i <= max_ticks; i++) {
         global_tick = i;
         ax25_tick(&conn, i);
-        DEBUG_VAR("tick", i);
-        DEBUG_STATE("state", conn.state);
-        DEBUG_VAR("retry_count", conn.retry_count);
+        DEBUG_VAR("tick", i);DEBUG_STATE("state", conn.state);DEBUG_VAR("retry_count", conn.retry_count);
         if (conn.state == AX25_STATE_DISCONNECTED) {
             DEBUG_VAR("DISCONNECTED at tick", i);
             break;
         }
     }
 
-    DEBUG_STATE("Final state", conn.state);
-    DEBUG_VAR("DL-ERROR call count", dl_error_call_count);
-    DEBUG_VAR("Last DL-ERROR code", (unsigned)last_dl_error);
-    TEST_ASSERT(conn.state == AX25_STATE_DISCONNECTED,
-                "State = DISCONNECTED after N2 exhaustion", conn.state);
-    TEST_ASSERT(dl_error_call_count >= 1,
-                "DL-ERROR callback fired at least once", dl_error_call_count);
-    TEST_ASSERT(last_dl_error == AX25_DL_ERROR_N,
-                "DL-ERROR code N (retry limit exceeded) raised", (unsigned)last_dl_error);
+    DEBUG_STATE("Final state", conn.state);DEBUG_VAR("DL-ERROR call count", dl_error_call_count);DEBUG_VAR("Last DL-ERROR code", (unsigned)last_dl_error);
+    TEST_ASSERT(conn.state == AX25_STATE_DISCONNECTED, "State = DISCONNECTED after N2 exhaustion", conn.state);
+    TEST_ASSERT(dl_error_call_count >= 1, "DL-ERROR callback fired at least once", dl_error_call_count);
+    TEST_ASSERT(last_dl_error == AX25_DL_ERROR_N, "DL-ERROR code N (retry limit exceeded) raised", (unsigned )last_dl_error);
 
     cleanup_addresses(&dest, &src);
     return 0;
@@ -569,17 +539,15 @@ static int test_backoff_retry_counter(void) {
 
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = capture_transmit };
-    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0,
-                "Connection init succeeded", 0);
+    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0, "Connection init succeeded", 0);
 
     conn.timers.t1 = 5;
-    conn.timers.n2 = 10; // plenty of retries so we do not disconnect
-    DEBUG_VAR("T1 (ticks)", conn.timers.t1);
-    DEBUG_VAR("N2 (retries)", conn.timers.n2);
+    conn.timers.n2 = 10;  // plenty of retries so we do not disconnect
+    DEBUG_VAR("T1 (ticks)", conn.timers.t1);DEBUG_VAR("N2 (retries)", conn.timers.n2);
 
     uint8_t parse_err = 0;
     ax25_address_t *dest = ax25_address_from_string("TEST2-0", &parse_err);
-    ax25_address_t *src  = ax25_address_from_string("TEST1-0", &parse_err);
+    ax25_address_t *src = ax25_address_from_string("TEST1-0", &parse_err);
     TEST_ASSERT(dest && src, "Addresses allocated", 0);
 
     if (establish_connection(&conn, dest, src) != 0) {
@@ -589,27 +557,26 @@ static int test_backoff_retry_counter(void) {
 
     const uint8_t payload[] = { 'X' };
     reset_capture();
-    ax25_send_data(&conn, (uint8_t*)payload, 1, 0xF0);
+    ax25_send_data(&conn, (uint8_t*) payload, 1, 0xF0);
 
     uint8_t prev_retry = conn.retry_count;
     DEBUG_VAR("Initial retry_count", prev_retry);
 
     // Let T1 expire twice: drive 2 * (t1+1) ticks
-    for (uint32_t i = 1; i <= 2 * (uint32_t)(conn.timers.t1 + 2); i++) {
+    for (uint32_t i = 1; i <= 2 * (uint32_t) (conn.timers.t1 + 2); i++) {
         global_tick = i;
         ax25_tick(&conn, i);
         if (conn.retry_count > prev_retry) {
             DEBUG_VAR("retry_count incremented to", conn.retry_count);
             prev_retry = conn.retry_count;
         }
-        if (conn.state == AX25_STATE_DISCONNECTED) break;
+        if (conn.state == AX25_STATE_DISCONNECTED)
+            break;
     }
 
     DEBUG_VAR("Final retry_count", conn.retry_count);
-    TEST_ASSERT(conn.retry_count >= 2,
-                "retry_count >= 2 after two T1 expirations", conn.retry_count);
-    TEST_ASSERT(conn.stats.t1_expirations >= 2,
-                "t1_expirations stat >= 2", conn.stats.t1_expirations);
+    TEST_ASSERT(conn.retry_count >= 2, "retry_count >= 2 after two T1 expirations", conn.retry_count);
+    TEST_ASSERT(conn.stats.t1_expirations >= 2, "t1_expirations stat >= 2", conn.stats.t1_expirations);
 
     // Drain queue to avoid leak
     send_rr_ack(&conn, conn.vars.vs, 200);
@@ -625,15 +592,14 @@ static int test_backoff_retry_reset_on_ack(void) {
 
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = capture_transmit };
-    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0,
-                "Connection init succeeded", 0);
+    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0, "Connection init succeeded", 0);
 
     conn.timers.t1 = 5;
     conn.timers.n2 = 10;
 
     uint8_t parse_err = 0;
     ax25_address_t *dest = ax25_address_from_string("TEST2-0", &parse_err);
-    ax25_address_t *src  = ax25_address_from_string("TEST1-0", &parse_err);
+    ax25_address_t *src = ax25_address_from_string("TEST1-0", &parse_err);
     TEST_ASSERT(dest && src, "Addresses allocated", 0);
 
     if (establish_connection(&conn, dest, src) != 0) {
@@ -643,24 +609,23 @@ static int test_backoff_retry_reset_on_ack(void) {
 
     const uint8_t payload[] = { 'Y' };
     reset_capture();
-    ax25_send_data(&conn, (uint8_t*)payload, 1, 0xF0);
+    ax25_send_data(&conn, (uint8_t*) payload, 1, 0xF0);
 
     // Let T1 expire once to increment retry_count
-    for (uint32_t i = 1; i <= (uint32_t)(conn.timers.t1 + 2); i++) {
+    for (uint32_t i = 1; i <= (uint32_t) (conn.timers.t1 + 2); i++) {
         global_tick = i;
         ax25_tick(&conn, i);
-        if (conn.retry_count > 0) break;
+        if (conn.retry_count > 0)
+            break;
     }
 
     DEBUG_VAR("retry_count after T1 expiry", conn.retry_count);
-    TEST_ASSERT(conn.retry_count > 0,
-                "retry_count > 0 after T1 expiry", conn.retry_count);
+    TEST_ASSERT(conn.retry_count > 0, "retry_count > 0 after T1 expiry", conn.retry_count);
 
     // Now ACK all outstanding frames
     send_rr_ack(&conn, conn.vars.vs, 50);
     DEBUG_VAR("retry_count after ACK", conn.retry_count);
-    TEST_ASSERT(conn.retry_count == 0,
-                "retry_count = 0 after acknowledgment", conn.retry_count);
+    TEST_ASSERT(conn.retry_count == 0, "retry_count = 0 after acknowledgment", conn.retry_count);
 
     cleanup_addresses(&dest, &src);
     ax25_connection_cleanup(&conn);
@@ -674,16 +639,15 @@ static int test_backoff_go_back_n_retransmit(void) {
 
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = capture_transmit };
-    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0,
-                "Connection init succeeded", 0);
+    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0, "Connection init succeeded", 0);
 
     conn.timers.t1 = 10;
     conn.timers.n2 = 5;
-    conn.timers.k  = 7; // window
+    conn.timers.k = 7;  // window
 
     uint8_t parse_err = 0;
     ax25_address_t *dest = ax25_address_from_string("TEST2-0", &parse_err);
-    ax25_address_t *src  = ax25_address_from_string("TEST1-0", &parse_err);
+    ax25_address_t *src = ax25_address_from_string("TEST1-0", &parse_err);
     TEST_ASSERT(dest && src, "Addresses allocated", 0);
 
     if (establish_connection(&conn, dest, src) != 0) {
@@ -696,28 +660,25 @@ static int test_backoff_go_back_n_retransmit(void) {
     reset_capture();
     tx_log_index = 0;
     for (int i = 0; i < 3; i++) {
-        ax25_send_data(&conn, (uint8_t*)payload, sizeof(payload), 0xF0);
+        ax25_send_data(&conn, (uint8_t*) payload, sizeof(payload), 0xF0);
     }
     uint32_t initial_tx = transmit_count;
     DEBUG_VAR("Initial transmit count (3 I-frames)", initial_tx);
 
     // Advance past T1 (no ACK given)
-    for (uint32_t i = 1; i <= (uint32_t)(conn.timers.t1 + 2); i++) {
+    for (uint32_t i = 1; i <= (uint32_t) (conn.timers.t1 + 2); i++) {
         global_tick = i;
         ax25_tick(&conn, i);
-        if (conn.state == AX25_STATE_TIMER_RECOVERY) break;
-    }
-    DEBUG_STATE("State after T1 expiry", conn.state);
+        if (conn.state == AX25_STATE_TIMER_RECOVERY)
+            break;
+    }DEBUG_STATE("State after T1 expiry", conn.state);
     uint32_t after_retry_tx = transmit_count;
     DEBUG_VAR("Transmit count after retransmit", after_retry_tx);
 
-    TEST_ASSERT(conn.state == AX25_STATE_TIMER_RECOVERY,
-                "State = TIMER_RECOVERY after T1 expiry", conn.state);
+    TEST_ASSERT(conn.state == AX25_STATE_TIMER_RECOVERY, "State = TIMER_RECOVERY after T1 expiry", conn.state);
     // All 3 frames should have been retransmitted (3 additional TX calls)
-    TEST_ASSERT(after_retry_tx >= initial_tx + 3,
-                "All 3 I-frames retransmitted after T1 expiry", after_retry_tx);
-    TEST_ASSERT(conn.stats.iframe_retransmitted >= 3,
-                "iframe_retransmitted stat >= 3", conn.stats.iframe_retransmitted);
+    TEST_ASSERT(after_retry_tx >= initial_tx + 3, "All 3 I-frames retransmitted after T1 expiry", after_retry_tx);
+    TEST_ASSERT(conn.stats.iframe_retransmitted >= 3, "iframe_retransmitted stat >= 3", conn.stats.iframe_retransmitted);
 
     // Clean up
     send_rr_ack(&conn, conn.vars.vs, 200);
@@ -733,43 +694,36 @@ static int test_backoff_sabm_retransmit_no_recovery_state(void) {
 
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = capture_transmit };
-    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0,
-                "Connection init succeeded", 0);
+    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0, "Connection init succeeded", 0);
 
     conn.timers.t1 = 5;
     conn.timers.n2 = 5;
 
     uint8_t parse_err = 0;
     ax25_address_t *dest = ax25_address_from_string("TEST2-0", &parse_err);
-    ax25_address_t *src  = ax25_address_from_string("TEST1-0", &parse_err);
+    ax25_address_t *src = ax25_address_from_string("TEST1-0", &parse_err);
     TEST_ASSERT(dest && src, "Addresses allocated", 0);
 
     reset_capture();
     uint8_t err = ax25_connect(&conn, dest, src);
     TEST_ASSERT(err == 0, "ax25_connect returned 0", err);
-    TEST_ASSERT(conn.state == AX25_STATE_AWAITING_CONNECTION,
-                "State = AWAITING_CONNECTION after connect", conn.state);
-    DEBUG_STATE("State after connect", conn.state);
+    TEST_ASSERT(conn.state == AX25_STATE_AWAITING_CONNECTION, "State = AWAITING_CONNECTION after connect", conn.state);DEBUG_STATE("State after connect", conn.state);
 
     uint32_t tx_before = transmit_count;
 
     // Let T1 expire once (no UA received)
-    for (uint32_t i = 1; i <= (uint32_t)(conn.timers.t1 + 3); i++) {
+    for (uint32_t i = 1; i <= (uint32_t) (conn.timers.t1 + 3); i++) {
         global_tick = i;
         ax25_tick(&conn, i);
-        DEBUG_VAR("tick", i);
-        DEBUG_STATE("state", conn.state);
-        if (transmit_count > tx_before) break; // SABM retransmitted
+        DEBUG_VAR("tick", i);DEBUG_STATE("state", conn.state);
+        if (transmit_count > tx_before)
+            break;  // SABM retransmitted
     }
 
-    DEBUG_VAR("tx count before retry", tx_before);
-    DEBUG_VAR("tx count after retry", transmit_count);
-    DEBUG_STATE("State after T1 expiry during AWAITING_CONNECTION", conn.state);
+    DEBUG_VAR("tx count before retry", tx_before);DEBUG_VAR("tx count after retry", transmit_count);DEBUG_STATE("State after T1 expiry during AWAITING_CONNECTION", conn.state);
 
-    TEST_ASSERT(conn.state == AX25_STATE_AWAITING_CONNECTION,
-                "State remains AWAITING_CONNECTION (not TIMER_RECOVERY)", conn.state);
-    TEST_ASSERT(transmit_count > tx_before,
-                "SABM retransmitted on T1 expiry", transmit_count);
+    TEST_ASSERT(conn.state == AX25_STATE_AWAITING_CONNECTION, "State remains AWAITING_CONNECTION (not TIMER_RECOVERY)", conn.state);
+    TEST_ASSERT(transmit_count > tx_before, "SABM retransmitted on T1 expiry", transmit_count);
 
     cleanup_addresses(&dest, &src);
     ax25_connection_cleanup(&conn);
@@ -782,17 +736,15 @@ static int test_backoff_stats_tracking(void) {
     DEBUG_PRINT("Backoff: retries and t1_expirations stats tracked accurately");
 
     ax25_connection_t conn;
-    ax25_callbacks_t cb = { .transmit    = capture_transmit,
-                            .on_dl_error = dl_error_callback };
-    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0,
-                "Connection init succeeded", 0);
+    ax25_callbacks_t cb = { .transmit = capture_transmit, .on_dl_error = dl_error_callback };
+    TEST_ASSERT(ax25_connection_init(&conn, &cb, NULL) == 0, "Connection init succeeded", 0);
 
     conn.timers.t1 = 5;
     conn.timers.n2 = 4;
 
     uint8_t parse_err = 0;
     ax25_address_t *dest = ax25_address_from_string("TEST2-0", &parse_err);
-    ax25_address_t *src  = ax25_address_from_string("TEST1-0", &parse_err);
+    ax25_address_t *src = ax25_address_from_string("TEST1-0", &parse_err);
     TEST_ASSERT(dest && src, "Addresses allocated", 0);
 
     if (establish_connection(&conn, dest, src) != 0) {
@@ -804,27 +756,22 @@ static int test_backoff_stats_tracking(void) {
     const uint8_t payload[] = { 'S', 'T', 'A', 'T' };
     reset_capture();
     dl_error_call_count = 0;
-    ax25_send_data(&conn, (uint8_t*)payload, sizeof(payload), 0xF0);
+    ax25_send_data(&conn, (uint8_t*) payload, sizeof(payload), 0xF0);
 
     // Run until disconnect or max iterations
-    uint32_t max_ticks = (uint32_t)(conn.timers.t1 + 2) * (conn.timers.n2 + 2) + 20;
+    uint32_t max_ticks = (uint32_t) (conn.timers.t1 + 2) * (conn.timers.n2 + 2) + 20;
     for (uint32_t i = 1; i <= max_ticks; i++) {
         global_tick = i;
         ax25_tick(&conn, i);
-        if (conn.state == AX25_STATE_DISCONNECTED) break;
+        if (conn.state == AX25_STATE_DISCONNECTED)
+            break;
     }
 
     const ax25_statistics_t *stats = ax25_get_statistics(&conn);
-    TEST_ASSERT(stats != NULL, "Statistics pointer valid", 0);
-    DEBUG_VAR("t1_expirations", stats->t1_expirations);
-    DEBUG_VAR("retries stat", stats->retries);
-    DEBUG_VAR("iframe_retransmitted", stats->iframe_retransmitted);
-    DEBUG_VAR("dl_error_call_count", dl_error_call_count);
+    TEST_ASSERT(stats != NULL, "Statistics pointer valid", 0);DEBUG_VAR("t1_expirations", stats->t1_expirations);DEBUG_VAR("retries stat", stats->retries);DEBUG_VAR("iframe_retransmitted", stats->iframe_retransmitted);DEBUG_VAR("dl_error_call_count", dl_error_call_count);
 
-    TEST_ASSERT(stats->t1_expirations >= (uint16_t)conn.timers.n2,
-                "t1_expirations >= N2", stats->t1_expirations);
-    TEST_ASSERT(dl_error_call_count >= 1,
-                "DL-ERROR fired (N2 exhaustion)", dl_error_call_count);
+    TEST_ASSERT(stats->t1_expirations >= (uint16_t )conn.timers.n2, "t1_expirations >= N2", stats->t1_expirations);
+    TEST_ASSERT(dl_error_call_count >= 1, "DL-ERROR fired (N2 exhaustion)", dl_error_call_count);
 
     cleanup_addresses(&dest, &src);
     return 0;
@@ -837,9 +784,9 @@ static int test_backoff_stats_tracking(void) {
 // Helper: initialize physical layer with all callbacks
 static void init_phys_with_callbacks(ax25_physical_t *phys) {
     ax25_physical_init(phys);
-    phys->ptt_control   = ptt_control_callback;
-    phys->carrier_detect= carrier_detect_callback;
-    phys->send_data     = send_data_callback;
+    phys->ptt_control = ptt_control_callback;
+    phys->carrier_detect = carrier_detect_callback;
+    phys->send_data = send_data_callback;
     reset_ptt_state();
     simulated_carrier = false;
 }
@@ -879,15 +826,14 @@ static int test_t100_t103_interaction(void) {
     ax25_physical_t phys;
     init_phys_with_callbacks(&phys);
 
-    phys.txdely_10ms   = 3;   // T103: 30ms key-up delay
-    phys.axhang_10ms   = 4;   // T100: 40ms hang after last frame
-    phys.persist       = 255; // Always transmit (no CSMA backoff)
-    phys.full_duplex   = false;
+    phys.txdely_10ms = 3;   // T103: 30ms key-up delay
+    phys.axhang_10ms = 4;   // T100: 40ms hang after last frame
+    phys.persist = 255;  // Always transmit (no CSMA backoff)
+    phys.full_duplex = false;
     phys.slottime_10ms = 0;
     phys.interframe_flags = 1;
-    phys.preamble_flags   = 0;
-    DEBUG_VAR("txdely_10ms (T103)", phys.txdely_10ms);
-    DEBUG_VAR("axhang_10ms (T100)", phys.axhang_10ms);
+    phys.preamble_flags = 0;
+    DEBUG_VAR("txdely_10ms (T103)", phys.txdely_10ms);DEBUG_VAR("axhang_10ms (T100)", phys.axhang_10ms);
 
     uint8_t frame[10] = { 0x7E, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x7E };
     ax25_physical_queue_frame(&phys, frame, sizeof(frame), false);
@@ -910,10 +856,9 @@ static int test_t100_t103_interaction(void) {
 
     // After data, PTT should remain ON for axhang_10ms ticks
 #ifdef DEBUG_ENABLE
-    bool ptt_held = ptt_state; // still ON during hang
+    bool ptt_held = ptt_state;  // still ON during hang
 #endif
-    DEBUG_BOOL("PTT still held during hang", ptt_held);
-    DEBUG_VAR("phys_send_count", phys_send_count);
+    DEBUG_BOOL("PTT still held during hang", ptt_held);DEBUG_VAR("phys_send_count", phys_send_count);
     // The key assertion: data was sent (send_data called)
     TEST_ASSERT(phys_send_count > 0, "Data transmitted via send_data callback", phys_send_count);
 
@@ -932,12 +877,12 @@ static int test_t104_digipeater_interaction(void) {
 
     ax25_physical_t phys_normal;
     init_phys_with_callbacks(&phys_normal);
-    phys_normal.txdely_10ms   = 0;
-    phys_normal.axhang_10ms   = 0;
-    phys_normal.axdelay_10ms  = 5;  // T104: 50ms digipeater delay
-    phys_normal.persist       = 255;
+    phys_normal.txdely_10ms = 0;
+    phys_normal.axhang_10ms = 0;
+    phys_normal.axdelay_10ms = 5;  // T104: 50ms digipeater delay
+    phys_normal.persist = 255;
     phys_normal.slottime_10ms = 0;
-    phys_normal.preamble_flags   = 0;
+    phys_normal.preamble_flags = 0;
     phys_normal.interframe_flags = 1;
     DEBUG_VAR("axdelay_10ms (T104)", phys_normal.axdelay_10ms);
 
@@ -952,24 +897,21 @@ static int test_t104_digipeater_interaction(void) {
     // Queue digipeated frame
     ax25_physical_t phys_digi;
     init_phys_with_callbacks(&phys_digi);
-    phys_digi.txdely_10ms   = 0;
-    phys_digi.axhang_10ms   = 0;
-    phys_digi.axdelay_10ms  = 5;
-    phys_digi.persist       = 255;
+    phys_digi.txdely_10ms = 0;
+    phys_digi.axhang_10ms = 0;
+    phys_digi.axdelay_10ms = 5;
+    phys_digi.persist = 255;
     phys_digi.slottime_10ms = 0;
-    phys_digi.preamble_flags   = 0;
+    phys_digi.preamble_flags = 0;
     phys_digi.interframe_flags = 1;
 
-    ax25_physical_queue_frame(&phys_digi, frame, sizeof(frame), true); // digipeat=true
+    ax25_physical_queue_frame(&phys_digi, frame, sizeof(frame), true);  // digipeat=true
     uint32_t ptt_on_digi = run_until_ptt_on(&phys_digi, 0, 30);
     DEBUG_VAR("PTT ON tick for digipeated frame", ptt_on_digi);
     // Digipeated PTT should be delayed by axdelay_10ms compared to normal
     // ptt_on_normal ~0, ptt_on_digi >= axdelay_10ms
-    TEST_ASSERT(ptt_on_digi >= (uint32_t)phys_normal.axdelay_10ms,
-                "Digipeated frame PTT delayed by at least axdelay ticks",
-                ptt_on_digi);
-    TEST_ASSERT(ptt_on_digi > ptt_on_normal,
-                "Digipeated PTT later than normal PTT", ptt_on_digi);
+    TEST_ASSERT(ptt_on_digi >= (uint32_t )phys_normal.axdelay_10ms, "Digipeated frame PTT delayed by at least axdelay ticks", ptt_on_digi);
+    TEST_ASSERT(ptt_on_digi > ptt_on_normal, "Digipeated PTT later than normal PTT", ptt_on_digi);
 
     return 0;
 }
@@ -981,15 +923,14 @@ static int test_t100_t104_combined(void) {
 
     ax25_physical_t phys;
     init_phys_with_callbacks(&phys);
-    phys.txdely_10ms   = 0;
-    phys.axhang_10ms   = 3;   // T100: 30ms hang
-    phys.axdelay_10ms  = 2;   // T104: 20ms extra for digi
-    phys.persist       = 255;
+    phys.txdely_10ms = 0;
+    phys.axhang_10ms = 3;   // T100: 30ms hang
+    phys.axdelay_10ms = 2;   // T104: 20ms extra for digi
+    phys.persist = 255;
     phys.slottime_10ms = 0;
-    phys.preamble_flags   = 0;
+    phys.preamble_flags = 0;
     phys.interframe_flags = 1;
-    DEBUG_VAR("axhang_10ms (T100)", phys.axhang_10ms);
-    DEBUG_VAR("axdelay_10ms (T104)", phys.axdelay_10ms);
+    DEBUG_VAR("axhang_10ms (T100)", phys.axhang_10ms);DEBUG_VAR("axdelay_10ms (T104)", phys.axdelay_10ms);
 
     uint8_t frame[8] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
 
@@ -1026,8 +967,7 @@ static int test_t100_t104_combined(void) {
     }
 
     DEBUG_VAR("second_data_sent_tick", second_data_sent_tick);
-    TEST_ASSERT(second_data_sent_tick > first_data_sent_tick,
-                "Second (digipeated) frame sent after first frame", second_data_sent_tick);
+    TEST_ASSERT(second_data_sent_tick > first_data_sent_tick, "Second (digipeated) frame sent after first frame", second_data_sent_tick);
 
     return 0;
 }
@@ -1039,12 +979,12 @@ static int test_t102_csma_defers_digi(void) {
 
     ax25_physical_t phys;
     init_phys_with_callbacks(&phys);
-    phys.txdely_10ms   = 0;
-    phys.axhang_10ms   = 0;
-    phys.axdelay_10ms  = 0;
+    phys.txdely_10ms = 0;
+    phys.axhang_10ms = 0;
+    phys.axdelay_10ms = 0;
     phys.slottime_10ms = 3;   // T102: 30ms slot time
-    phys.persist       = 255; // deterministic: always try after slot
-    phys.preamble_flags   = 0;
+    phys.persist = 255;  // deterministic: always try after slot
+    phys.preamble_flags = 0;
     phys.interframe_flags = 1;
     DEBUG_VAR("slottime_10ms (T102)", phys.slottime_10ms);
 
@@ -1056,21 +996,18 @@ static int test_t102_csma_defers_digi(void) {
     // Run while channel busy – PTT must NOT assert
     for (uint32_t i = 0; i < 10; i++) {
         ax25_physical_tick(&phys, i);
-        DEBUG_VAR("tick", i);
-        DEBUG_BOOL("ptt_state while carrier busy", ptt_state);
+        DEBUG_VAR("tick", i);DEBUG_BOOL("ptt_state while carrier busy", ptt_state);
     }
     bool ptt_asserted_while_busy = ptt_state;
     DEBUG_BOOL("PTT asserted while carrier busy", ptt_asserted_while_busy);
-    TEST_ASSERT(!ptt_asserted_while_busy,
-                "PTT NOT asserted while channel busy (CSMA defers)", (uint32_t)ptt_asserted_while_busy);
+    TEST_ASSERT(!ptt_asserted_while_busy, "PTT NOT asserted while channel busy (CSMA defers)", (uint32_t )ptt_asserted_while_busy);
 
     // Clear the carrier – PTT should assert within slottime ticks
     simulated_carrier = false;
     DEBUG_PRINT("Channel cleared, waiting for PTT");
     uint32_t ptt_on_tick = run_until_ptt_on(&phys, 10, 20);
     DEBUG_VAR("PTT asserted after channel clear at tick", ptt_on_tick);
-    TEST_ASSERT(ptt_on_tick != 0,
-                "PTT asserted after channel clears", 0);
+    TEST_ASSERT(ptt_on_tick != 0, "PTT asserted after channel clears", 0);
 
     return 0;
 }
@@ -1082,12 +1019,12 @@ static int test_t103_data_after_txdely(void) {
 
     ax25_physical_t phys;
     init_phys_with_callbacks(&phys);
-    phys.txdely_10ms   = 5;  // T103: 50ms key-up delay
-    phys.axhang_10ms   = 0;
-    phys.axdelay_10ms  = 0;
-    phys.persist       = 255;
+    phys.txdely_10ms = 5;  // T103: 50ms key-up delay
+    phys.axhang_10ms = 0;
+    phys.axdelay_10ms = 0;
+    phys.persist = 255;
     phys.slottime_10ms = 0;
-    phys.preamble_flags   = 0;
+    phys.preamble_flags = 0;
     phys.interframe_flags = 1;
     DEBUG_VAR("txdely_10ms (T103)", phys.txdely_10ms);
 
@@ -1103,22 +1040,19 @@ static int test_t103_data_after_txdely(void) {
     uint32_t send_before = phys_send_count;
     for (uint32_t i = ptt_tick; i < ptt_tick + phys.txdely_10ms - 1; i++) {
         ax25_physical_tick(&phys, i);
-        DEBUG_VAR("tick before txdely expiry", i);
-        DEBUG_BOOL("send_data called before txdely", phys_send_count > send_before);
+        DEBUG_VAR("tick before txdely expiry", i);DEBUG_BOOL("send_data called before txdely", phys_send_count > send_before);
     }
     bool data_too_early = (phys_send_count > send_before);
     DEBUG_BOOL("Data sent before txdely expired", data_too_early);
-    TEST_ASSERT(!data_too_early,
-                "Data NOT sent before txdely expires", (uint32_t)data_too_early);
+    TEST_ASSERT(!data_too_early, "Data NOT sent before txdely expires", (uint32_t )data_too_early);
 
     // After txdely, data must be sent
     for (uint32_t i = ptt_tick + phys.txdely_10ms; i < ptt_tick + phys.txdely_10ms + 5; i++) {
         ax25_physical_tick(&phys, i);
-        if (phys_send_count > send_before) break;
-    }
-    DEBUG_VAR("phys_send_count after txdely", phys_send_count);
-    TEST_ASSERT(phys_send_count > send_before,
-                "Data sent after txdely elapses", phys_send_count);
+        if (phys_send_count > send_before)
+            break;
+    }DEBUG_VAR("phys_send_count after txdely", phys_send_count);
+    TEST_ASSERT(phys_send_count > send_before, "Data sent after txdely elapses", phys_send_count);
 
     return 0;
 }
@@ -1130,15 +1064,15 @@ static int test_t106_max_tx_duration_interaction(void) {
 
     ax25_physical_t phys;
     init_phys_with_callbacks(&phys);
-    phys.txdely_10ms         = 0;
-    phys.axhang_10ms         = 0;
-    phys.axdelay_10ms        = 0;
-    phys.max_tx_duration_10ms= 5;  // T106: only 50ms max transmission
-    phys.anti_hog_10ms       = 0;  // T107 disabled
-    phys.persist             = 255;
-    phys.slottime_10ms       = 0;
-    phys.preamble_flags      = 0;
-    phys.interframe_flags    = 1;
+    phys.txdely_10ms = 0;
+    phys.axhang_10ms = 0;
+    phys.axdelay_10ms = 0;
+    phys.max_tx_duration_10ms = 5;  // T106: only 50ms max transmission
+    phys.anti_hog_10ms = 0;  // T107 disabled
+    phys.persist = 255;
+    phys.slottime_10ms = 0;
+    phys.preamble_flags = 0;
+    phys.interframe_flags = 1;
     DEBUG_VAR("max_tx_duration_10ms (T106)", phys.max_tx_duration_10ms);
 
     // Queue several large frames
@@ -1167,8 +1101,7 @@ static int test_t106_max_tx_duration_interaction(void) {
     DEBUG_VAR("phys_send_count at TX end", phys_send_count);
     // TX should have been stopped by T106 limit
     TEST_ASSERT(tx_end != 0, "Transmission terminated by T106 (PTT released)", tx_end);
-    TEST_ASSERT((tx_end - ptt_on_tick) <= (uint32_t)(phys.max_tx_duration_10ms + 3),
-                "TX duration <= T106 limit (+3 ticks tolerance)", tx_end - ptt_on_tick);
+    TEST_ASSERT((tx_end - ptt_on_tick) <= (uint32_t )(phys.max_tx_duration_10ms + 3), "TX duration <= T106 limit (+3 ticks tolerance)", tx_end - ptt_on_tick);
 
     return 0;
 }
@@ -1180,17 +1113,16 @@ static int test_t107_t100_combined(void) {
 
     ax25_physical_t phys;
     init_phys_with_callbacks(&phys);
-    phys.txdely_10ms         = 0;
-    phys.axhang_10ms         = 3;  // T100: 30ms hang
-    phys.axdelay_10ms        = 0;
-    phys.max_tx_duration_10ms= 0;  // T106: disabled
-    phys.anti_hog_10ms       = 4;  // T107: 40ms anti-hog burst limit
-    phys.persist             = 255;
-    phys.slottime_10ms       = 0;
-    phys.preamble_flags      = 0;
-    phys.interframe_flags    = 1;
-    DEBUG_VAR("anti_hog_10ms (T107)", phys.anti_hog_10ms);
-    DEBUG_VAR("axhang_10ms  (T100)", phys.axhang_10ms);
+    phys.txdely_10ms = 0;
+    phys.axhang_10ms = 3;  // T100: 30ms hang
+    phys.axdelay_10ms = 0;
+    phys.max_tx_duration_10ms = 0;  // T106: disabled
+    phys.anti_hog_10ms = 4;  // T107: 40ms anti-hog burst limit
+    phys.persist = 255;
+    phys.slottime_10ms = 0;
+    phys.preamble_flags = 0;
+    phys.interframe_flags = 1;
+    DEBUG_VAR("anti_hog_10ms (T107)", phys.anti_hog_10ms);DEBUG_VAR("axhang_10ms  (T100)", phys.axhang_10ms);
 
     uint8_t frame[20];
     memset(frame, 0x55, sizeof(frame));
@@ -1211,13 +1143,11 @@ static int test_t107_t100_combined(void) {
         }
     }
 
-    TEST_ASSERT(anti_hog_release_tick != 0,
-                "Anti-hog (T107) released PTT within burst limit", anti_hog_release_tick);
+    TEST_ASSERT(anti_hog_release_tick != 0, "Anti-hog (T107) released PTT within burst limit", anti_hog_release_tick);
     // Duration should be roughly anti_hog limit
     uint32_t burst = anti_hog_release_tick - ptt_on_tick;
     DEBUG_VAR("Burst duration ticks", burst);
-    TEST_ASSERT(burst <= (uint32_t)(phys.anti_hog_10ms + 5),
-                "Burst duration within T107 limit (+5 ticks tolerance)", burst);
+    TEST_ASSERT(burst <= (uint32_t )(phys.anti_hog_10ms + 5), "Burst duration within T107 limit (+5 ticks tolerance)", burst);
 
     return 0;
 }
@@ -1229,13 +1159,13 @@ static int test_t108_rx_startup_interaction(void) {
 
     ax25_physical_t phys;
     init_phys_with_callbacks(&phys);
-    phys.txdely_10ms   = 0;
-    phys.axhang_10ms   = 0;
-    phys.axdelay_10ms  = 0;
-    phys.rx_startup_10ms = 5; // T108: 50ms receiver startup delay
-    phys.persist       = 255;
+    phys.txdely_10ms = 0;
+    phys.axhang_10ms = 0;
+    phys.axdelay_10ms = 0;
+    phys.rx_startup_10ms = 5;  // T108: 50ms receiver startup delay
+    phys.persist = 255;
     phys.slottime_10ms = 0;
-    phys.preamble_flags   = 0;
+    phys.preamble_flags = 0;
     phys.interframe_flags = 1;
     DEBUG_VAR("rx_startup_10ms (T108)", phys.rx_startup_10ms);
 
@@ -1274,13 +1204,10 @@ static int test_t108_rx_startup_interaction(void) {
         }
     }
 
-    DEBUG_VAR("T108 rx_startup_10ms", phys.rx_startup_10ms);
-    DEBUG_VAR("second_ptt_on - first_tx_end", second_ptt_on > 0 ? second_ptt_on - first_tx_end : 0);
-    TEST_ASSERT(second_ptt_on != 0,
-                "Second transmission eventually starts", second_ptt_on);
-    TEST_ASSERT((second_ptt_on - first_tx_end) >= (uint32_t)phys.rx_startup_10ms,
-                "Second TX delayed by at least T108 rx_startup ticks",
-                second_ptt_on - first_tx_end);
+    DEBUG_VAR("T108 rx_startup_10ms", phys.rx_startup_10ms);DEBUG_VAR("second_ptt_on - first_tx_end", second_ptt_on > 0 ? second_ptt_on - first_tx_end : 0);
+    TEST_ASSERT(second_ptt_on != 0, "Second transmission eventually starts", second_ptt_on);
+    TEST_ASSERT((second_ptt_on - first_tx_end) >= (uint32_t )phys.rx_startup_10ms, "Second TX delayed by at least T108 rx_startup ticks",
+            second_ptt_on - first_tx_end);
 
     return 0;
 }
@@ -1292,11 +1219,11 @@ static int test_t100_hang_defers_new_frame(void) {
 
     ax25_physical_t phys;
     init_phys_with_callbacks(&phys);
-    phys.txdely_10ms   = 0;
-    phys.axhang_10ms   = 6;  // T100: 60ms
-    phys.persist       = 255;
+    phys.txdely_10ms = 0;
+    phys.axhang_10ms = 6;  // T100: 60ms
+    phys.persist = 255;
     phys.slottime_10ms = 0;
-    phys.preamble_flags   = 0;
+    phys.preamble_flags = 0;
     phys.interframe_flags = 1;
     DEBUG_VAR("axhang_10ms (T100)", phys.axhang_10ms);
 
@@ -1325,7 +1252,7 @@ static int test_t100_hang_defers_new_frame(void) {
     // PTT should remain continuously ON through the hang (back-to-back burst)
     // or second PTT should not assert until after hang completes
     // Either behaviour is acceptable, but data must only be sent after hang
-    uint32_t hang_end_expected = ptt_on_1 + phys.axhang_10ms + 10; // generous estimate
+    uint32_t hang_end_expected = ptt_on_1 + phys.axhang_10ms + 10;  // generous estimate
 #ifdef DEBUG_ENABLE
     bool ptt_dropped_during_hang = false;
 #endif
@@ -1351,10 +1278,8 @@ static int test_t100_hang_defers_new_frame(void) {
         }
     }
 
-    DEBUG_BOOL("PTT dropped during hang", ptt_dropped_during_hang);
-    DEBUG_VAR("second_data_tick", second_data_tick);
-    TEST_ASSERT(second_data_tick > first_data_end,
-                "Second frame sent after first frame completes", second_data_tick);
+    DEBUG_BOOL("PTT dropped during hang", ptt_dropped_during_hang);DEBUG_VAR("second_data_tick", second_data_tick);
+    TEST_ASSERT(second_data_tick > first_data_end, "Second frame sent after first frame completes", second_data_tick);
 
     return 0;
 }
@@ -1366,17 +1291,17 @@ static int test_all_timers_disabled(void) {
 
     ax25_physical_t phys;
     init_phys_with_callbacks(&phys);
-    phys.txdely_10ms         = 0;
-    phys.axhang_10ms         = 0;
-    phys.axdelay_10ms        = 0;
-    phys.max_tx_duration_10ms= 0;
-    phys.anti_hog_10ms       = 0;
-    phys.rx_startup_10ms     = 0;
-    phys.remote_sync_10ms    = 0;
-    phys.persist             = 255;
-    phys.slottime_10ms       = 0;
-    phys.preamble_flags      = 0;
-    phys.interframe_flags    = 0;
+    phys.txdely_10ms = 0;
+    phys.axhang_10ms = 0;
+    phys.axdelay_10ms = 0;
+    phys.max_tx_duration_10ms = 0;
+    phys.anti_hog_10ms = 0;
+    phys.rx_startup_10ms = 0;
+    phys.remote_sync_10ms = 0;
+    phys.persist = 255;
+    phys.slottime_10ms = 0;
+    phys.preamble_flags = 0;
+    phys.interframe_flags = 0;
     DEBUG_PRINT("All timing parameters = 0");
 
     uint8_t frame[8] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
@@ -1384,8 +1309,7 @@ static int test_all_timers_disabled(void) {
 
     // One tick should be enough to start
     ax25_physical_tick(&phys, 1);
-    DEBUG_BOOL("PTT after tick 1", ptt_state);
-    DEBUG_VAR("phys_send_count after tick 1", phys_send_count);
+    DEBUG_BOOL("PTT after tick 1", ptt_state);DEBUG_VAR("phys_send_count after tick 1", phys_send_count);
 
     ax25_physical_tick(&phys, 2);
     DEBUG_BOOL("PTT after tick 2", ptt_state);
@@ -1393,18 +1317,18 @@ static int test_all_timers_disabled(void) {
     // Data should be sent within a very few ticks
     for (uint32_t i = 3; i < 10; i++) {
         ax25_physical_tick(&phys, i);
-        if (phys_send_count > 0) break;
+        if (phys_send_count > 0)
+            break;
     }
-    TEST_ASSERT(phys_send_count > 0,
-                "Data sent within 10 ticks with all timers disabled", phys_send_count);
+    TEST_ASSERT(phys_send_count > 0, "Data sent within 10 ticks with all timers disabled", phys_send_count);
 
     // PTT should release quickly (no hang)
     for (uint32_t i = 10; i < 20; i++) {
         ax25_physical_tick(&phys, i);
-        if (!ptt_state) break;
+        if (!ptt_state)
+            break;
     }
-    TEST_ASSERT(!ptt_state,
-                "PTT released quickly with axhang=0", (uint32_t)ptt_state);
+    TEST_ASSERT(!ptt_state, "PTT released quickly with axhang=0", (uint32_t )ptt_state);
 
     return 0;
 }
@@ -1451,8 +1375,7 @@ int test_ax25_timers_advanced_main(void) {
     result |= test_all_timers_disabled();
 
     printf("\n================================================================================\n");
-    printf("Advanced Timer Tests Completed. %s\n",
-           result == 0 ? "All tests PASSED" : "Some tests FAILED");
+    printf("Advanced Timer Tests Completed. %s\n", result == 0 ? "All tests PASSED" : "Some tests FAILED");
     printf("Total assertions: %u\n", assert_count);
     printf("================================================================================\n\n");
 

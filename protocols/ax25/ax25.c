@@ -4,6 +4,11 @@
  * @author Emiliano Augusto Gonzalez (egonzalez . hiperion @ gmail . com)
  * @copyright GNU General Public License v3
  * @date 2026
+ *
+ * @see https://github.com/hiperiondev/libax25v22
+ * @see https://www.ax25.net/AX25.2.2-Jul%2098-2.pdf
+ * @see https://web.tapr.org/meetings/DCC_1995/DCC1995-Modul128-4AX.25-PE1CHL.pdf
+ * @see https://eindhoven.space/wp-content/uploads/2022/12/fx-25_01_06.pdf
  */
 
 #include <stdio.h>
@@ -63,13 +68,6 @@ static int parse_ssid(const char *str, size_t max_len, uint8_t *err) {
     return ssid;
 }
 
-// Comparison function for sorting segments
-static int compare_segments(const void *a, const void *b) {
-    const ax25_reassembly_segment_t *seg_a = (const ax25_reassembly_segment_t*) a;
-    const ax25_reassembly_segment_t *seg_b = (const ax25_reassembly_segment_t*) b;
-    return seg_a->segment_number - seg_b->segment_number;
-}
-
 static uint8_t* uint_encode(uint32_t value, bool big_endian, size_t length, size_t *out_len, uint8_t *err) {
     *err = 0;
 
@@ -92,7 +90,8 @@ static uint32_t uint_decode(const uint8_t *data, size_t len, bool big_endian, ui
     uint32_t value = 0;
 
     for (size_t i = 0; i < len; i++) {
-        value |= (data[big_endian ? len - 1 - i : i]) << (i * 8);
+        uint32_t byte = (uint32_t) data[big_endian ? (len - 1u - i) : i];
+        value |= byte << (i * 8u);
     }
 
     return value;
@@ -117,7 +116,7 @@ ax25_address_t* ax25_address_decode(const uint8_t *data, uint8_t *err) {
     addr->ch = (data[6] & 0x80) != 0;
     addr->res0 = (data[6] & 0x20) != 0;
     addr->res1 = (data[6] & 0x40) != 0;
-    addr->mod128 = addr->res1;
+    addr->mod8_legacy = addr->res1;
     addr->extension = (data[6] & 0x01) != 0;
     return addr;
 }
@@ -509,7 +508,7 @@ ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, 
     // Validate minimum frame size per AX.25 v2.2 Section 3.9
     // Note: Input frames to this function do NOT include FCS
     // Minimum without FCS: Dest(7) + Source(7) + Control(1) = 15 bytes
-    if (len < 15) {
+    if (len < AX25_MIN_FRAME_SIZE_NO_FCS) {
         *err = 1;  // Frame too short - does not meet minimum size requirement
         return NULL;
     }
@@ -607,7 +606,7 @@ ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, 
             }
             uint16_t full_control = control;
             if (is_16bit)
-                full_control |= (hdr_result.remaining[1] << 8);
+                full_control |= (uint16_t)((uint16_t)hdr_result.remaining[1] << 8u);
 
             const uint8_t *data_start = hdr_result.remaining + control_size;
             size_t data_len = hdr_result.remaining_len - control_size;
@@ -1134,7 +1133,7 @@ ax25_frame_reject_frame_t* ax25_frame_reject_frame_decode(ax25_frame_header_t *h
         // Byte 0: Control field low byte (bits 0-7 of 16-bit control)
         // Byte 1: Control field high byte (bits 8-15 of 16-bit control)
         // This is the control field of the frame that was rejected
-        frame->frmr_control = data[0] | (data[1] << 8);
+        frame->frmr_control = (uint16_t)((uint16_t)data[0] | ((uint16_t)data[1] << 8u));
 
         // Byte 2: N(S) in bits 1-7 (7 bits), CR bit in bit 0
         // N(S) is the send sequence number of the rejected frame
@@ -1946,7 +1945,7 @@ uint8_t* ax25_reassemble_info_fields(ax25_segmented_info_t *info_fields, size_t 
                 free(segments);
                 return NULL;
             }
-            total_length = (info[2] << 8) | info[3];
+            total_length = (uint16_t)(((uint16_t)info[2] << 8u) | (uint16_t)info[3]);
             offset = 4;
         }
         size_t data_len = len - offset;
@@ -1965,8 +1964,18 @@ uint8_t* ax25_reassemble_info_fields(ax25_segmented_info_t *info_fields, size_t 
         return NULL;
     }
 
-    // Sort segments by segment_number
-    qsort(segments, num_info_fields, sizeof(ax25_reassembly_segment_t), compare_segments);
+    // Insertion sort by segment_number.
+    // O(n) best case (already ordered), O(n^2) worst case.
+    // n <= 64 per AX.25 §C6.3.1 (6-bit segment sequence field) — at most 4096 comparisons, negligible cost.
+    for (size_t si = 1; si < num_info_fields; si++) {
+        ax25_reassembly_segment_t key = segments[si];
+        ptrdiff_t sj = (ptrdiff_t) si - 1;
+        while (sj >= 0 && segments[sj].segment_number > key.segment_number) {
+            segments[sj + 1] = segments[sj];
+            sj--;
+        }
+        segments[sj + 1] = key;
+    }
 
     // Check for duplicates or missing segments
     int expected_segments = -1;
@@ -2347,4 +2356,165 @@ uint8_t ax25_buf_pool_free_count(void) {
             count++;
     }
     return count;
+}
+
+// ax25_encode_address_to_buf: encode one AX.25 address into dst[0..6].
+// extension=true sets bit 0 of byte 6 (last-address marker).
+// Mirrors ax25_address_encode() byte-for-byte but writes to a caller buffer;
+// no malloc, no free.
+static void ax25_encode_address_to_buf(uint8_t *dst, const ax25_address_t *addr,
+bool extension) {
+    size_t callsign_len = strlen(addr->callsign);
+    int i;
+    for (i = 0; i < 6; i++) {
+        char c = (i < (int) callsign_len) ? addr->callsign[i] : ' ';
+        dst[i] = (uint8_t) ((c & 0x7F) << 1);
+    }
+    uint8_t ssid_byte = (uint8_t) ((addr->ssid << 1) & 0x1E);
+    if (addr->ch)
+        ssid_byte |= 0x80u;
+    ssid_byte |= 0x20u;  // res0 forced to 1 per AX.25 §3.12.2
+    if (addr->res1)
+        ssid_byte |= 0x40u;  // res1: caller-controlled (mod-128 signal)
+    if (extension)
+        ssid_byte |= 0x01u;
+    dst[6] = ssid_byte;
+}
+
+uint8_t ax25_encode_frame_to_buf(const ax25_frame_t *frame, uint8_t *buf, size_t buf_size, size_t *out_len) {
+    if (!frame || !buf || !out_len)
+        return 1;
+
+    // Determine modulo-128 flag (mirrors logic in ax25_frame_encode)
+    bool is_modulo128 = (frame->type == AX25_FRAME_INFORMATION_16BIT || frame->type == AX25_FRAME_SUPERVISORY_RR_16BIT
+            || frame->type == AX25_FRAME_SUPERVISORY_RNR_16BIT || frame->type == AX25_FRAME_SUPERVISORY_REJ_16BIT
+            || frame->type == AX25_FRAME_SUPERVISORY_SREJ_16BIT || frame->type == AX25_FRAME_UNNUMBERED_SABME);
+
+    // Build a local header copy so we can adjust ch/res1 without touching caller data
+    ax25_frame_header_t hdr = frame->header;
+    if (is_modulo128)
+        hdr.source.res1 = false;  // signal mod-128 per §3.12
+
+    // Apply C/H bits from CR flags (mirrors ax25_frame_header_encode)
+    if (hdr.cr && !hdr.src_cr) {
+        hdr.destination.ch = true;
+        hdr.source.ch = false;
+    } else if (!hdr.cr && hdr.src_cr) {
+        hdr.destination.ch = false;
+        hdr.source.ch = true;
+    }
+
+    int num_rep = hdr.repeaters.num_repeaters;
+    size_t header_len = (size_t) (2 + num_rep) * 7u;
+
+    // Encode header directly into buf — no malloc
+    if (header_len > buf_size)
+        return 2;
+
+    size_t offset = 0;
+
+    // Destination: extension bit always 0
+    hdr.destination.extension = false;
+    ax25_encode_address_to_buf(buf + offset, &hdr.destination, false);
+    offset += 7u;
+
+    // Source: extension bit set when no repeaters follow
+    hdr.source.extension = (num_rep == 0);
+    ax25_encode_address_to_buf(buf + offset, &hdr.source, (num_rep == 0));
+    offset += 7u;
+
+    // Repeaters
+    int i;
+    for (i = 0; i < num_rep; i++) {
+        ax25_address_t rpt = hdr.repeaters.repeaters[i];
+        bool last = (i == num_rep - 1);
+        ax25_encode_address_to_buf(buf + offset, &rpt, last);
+        offset += 7u;
+    }
+
+    // Encode payload (control + optional data) directly after header
+    uint8_t *pbuf = buf + offset;
+    size_t pspace = buf_size - offset;
+    size_t plen = 0;
+
+    switch (frame->type) {
+        case AX25_FRAME_UNNUMBERED_SABM:
+        case AX25_FRAME_UNNUMBERED_SABME:
+        case AX25_FRAME_UNNUMBERED_DISC:
+        case AX25_FRAME_UNNUMBERED_DM:
+        case AX25_FRAME_UNNUMBERED_UA: {
+            // 1-byte control field only
+            if (pspace < 1u)
+                return 2;
+            const ax25_unnumbered_frame_t *uf = (const ax25_unnumbered_frame_t*) frame;
+            pbuf[0] = (uint8_t) (uf->modifier | (uf->pf ? POLL_FINAL_8BIT : 0));
+            plen = 1u;
+            break;
+        }
+        case AX25_FRAME_UNNUMBERED_FRMR: {
+            // 1 control + 3 or 5 data bytes
+            const ax25_frame_reject_frame_t *f = (const ax25_frame_reject_frame_t*) frame;
+            size_t need = f->is_modulo128 ? 6u : 4u;
+            if (pspace < need)
+                return 2;
+            pbuf[0] = (uint8_t) (f->base.modifier | (f->base.pf ? POLL_FINAL_8BIT : 0));
+            if (f->is_modulo128) {
+                pbuf[1] = (uint8_t) (f->frmr_control & 0xFFu);
+                pbuf[2] = (uint8_t) ((f->frmr_control >> 8) & 0xFFu);
+                pbuf[3] = (uint8_t) (((f->vs & 0x7Fu) << 1) | (f->frmr_cr ? 0x01u : 0u));
+                pbuf[4] = (uint8_t) ((f->vr & 0x7Fu) << 1);
+                pbuf[5] = (uint8_t) ((f->w ? 0x01u : 0u) | (f->x ? 0x02u : 0u) | (f->y ? 0x04u : 0u) | (f->z ? 0x08u : 0u));
+            } else {
+                pbuf[1] = (uint8_t) (f->frmr_control & 0xFFu);
+                pbuf[2] = (uint8_t) (((f->vr & 0x07u) << 5) | (f->frmr_cr ? 0x10u : 0u) | ((f->vs & 0x07u) << 1));
+                pbuf[3] = (uint8_t) ((f->w ? 0x01u : 0u) | (f->x ? 0x02u : 0u) | (f->y ? 0x04u : 0u) | (f->z ? 0x08u : 0u));
+            }
+            plen = need;
+            break;
+        }
+        case AX25_FRAME_SUPERVISORY_RR_8BIT:
+        case AX25_FRAME_SUPERVISORY_RNR_8BIT:
+        case AX25_FRAME_SUPERVISORY_REJ_8BIT:
+        case AX25_FRAME_SUPERVISORY_SREJ_8BIT: {
+            if (pspace < 1u)
+                return 2;
+            const ax25_supervisory_frame_t *sf = (const ax25_supervisory_frame_t*) frame;
+            uint8_t code_bits = (uint8_t) ((sf->code << 2) & 0x0Cu);
+            pbuf[0] = (uint8_t) (((sf->nr << 5) & 0xE0u) | (sf->pf ? POLL_FINAL_8BIT : 0u) | code_bits | CONTROL_S_VAL);
+            plen = 1u;
+            break;
+        }
+        case AX25_FRAME_SUPERVISORY_RR_16BIT:
+        case AX25_FRAME_SUPERVISORY_RNR_16BIT:
+        case AX25_FRAME_SUPERVISORY_REJ_16BIT:
+        case AX25_FRAME_SUPERVISORY_SREJ_16BIT: {
+            if (pspace < 2u)
+                return 2;
+            const ax25_supervisory_frame_t *sf = (const ax25_supervisory_frame_t*) frame;
+            uint8_t code_bits = (uint8_t) ((sf->code << 2) & 0x0Cu);
+            uint16_t ctrl = (uint16_t) (((sf->nr << 9) & 0xFE00u) | (sf->pf ? POLL_FINAL_16BIT : 0u) | code_bits | CONTROL_S_VAL);
+            pbuf[0] = (uint8_t) (ctrl & 0xFFu);
+            pbuf[1] = (uint8_t) ((ctrl >> 8) & 0xFFu);
+            plen = 2u;
+            break;
+        }
+        case AX25_FRAME_UNNUMBERED_TEST: {
+            // 1 control + payload
+            const ax25_test_frame_t *tf = (const ax25_test_frame_t*) frame;
+            size_t need = 1u + tf->payload_len;
+            if (pspace < need)
+                return 2;
+            pbuf[0] = (uint8_t) (tf->base.modifier | (tf->base.pf ? POLL_FINAL_8BIT : 0));
+            if (tf->payload_len > 0 && tf->payload)
+                memcpy(pbuf + 1, tf->payload, tf->payload_len);
+            plen = need;
+            break;
+        }
+        default:
+            // I-frames and XID/UI are not supported here; use ax25_frame_encode()
+            return 3;
+    }
+
+    *out_len = offset + plen;
+    return 0;
 }

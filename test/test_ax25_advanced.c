@@ -41,7 +41,6 @@
 //     - RR immediately sent in full-duplex (no T2 delay) clears peer_busy
 //     - Stats (iframe_retransmitted) correctly incremented on full-duplex REJ
 //     - Crossed I-frames: both V(S) and V(R) updated correctly without race
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1083,7 +1082,7 @@ static int test_window_cumulative_ack(void) {
     TEST_ASSERT(conn.tx_queue.count == 0, "B4: queue empty after full ACK", 0);
 
     // T1 must be stopped when queue is empty
-    TEST_ASSERT(conn.t1_start_tick == 0, "B4: T1 stopped when queue empty after full ACK", 0);
+    TEST_ASSERT(conn.t1.running == 0, "B4: T1 stopped when queue empty after full ACK", 0);
 
     DEBUG_PRINT("B4 passed: cumulative ACK dequeues correctly");
     ax25_connection_cleanup(&conn);
@@ -1332,8 +1331,8 @@ static int test_fd_rej_triggers_abort_and_retransmit(void) {
     TEST_ASSERT(retransmits == 2, "C3: 2 frames immediately retransmitted", 0);
     TEST_ASSERT(conn.vars.vs == 2, "C3: V(S) rolled back to V(A)=2", 0);
     TEST_ASSERT(conn.stats.iframe_retransmitted >= 2, "C3: iframe_retransmitted counter incremented for retransmits", 0);
-    // T1 should be set to AX25_T1_PENDING sentinel for full-duplex retry
-    TEST_ASSERT(conn.t1_start_tick == AX25_T1_PENDING, "C3: T1 set to AX25_T1_PENDING after full-duplex REJ", 0);
+    // AX25_T1_PENDING sentinel removed; T1 running flag is the new indicator.
+    TEST_ASSERT(conn.t1.running != 0, "C3: T1 running after full-duplex REJ", 0);
 
     DEBUG_PRINT("C3 passed: full-duplex REJ triggers abort_tx + retransmit + T1_PENDING");
     ax25_connection_cleanup(&conn);
@@ -1364,16 +1363,16 @@ static int test_fd_srej_sets_t1_pending(void) {
 
     // Receive SREJ(N(R)=1) - request retransmit of N(S)=1
 #ifdef DEBUG_ENABLE
-    uint32_t t1_before = conn.t1_start_tick;
+    uint8_t t1_before = conn.t1.running;
 #endif
     ax25_frame_t *srej = adv_make_sframe(AX25_FRAME_SUPERVISORY_SREJ_8BIT, 1, false, 3);
     ax25_process_frame(&conn, srej, 10);
     adv_free_sframe(srej);
 
-    DEBUG_VAR("t1_start_tick before SREJ", t1_before);DEBUG_VAR("t1_start_tick after SREJ (should be AX25_T1_PENDING=UINT32_MAX)", conn.t1_start_tick);DEBUG_VAR("conn.stats.iframe_retransmitted (should be 1)", conn.stats.iframe_retransmitted);
+    DEBUG_VAR("t1.running before SREJ", t1_before);DEBUG_VAR("t1.running after SREJ (should be 1=running)", conn.t1.running);DEBUG_VAR("conn.stats.iframe_retransmitted (should be 1)", conn.stats.iframe_retransmitted);
 
-    // In full-duplex, SREJ handler sets T1 = AX25_T1_PENDING
-    TEST_ASSERT(conn.t1_start_tick == AX25_T1_PENDING, "C4: T1 set to AX25_T1_PENDING after full-duplex SREJ", 0);
+    // Sentinel removed; check running flag instead.
+    TEST_ASSERT(conn.t1.running != 0, "C4: T1 running after full-duplex SREJ", 0);
     TEST_ASSERT(conn.stats.iframe_retransmitted >= 1, "C4: iframe_retransmitted incremented after SREJ retransmit", 0);
 
     // Verify N(S)=1 frame was retransmitted
@@ -1419,8 +1418,8 @@ static int test_fd_rr_sent_immediately_no_t2(void) {
         DEBUG_VAR("Full-duplex tx_count after I-frame (should be 1 = RR)", h_fd.tx_count);
         TEST_ASSERT(h_fd.tx_count >= 1, "C5: Full-duplex: at least one frame (RR) sent immediately", 0);
         // T2 timer must NOT be running in full-duplex
-        DEBUG_BOOL("t2_running in full-duplex (should be false)", conn_fd.t2_running);
-        TEST_ASSERT(conn_fd.t2_running == false, "C5: T2 timer NOT started in full-duplex mode", 0);
+        DEBUG_BOOL("t2.running in full-duplex (should be false)", conn_fd.t2.running);
+        TEST_ASSERT(conn_fd.t2.running == 0, "C5: T2 timer NOT started in full-duplex mode", 0);
 
         ax25_connection_cleanup(&conn_fd);
     }
@@ -1441,9 +1440,11 @@ static int test_fd_rr_sent_immediately_no_t2(void) {
         adv_free_iframe(f);
 
         DEBUG_VAR("Half-duplex tx_count delta after I-frame (usually 0 - T2 pending)",
-                (uint8_t)(h_hd.tx_count - tx_count_before));DEBUG_BOOL("t2_running in half-duplex (should be true when no P/F)", conn_hd.t2_running);
+                (uint8_t)(h_hd.tx_count - tx_count_before));
+
+        DEBUG_BOOL("t2.running in half-duplex (should be true when no P/F)", conn_hd.t2.running);
         // In half-duplex, no immediate RR unless P bit was set; T2 delays it
-        TEST_ASSERT(conn_hd.t2_running == true, "C5: T2 timer started in half-duplex mode after I-frame", 0);
+        TEST_ASSERT(conn_hd.t2.running != 0, "C5: T2 timer started in half-duplex mode after I-frame", 0);
 
         ax25_connection_cleanup(&conn_hd);
     }
@@ -1495,7 +1496,7 @@ static int test_fd_crossed_iframes_state_sync(void) {
 
     // T1 must be stopped (tx queue drained when V(A)==V(S))
     TEST_ASSERT(conn.tx_queue.count == 0, "C6: tx_queue empty after A's frame acked", 0);
-    TEST_ASSERT(conn.t1_start_tick == 0, "C6: T1 stopped after full ACK", 0);
+    TEST_ASSERT(conn.t1.running == 0, "C6: T1 stopped after full ACK", 0);
 
     DEBUG_PRINT("C6 passed: crossed I-frames update V(S), V(R), V(A) consistently");
     ax25_connection_cleanup(&conn);

@@ -645,7 +645,7 @@ static int test_smack_tx_multiport(void) {
         const uint8_t *buf = h.tx[0].data;
         size_t blen = h.tx[0].len;
 
-        // start modified part - SLIP-decode type byte before inspecting
+        // SLIP-decode type byte before inspecting
         // buf[0]=FEND, buf[1] may be FESC if smack_type is FEND(0xC0) or FESC(0xDB)
         // port 4: smack_type = (4<<4)|0x80 = 0xC0 = FEND -> SLIP-escaped as FESC TFEND
         uint8_t decoded_type;
@@ -655,7 +655,6 @@ static int test_smack_tx_multiport(void) {
         } else {
             decoded_type = buf[1u];
         }
-        // end modified part
 
         // Bit 7 must be set (SMACK flag)
         if (!(decoded_type & KISS_SMACK_CRC_FLAG)) {

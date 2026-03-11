@@ -243,10 +243,9 @@ static int test_sixbit(void) {
     }
 
     // NULL safety
-    // start modified part -- use explicit variable instead of compound literal for C99 portability
+    // use explicit variable instead of compound literal for C99 portability
     { uint8_t tmp6[6] = {0};
       TEST_ASSERT(!il2p_sixbit_encode_callsign(NULL, tmp6), "NULL callsign rejected", 0); }
-    // end modified part
     TEST_ASSERT(!il2p_sixbit_encode_callsign("W1AW  ", NULL), "NULL output rejected", 0);
 
     return 0;
@@ -654,7 +653,6 @@ static int test_header(void) {
 static int test_payload_blocks(void) {
     printf("\n=== Payload block sizes ===\n");
 
-    // start modified part -- corrected exp_num values verified against il2p_header.c formula
     struct {
         uint16_t payload;
         uint16_t exp_num; // ceil(payload / 239)
@@ -668,7 +666,6 @@ static int test_payload_blocks(void) {
         { 479,  3 },   // ceil(479/239) = 3
         { 1023, 5 },   // ceil(1023/239) = 5
     };
-    // end modified part
 
     for (size_t i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
         uint16_t num, lc, sc;
@@ -807,10 +804,9 @@ static int test_header_from_ax25(void) {
         fill_address(&iframe.base.header.destination, "W1AW  ", 0);
         fill_address(&iframe.base.header.source,      "VE3TKI", 0);
         iframe.base.header.repeaters.num_repeaters = 1;
-        // start modified part
+
         // ax25_path_t uses 'repeaters[]' array (not 'addr[]') for the repeater addresses
         fill_address(&iframe.base.header.repeaters.repeaters[0], "KB1ABC", 0);
-        // end modified part
         iframe.pid = 0xF0;
 
         il2p_header_t hdr;
@@ -826,14 +822,12 @@ static int test_header_from_ax25(void) {
     {
         ax25_unnumbered_information_frame_t uiframe;
         memset(&uiframe, 0, sizeof(uiframe));
-        // start modified part
         // ax25_unnumbered_information_frame_t.base is ax25_unnumbered_frame_t (not ax25_frame_t).
         // ax25_frame_t fields (type, header) are in .base.base, not .base.
         uiframe.base.base.type = AX25_FRAME_UNNUMBERED_INFORMATION;
         fill_address(&uiframe.base.base.header.destination, "W1AW  ", 0);
         fill_address(&uiframe.base.base.header.source,      "VE3TKI", 0);
         uiframe.base.base.header.repeaters.num_repeaters = 0;
-        // end modified part
         uiframe.pid = 0xF0;
         uint8_t ui_data[] = {0xAA, 0xBB};
         uiframe.payload     = ui_data;
@@ -940,10 +934,8 @@ static int test_il2p_roundtrip(void) {
         fill_address(&iframe.base.header.destination, "W1AW  ", 0);
         fill_address(&iframe.base.header.source,      "VE3TKI", 0);
         iframe.base.header.repeaters.num_repeaters = 1;
-        // start modified part
         // ax25_path_t uses 'repeaters[]' array (not 'addr[]') for the repeater addresses
         fill_address(&iframe.base.header.repeaters.repeaters[0], "KB1EL ", 0);
-        // end modified part
         iframe.pid = 0xF0;
         iframe.ns  = 0;
         iframe.nr  = 0;
@@ -1028,14 +1020,12 @@ static int test_il2p_roundtrip(void) {
         printf("  -- Type 1 UI frame --\n");
         ax25_unnumbered_information_frame_t uiframe;
         memset(&uiframe, 0, sizeof(uiframe));
-        // start modified part
         // ax25_unnumbered_information_frame_t.base is ax25_unnumbered_frame_t (not ax25_frame_t).
         // ax25_frame_t fields (type, header) are in .base.base, not .base.
         uiframe.base.base.type = AX25_FRAME_UNNUMBERED_INFORMATION;
         fill_address(&uiframe.base.base.header.destination, "APRS  ", 0);
         fill_address(&uiframe.base.base.header.source,      "KG7BRD", 1);
         uiframe.base.base.header.repeaters.num_repeaters = 0;
-        // end modified part
         uiframe.pid = 0xF0;
 
         uint8_t ui_data[] = "!1234.56N/01234.56E#APRS comment";
@@ -1083,10 +1073,8 @@ static int test_il2p_error_correction(void) {
     fill_address(&iframe.base.header.destination, "W1AW  ", 0);
     fill_address(&iframe.base.header.source,      "VE3TKI", 0);
     iframe.base.header.repeaters.num_repeaters = 1; // Force Type 0
-    // start modified part
     // ax25_path_t uses 'repeaters[]' array (not 'addr[]') for the repeater addresses
     fill_address(&iframe.base.header.repeaters.repeaters[0], "KB1EL ", 0);
-    // end modified part
     iframe.pid = 0xF0; iframe.ns = 0; iframe.nr = 0; iframe.pf = 0;
 
     uint8_t raw[64];
@@ -1160,10 +1148,8 @@ static int test_il2p_large_payload(void) {
     fill_address(&iframe.base.header.destination, "W1AW  ", 0);
     fill_address(&iframe.base.header.source,      "VE3TKI", 0);
     iframe.base.header.repeaters.num_repeaters = 1;
-    // start modified part
     // ax25_path_t uses 'repeaters[]' array (not 'addr[]') for the repeater addresses
     fill_address(&iframe.base.header.repeaters.repeaters[0], "KB1EL ", 0);
-    // end modified part
 
     // Build a large raw frame (600 bytes of data)
     static uint8_t large_raw[700];
@@ -1213,13 +1199,11 @@ static int test_edge_cases(void) {
     printf("\n=== Edge cases / NULL safety ===\n");
 
     // il2p_encode NULL args
-    // start modified part
     // Initialize dummy to suppress -Wmaybe-uninitialized: dummy is passed as both
     // input and output buffer in NULL-safety checks; uninitialized content is irrelevant
     // but the compiler cannot prove it won't be read before the early-return guard fires.
     uint8_t dummy[8];
     memset(dummy, 0, sizeof(dummy));
-    // end modified part
     size_t len;
     ax25_information_frame_t iframe;
     memset(&iframe, 0, sizeof(iframe));

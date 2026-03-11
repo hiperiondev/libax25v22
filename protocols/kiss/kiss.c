@@ -3,6 +3,12 @@
  * @brief AX.25 v2.2 Protocol Library - KISS TNC Interface Protocol
  * @author Emiliano Augusto Gonzalez (egonzalez . hiperion @ gmail . com)
  * @copyright GNU General Public License v3
+ * @date 2026
+ *
+ * @see https://github.com/hiperiondev/libax25v22
+ * @see https://www.ax25.net/AX25.2.2-Jul%2098-2.pdf
+ * @see https://web.tapr.org/meetings/DCC_1995/DCC1995-Modul128-4AX.25-PE1CHL.pdf
+ * @see https://eindhoven.space/wp-content/uploads/2022/12/fx-25_01_06.pdf
  */
 
 #include <string.h>
@@ -184,7 +190,7 @@ static uint16_t smack_crc_frame(uint8_t type_byte, const uint8_t *payload, size_
 // and call serial_write once with the complete frame.
 // frame_payload: bytes after the type indicator (may be NULL if len=0)
 // Returns KISS_OK or KISS_ERR_FRAME_SIZE.
-// start modified part - kiss_build_and_send: added SMACK CRC TX path
+// kiss_build_and_send: added SMACK CRC TX path
 // Original ignored ctx->variant entirely.  Now sets bit 7 of type byte for SMACK,
 // computes CRC-16 over [smack_type, payload] pre-SLIP, SLIP-encodes and appends
 // crc_lo then crc_hi before the closing FEND.

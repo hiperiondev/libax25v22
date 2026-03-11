@@ -4,11 +4,15 @@
  * @author Emiliano Augusto Gonzalez (egonzalez . hiperion @ gmail . com)
  * @copyright GNU General Public License v3
  * @date 2026
+ *
+ * @see https://github.com/hiperiondev/libax25v22
+ * @see https://www.ax25.net/AX25.2.2-Jul%2098-2.pdf
+ * @see https://web.tapr.org/meetings/DCC_1995/DCC1995-Modul128-4AX.25-PE1CHL.pdf
+ * @see https://eindhoven.space/wp-content/uploads/2022/12/fx-25_01_06.pdf
  */
 
 #include <stdlib.h>
 #include <string.h>
-#include <stdlib.h>
 
 #include "fx25_rs.h"
 #include "fx25.h"
@@ -69,11 +73,10 @@ uint8_t fx25_select_mode(size_t ax25_len) {
     return 0;  // Too large for FX.25 single block
 }
 
+// fx25_frame_free: no-op; rs_codeword is now an inline array, no heap to free.
+// Kept for API compatibility so callers do not need changes.
 void fx25_frame_free(fx25_frame_t *frame) {
-    if (frame && frame->rs_codeword) {
-        free(frame->rs_codeword);
-        frame->rs_codeword = NULL;
-    }
+    (void) frame;  // inline array: nothing to free
 }
 
 // Select optimal FX.25 mode based on channel quality and frame size
@@ -137,27 +140,20 @@ uint8_t fx25_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mode_id,
         return 3;  // Frame too large
 
     fx25_frame->mode_id = mode_id;
-    // Copy correlation tag as byte array instead of uint64_t assignment
+
     for (int i = 0; i < 8; i++) {
         fx25_frame->correlation_tag[i] = mode->correlation_tag[i];
     }
-    fx25_frame->codeword_len = mode->data_bytes + mode->parity_bytes;
 
-    fx25_frame->rs_codeword = malloc(fx25_frame->codeword_len);
-    if (!fx25_frame->rs_codeword)
-        return 4;
+    fx25_frame->codeword_len = (uint16_t) (mode->data_bytes + mode->parity_bytes);
 
-    // Correct shortened RS encoding: compute parity over full message with leading zeros
+    // Stack buffer for the full-length message with leading zero padding.
+    // full_k = 255 - parity_bytes; minimum parity is 16, so full_k <= 239 < 255.
+    uint8_t full_message[255];
     int full_k = 255 - mode->parity_bytes;
     int shorten = full_k - mode->data_bytes;
 
-    uint8_t *full_message = malloc(full_k);
-    if (!full_message) {
-        free(fx25_frame->rs_codeword);
-        fx25_frame->rs_codeword = NULL;
-        return 4;
-    }
-    memset(full_message, 0, shorten);
+    memset(full_message, 0, (size_t) shorten);
     memcpy(full_message + shorten, ax25_frame, ax25_len);
 
     // Pad unused data bytes with 0x00
@@ -174,8 +170,6 @@ uint8_t fx25_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mode_id,
     rs_init_params(&params, mode->parity_bytes);
     rs_encode(&params, full_message, parity);
 
-    free(full_message);
-
     return 0;
 }
 
@@ -187,7 +181,7 @@ uint8_t fx25_decode(const uint8_t *rx_data, size_t rx_len, fx25_frame_t *fx25_fr
     if (rx_len < 8 + 32 + 16)
         return 2;
 
-    // Extract correlation tag (first 8 bytes) - store as byte array
+    // Extract correlation tag (first 8 bytes)
     uint8_t rx_tag[8];
     for (int i = 0; i < 8; i++) {
         rx_tag[i] = rx_data[i];
@@ -198,7 +192,7 @@ uint8_t fx25_decode(const uint8_t *rx_data, size_t rx_len, fx25_frame_t *fx25_fr
     int best_distance = 65;  // Impossible value (max is 64 bits)
     for (int i = 0; fx25_modes[i].tag_id != 0; i++) {
         int distance = hamming_distance_tags(rx_tag, fx25_modes[i].correlation_tag);
-        if (distance <= 6 && distance < best_distance) {  // FX.25 spec: tolerate up to 6 bit errors in correlation tag
+        if (distance <= 6 && distance < best_distance) {
             best_distance = distance;
             mode = &fx25_modes[i];
         }
@@ -212,28 +206,20 @@ uint8_t fx25_decode(const uint8_t *rx_data, size_t rx_len, fx25_frame_t *fx25_fr
         return 4;  // Too short
 
     fx25_frame->mode_id = mode->tag_id;
-    // Copy correlation tag as byte array instead of uint64_t assignment
+
     for (int i = 0; i < 8; i++) {
         fx25_frame->correlation_tag[i] = rx_tag[i];
     }
-    fx25_frame->codeword_len = mode->data_bytes + mode->parity_bytes;
+    fx25_frame->codeword_len = (uint16_t) (mode->data_bytes + mode->parity_bytes);
 
-    // Correct shortened RS decoding: insert leading zeros to form full 255-symbol codeword
+    // Correct shortened RS decoding: insert leading zeros to form full 255-symbol codeword.
+    // Stack buffer — always exactly 255 bytes.
     int full_k = 255 - mode->parity_bytes;
     int shorten = full_k - mode->data_bytes;
 
-    uint8_t *full_codeword = malloc(255);
-    if (!full_codeword)
-        return 5;
-
-    memset(full_codeword, 0, shorten);
+    uint8_t full_codeword[255];
+    memset(full_codeword, 0, (size_t) shorten);
     memcpy(full_codeword + shorten, rx_data + 8, mode->data_bytes + mode->parity_bytes);
-
-    fx25_frame->rs_codeword = malloc(fx25_frame->codeword_len);
-    if (!fx25_frame->rs_codeword) {
-        free(full_codeword);
-        return 5;
-    }
 
     rs_params_t params;
     rs_init_params(&params, mode->parity_bytes);
@@ -241,16 +227,14 @@ uint8_t fx25_decode(const uint8_t *rx_data, size_t rx_len, fx25_frame_t *fx25_fr
     int result = rs_decode(&params, full_codeword);
 
     if (result < 0) {
-        free(full_codeword);
         *corrected_errors = 0xFF;  // Uncorrectable
         return 6;
     }
 
     *corrected_errors = (uint8_t) result;
 
-    // Copy corrected short codeword back (data + parity, no leading zeros)
+    // Copy corrected short codeword into inline array (data + parity, no leading zeros)
     memcpy(fx25_frame->rs_codeword, full_codeword + shorten, fx25_frame->codeword_len);
-    free(full_codeword);
 
     return 0;
 }

@@ -3,6 +3,7 @@
  * @brief AX.25 v2.2 Protocol Library - KISS TNC Interface Protocol
  * @author Emiliano Augusto Gonzalez (egonzalez . hiperion @ gmail . com)
  * @copyright GNU General Public License v3
+ * @date 2026
  *
  * @section Overview
  * Implements the KISS (Keep It Simple, Stupid) TNC host-to-TNC serial

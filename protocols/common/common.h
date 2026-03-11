@@ -129,7 +129,16 @@
  * @note This is the minimum WITH FCS. Without FCS, minimum is 15 bytes.
  * @see ax25_validate_frame_size()
  */
-#define AX25_MIN_FRAME_SIZE 17
+// Minimum AX.25 frame size including 2-byte FCS (HDLC-layer input).
+// Dest(7) + Src(7) + Ctrl(1) + FCS(2) = 17 bytes.
+#define AX25_MIN_FRAME_SIZE_WITH_FCS   17u
+
+// Minimum AX.25 frame size after FCS has been stripped (decode-layer input).
+// Dest(7) + Src(7) + Ctrl(1) = 15 bytes.
+#define AX25_MIN_FRAME_SIZE_NO_FCS     15u
+
+// Backward-compatible alias (with FCS) — existing callers of AX25_MIN_FRAME_SIZE unchanged.
+#define AX25_MIN_FRAME_SIZE            AX25_MIN_FRAME_SIZE_WITH_FCS
 
 /*============================================================================*/
 /* Timing Conversion Macros                                                   */

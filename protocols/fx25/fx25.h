@@ -69,7 +69,6 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include <stdlib.h>
 
 /*============================================================================*/
 /* Protocol Version and Constants                                             */
@@ -96,11 +95,12 @@
  */
 #define FX25_TAG_LENGTH     8
 
-/**
- * @brief Maximum Reed-Solomon codeword length in bytes
- * @details RS(255, k) over GF(2^8) - one byte per symbol
- */
+// FX25_MAX_CODEWORD: retained for legacy references (full RS field size)
 #define FX25_MAX_CODEWORD   255
+
+// FX25_MAX_CODEWORD_LEN: largest transmitted codeword = max data (239) + max parity (64)
+// Used to size the inline rs_codeword array in fx25_frame_t (no heap required)
+#define FX25_MAX_CODEWORD_LEN  (239u + 64u)
 
 /**
  * @brief Maximum tolerable bit errors in correlation tag
@@ -250,39 +250,27 @@
  * @note correctable_bytes is always half of parity_bytes (T = P/2)
  */
 typedef struct {
-    uint8_t tag_id;              /**< Mode identifier (1-11, corresponding to 0x01-0x0B) */
-    uint8_t correlation_tag[8];  /**< 8-byte (64-bit) correlation/synchronization tag */
-    uint8_t data_bytes;          /**< D: Maximum AX.25 frame payload size (32-239 bytes) */
-    uint8_t parity_bytes;        /**< P: Reed-Solomon parity symbols (16, 32, or 64) */
-    uint8_t correctable_bytes;   /**< T: Maximum correctable byte errors (P/2, i.e., 8, 16, or 32) */
+    uint8_t tag_id; /**< Mode identifier (1-11, corresponding to 0x01-0x0B) */
+    uint8_t correlation_tag[8]; /**< 8-byte (64-bit) correlation/synchronization tag */
+    uint8_t data_bytes; /**< D: Maximum AX.25 frame payload size (32-239 bytes) */
+    uint8_t parity_bytes; /**< P: Reed-Solomon parity symbols (16, 32, or 64) */
+    uint8_t correctable_bytes; /**< T: Maximum correctable byte errors (P/2, i.e., 8, 16, or 32) */
 } fx25_mode_t;
 
 /*============================================================================*/
 /* FX.25 Frame Structure                                                      */
 /*============================================================================*/
 
-/**
- * @brief FX.25 encoded frame structure
- * @details Represents a complete FX.25 frame ready for transmission or
- *          received from the channel. The structure contains the correlation
- *          tag, the Reed-Solomon codeword (data + parity), and metadata.
- *
- * @section Memory_Management
- * The rs_codeword field is dynamically allocated to accommodate variable
- * frame sizes. Callers must:
- * - Allocate the structure or declare as automatic variable
- * - Use fx25_frame_free() to release dynamically allocated memory
- * - Not assume fixed buffer sizes (use codeword_len for bounds)
- *
- * @section Frame_Composition
- * On-air format: [Correlation Tag: 8 bytes][Data: D bytes][Parity: P bytes]
- * Total length: 8 + D + P bytes (where D + P ≤ 255)
- */
+// fx25_frame_t: rs_codeword is now an inline fixed-size array (FX25_MAX_CODEWORD_LEN bytes).
+// No heap allocation required. fx25_frame_free() is kept as a no-op for API compatibility.
+// codeword_len changed from size_t to uint16_t: max value is 303, fits in 16 bits.
+// Frame_Composition: [Correlation Tag: 8 bytes][Data: D bytes][Parity: P bytes]
+// Total codeword length: D + P <= FX25_MAX_CODEWORD_LEN (303 bytes maximum)
 typedef struct {
-    uint8_t correlation_tag[8];  /**< 8-byte correlation tag copied from mode table */
-    uint8_t *rs_codeword;       /**< Reed-Solomon codeword buffer (data + parity) */
-    size_t codeword_len;        /**< Total codeword length in bytes (D + P) */
-    uint8_t mode_id;            /**< Selected mode identifier (FX25_MODE_*) */
+    uint8_t correlation_tag[8];               // 8-byte correlation tag from mode table
+    uint8_t rs_codeword[FX25_MAX_CODEWORD_LEN];  // inline RS codeword (data + parity), no heap
+    uint16_t codeword_len;                     // actual used length in rs_codeword (D + P)
+    uint8_t mode_id;                          // selected mode identifier (FX25_MODE_*)
 } fx25_frame_t;
 
 /*============================================================================*/
@@ -388,7 +376,7 @@ uint8_t fx25_select_mode_for_conditions(size_t ax25_len, uint8_t channel_quality
  * @return Error code: 0=success, 1=invalid parameters, 2=invalid mode,
  *         3=frame too large for mode, 4=memory allocation failed
  *
- * @note fx25_frame->rs_codeword is dynamically allocated (caller must free via fx25_frame_free)
+ * @note fx25_frame->rs_codeword is an inline array; no heap allocation (fx25_frame_free is a no-op)
  * @note The AX.25 frame is copied into the codeword; original buffer not modified
  * @note Correlation tag is copied from mode table to fx25_frame structure
  */
@@ -429,22 +417,9 @@ uint8_t fx25_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mode_id,
  */
 uint8_t fx25_decode(const uint8_t *rx_data, size_t rx_len, fx25_frame_t *fx25_frame, uint8_t *corrected_errors);
 
-/**
- * @brief Release FX.25 frame resources
- * @details Frees dynamically allocated memory associated with an FX.25
- *          frame structure. Safe to call on partially initialized structures.
- *
- * @param[in,out] frame Pointer to FX.25 frame structure
- *
- * @section Safety
- * - Sets rs_codeword pointer to NULL after freeing
- * - Safe to call with NULL frame pointer (no operation)
- * - Safe to call multiple times (idempotent after first call)
- * - Does not free the fx25_frame_t structure itself (caller allocated)
- *
- * @note Caller remains responsible for freeing the fx25_frame_t structure
- * @note Must be called to prevent memory leaks after fx25_encode() or fx25_decode()
- */
+// fx25_frame_free: kept as no-op for API compatibility.
+// rs_codeword is now an inline array; no heap memory to release.
+// Safe to call; does nothing.
 void fx25_frame_free(fx25_frame_t *frame);
 
 #endif /* FX25_H_ */

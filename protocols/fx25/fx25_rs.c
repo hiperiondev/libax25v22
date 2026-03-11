@@ -4,6 +4,11 @@
  * @author Emiliano Augusto Gonzalez (egonzalez . hiperion @ gmail . com)
  * @copyright GNU General Public License v3
  * @date 2026
+ *
+ * @see https://github.com/hiperiondev/libax25v22
+ * @see https://www.ax25.net/AX25.2.2-Jul%2098-2.pdf
+ * @see https://web.tapr.org/meetings/DCC_1995/DCC1995-Modul128-4AX.25-PE1CHL.pdf
+ * @see https://eindhoven.space/wp-content/uploads/2022/12/fx-25_01_06.pdf
  */
 
 #include <string.h>
@@ -239,7 +244,6 @@ int rs_decode(const rs_params_t *params, uint8_t *codeword) {
     // Chien search: find positions where Lambda(alpha^(-j_prime)) = 0.
     // Due to Horner indexing, j_prime (Chien variable) maps to array index:
     //   array_index = actual_len - 1 - j_prime
-    // start modified part
     uint8_t err_chien[64];  // Chien variable values (NOT direct array indices)
     int err_count = 0;
     DEBUG_PRINT("[RS_DEBUG] === Chien Search ===\n");

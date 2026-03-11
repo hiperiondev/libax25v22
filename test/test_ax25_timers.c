@@ -261,8 +261,8 @@ static int test_t1_timer_reset_on_ack(void) {
         TEST_ASSERT(false, "Data sent successfully", err);
     }DEBUG_FRAME("Payload sent", payload, sizeof(payload));
 
-    uint32_t t1_start = conn.t1_start_tick;
-    DEBUG_VAR64("T1 start tick", t1_start);
+    uint32_t t1_start = conn.t1.start_ms;
+    DEBUG_VAR64("T1 start_ms", t1_start);
 
     // Advance time but send ACK before expiration
     DEBUG_PRINT("Advancing time (5 ticks)");
@@ -294,8 +294,8 @@ static int test_t1_timer_reset_on_ack(void) {
     ax25_frame_free(rr_frame, &decode_err);
     DEBUG_STATE("Connection state after RR", conn.state);
 
-    uint32_t t1_after_ack = conn.t1_start_tick;
-    DEBUG_VAR64("T1 start tick after ACK", t1_after_ack);DEBUG_BOOL("T1 timer reset", t1_after_ack != t1_start);
+    uint32_t t1_after_ack = conn.t1.start_ms;
+    DEBUG_VAR64("T1 start_ms after ACK", t1_after_ack);DEBUG_BOOL("T1 timer reset", t1_after_ack != t1_start);
 
     TEST_ASSERT(t1_after_ack != t1_start, "T1 timer reset after ACK", t1_after_ack == t1_start);
 
@@ -371,7 +371,7 @@ static int test_t2_response_delay(void) {
     reset_capture();
     ax25_process_frame(&conn, iframe, 1);
     ax25_frame_free(iframe, &decode_err);
-    DEBUG_STATE("Connection state after I-frame", conn.state);DEBUG_BOOL("T2 running", conn.t2_running);DEBUG_VAR("Transmit count immediately", transmit_count);
+    DEBUG_STATE("Connection state after I-frame", conn.state);DEBUG_BOOL("T2 running", conn.t2.running);
 
     uint32_t immediate_transmit_count = transmit_count;
 
@@ -876,7 +876,8 @@ static int test_t108_receiver_startup(void) {
     phys.persist = 255;
     phys.axhang_10ms = 0;
     phys.interframe_flags = 1;  // Minimal interframe delay
-    DEBUG_VAR("RX startup time configured (ticks)", phys.rx_startup_10ms);DEBUG_VAR("TX delay (ticks)", phys.txdely_10ms);DEBUG_VAR("AX hang (ticks)", phys.axhang_10ms);DEBUG_VAR("Interframe flags", phys.interframe_flags);
+    DEBUG_VAR("RX startup time configured (ticks)", phys.rx_startup_10ms);DEBUG_VAR("TX delay (ticks)", phys.txdely_10ms);DEBUG_VAR("AX hang (ticks)",
+            phys.axhang_10ms);DEBUG_VAR("Interframe flags", phys.interframe_flags);
 
     reset_ptt_state();
     simulated_carrier = false;
@@ -902,11 +903,14 @@ static int test_t108_receiver_startup(void) {
     }
 
     while (tick < 50) {
-        DEBUG_VAR("Loop tick", tick);DEBUG_STATE("State before tick", phys.state);DEBUG_BOOL("TX active before tick", phys.tx_active);DEBUG_BOOL("RX warmup required before tick", phys.rx_warmup_required);DEBUG_VAR("Next action tick", phys.next_action_tick_10ms);DEBUG_VAR("Last unkey tick", phys.last_unkey_tick_10ms);
+        DEBUG_VAR("Loop tick", tick);DEBUG_STATE("State before tick", phys.state);DEBUG_BOOL("TX active before tick", phys.tx_active);DEBUG_BOOL(
+                "RX warmup required before tick", phys.rx_warmup_required);DEBUG_VAR("Next action tick", phys.next_action_tick_10ms);DEBUG_VAR(
+                "Last unkey tick", phys.last_unkey_tick_10ms);
 
         ax25_physical_tick(&phys, tick);
 
-        DEBUG_STATE("State after tick", phys.state);DEBUG_BOOL("TX active after tick", phys.tx_active);DEBUG_BOOL("RX warmup required after tick", phys.rx_warmup_required);DEBUG_VAR("Queue head", phys.queue_head);DEBUG_VAR("Queue tail", phys.queue_tail);
+        DEBUG_STATE("State after tick", phys.state);DEBUG_BOOL("TX active after tick", phys.tx_active);DEBUG_BOOL("RX warmup required after tick",
+                phys.rx_warmup_required);DEBUG_VAR("Queue head", phys.queue_head);DEBUG_VAR("Queue tail", phys.queue_tail);
 
         if (!phys.tx_active) {
             DEBUG_PRINT("TX became inactive, breaking loop");
@@ -916,7 +920,8 @@ static int test_t108_receiver_startup(void) {
     }
 
     uint32_t first_tx_end = tick;
-    DEBUG_VAR("First transmission ended at tick", first_tx_end);DEBUG_STATE("State after first TX", phys.state);DEBUG_BOOL("RX warmup required after first TX", phys.rx_warmup_required);DEBUG_VAR("Last unkey tick after first TX", phys.last_unkey_tick_10ms);
+    DEBUG_VAR("First transmission ended at tick", first_tx_end);DEBUG_STATE("State after first TX", phys.state);DEBUG_BOOL("RX warmup required after first TX",
+            phys.rx_warmup_required);DEBUG_VAR("Last unkey tick after first TX", phys.last_unkey_tick_10ms);
     TEST_ASSERT(!phys.tx_active, "First transmission completed", phys.tx_active);
 
     // Queue second frame immediately
@@ -927,7 +932,9 @@ static int test_t108_receiver_startup(void) {
     uint32_t second_tx_start = 0;
     DEBUG_PRINT("Waiting for second transmission");DEBUG_PRINT("=== Starting second transmission detection loop ===");
     while (tick < first_tx_end + 20) {
-        DEBUG_VAR("Loop tick", tick);DEBUG_STATE("State before tick", phys.state);DEBUG_BOOL("TX active before tick", phys.tx_active);DEBUG_BOOL("RX warmup required before tick", phys.rx_warmup_required);DEBUG_VAR("Next action tick", phys.next_action_tick_10ms);DEBUG_VAR("Last unkey tick", phys.last_unkey_tick_10ms);
+        DEBUG_VAR("Loop tick", tick);DEBUG_STATE("State before tick", phys.state);DEBUG_BOOL("TX active before tick", phys.tx_active);DEBUG_BOOL(
+                "RX warmup required before tick", phys.rx_warmup_required);DEBUG_VAR("Next action tick", phys.next_action_tick_10ms);DEBUG_VAR(
+                "Last unkey tick", phys.last_unkey_tick_10ms);
 
         ax25_physical_tick(&phys, tick);
 
@@ -947,7 +954,8 @@ static int test_t108_receiver_startup(void) {
     }
 
     uint32_t rx_warmup_delay = second_tx_start - first_tx_end;
-    DEBUG_VAR("RX warmup delay (ticks)", rx_warmup_delay);DEBUG_VAR("Expected minimum delay (ticks)", phys.rx_startup_10ms);DEBUG_BOOL("Delay >= configured RX startup", rx_warmup_delay >= 4);
+    DEBUG_VAR("RX warmup delay (ticks)", rx_warmup_delay);DEBUG_VAR("Expected minimum delay (ticks)", phys.rx_startup_10ms);DEBUG_BOOL(
+            "Delay >= configured RX startup", rx_warmup_delay >= 4);
 
     TEST_ASSERT(rx_warmup_delay >= 4, "RX startup time enforced between transmissions", rx_warmup_delay);
 

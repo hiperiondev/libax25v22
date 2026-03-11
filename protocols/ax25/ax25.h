@@ -169,6 +169,11 @@
 #define PID_NO_L3           0xF0 /**< No layer 3 protocol implemented */
 #define PID_ESCAPE          0xFF /**< Escape for extended PID (next byte contains extended PID) */
 
+// Maximum byte length of any fully-encoded AX.25 control frame (no I-field).
+// Worst-case: dest(7) + src(7) + 8 repeaters(56) + 2-byte ctrl + 5-byte FRMR = 77, +3 margin = 80.
+// I-frames use ax25_frame_encode() + heap (stored in tx_queue for retransmission).
+#define AX25_ENCODE_SCRATCH_LEN  80u
+
 /*============================================================================*/
 /* Frame Type Enumeration                                                       */
 /*============================================================================*/
@@ -290,8 +295,8 @@ typedef struct {
     int ssid; /**< Secondary Station Identifier (0-15) */
     bool ch; /**< C bit (command/response) or H bit (has-been-repeated) */
     bool res0; /**< Reserved bit 0 - should be set to 1 */
-    bool res1; /**< Reserved bit 1 - modulo-128 indicator */
-    bool mod128; /**< Local interpretation: true=modulo-8, false=modulo-128 */
+    bool res1; /**< Reserved bit 1 - modulo-128 indicator: 0=mod-128, 1=mod-8 (on-air) */
+    bool mod8_legacy; /**< true = peer signals modulo-8 (res1=1 on-air); false = peer is modulo-128 capable (res1=0 on-air). Per AX.25 sec 3.12.2 and PE1CHL sec 4. */
     bool extension; /**< HDLC extension bit - 1 indicates last address */
 } ax25_address_t;
 
@@ -794,6 +799,13 @@ uint8_t* ax25_frame_encode(const ax25_frame_t *frame, size_t *len, uint8_t *err)
  * @return Pointer to decoded frame (caller must free with ax25_frame_free), or NULL on error
  */
 ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, uint8_t *err);
+
+// ax25_encode_frame_to_buf: zero-malloc control-frame encoder.
+// Encodes frame directly into buf[0..buf_size-1].
+// On success writes byte count to *out_len and returns 0.
+// Returns: 1=NULL arg, 2=buf too small, 3=unsupported type (use ax25_frame_encode for I/XID/UI).
+// NOT suitable for frames stored for later retransmission; use ax25_frame_encode() for those.
+uint8_t ax25_encode_frame_to_buf(const ax25_frame_t *frame, uint8_t *buf, size_t buf_size, size_t *out_len);
 
 /**
  * @brief Free AX.25 frame structure and associated resources
@@ -1457,7 +1469,7 @@ void ax25_set_h_bit(uint8_t *frame_buf, size_t frame_len, uint8_t digi_idx);
 /* Information Field Buffer Pool                                               */
 /*============================================================================*/
 
-// start modified part: static buffer pool for info-field payloads
+// static buffer pool for info-field payloads
 // AX25_MAX_INFO: maximum information field size in bytes per AX.25 v2.2 section 6.7.2.1.
 // Default N1 = 256 bytes. Override at compile time with -DAX25_MAX_INFO=<n>.
 #ifndef AX25_MAX_INFO

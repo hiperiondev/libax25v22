@@ -69,7 +69,6 @@ bool il2p_encode(const ax25_frame_t *frame, const uint8_t *raw_ax25, size_t raw_
             return false;
 
         if (tmp_hdr.hdr_type == IL2P_HDR_TYPE_1_TRANSLATED) {
-            // start modified part
             // Type 1: payload = AX.25 information field
             // ax25_frame_t is a base struct; I-frames use ax25_information_frame_t
             // UI frames use ax25_unnumbered_information_frame_t
@@ -89,7 +88,6 @@ bool il2p_encode(const ax25_frame_t *frame, const uint8_t *raw_ax25, size_t raw_
                 payload_data = raw_ax25;
                 payload_len = 0u;
             }
-            // end modified part
         } else {
             // Type 0: payload = entire raw AX.25 frame bytes
             payload_data = raw_ax25;

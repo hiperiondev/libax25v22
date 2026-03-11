@@ -66,14 +66,14 @@
         printf("\n");                                                         \
     } while(0)
 #else
-#define DEBUG_PRINT(fmt, ...)
-#define DEBUG_FRAME(label, data, len)
-#define DEBUG_STATE(label, state)
-#define DEBUG_VAR(label, var)
-#define DEBUG_VAR64(label, var)
-#define DEBUG_BOOL(label, var)
-#define DEBUG_HEX(label, val)      ((void)0)
-#define DEBUG_BUF(label, buf, len) ((void)0)
+#define DEBUG_PRINT(fmt, ...) ;
+#define DEBUG_FRAME(label, data, len) ;
+#define DEBUG_STATE(label, state) ;
+#define DEBUG_VAR(label, var) ;
+#define DEBUG_VAR64(label, var) ;
+#define DEBUG_BOOL(label, var) ;
+#define DEBUG_HEX(label, val)      ((void)0);
+#define DEBUG_BUF(label, buf, len) ((void)0);
 #endif
 
 #endif /* TEST_COMMON_H_ */
