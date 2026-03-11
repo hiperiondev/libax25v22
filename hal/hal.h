@@ -30,6 +30,11 @@
  *
  * All time values are in milliseconds unless stated otherwise.
  *
+ * @see https://github.com/hiperiondev/libax25v22
+ * @see https://www.ax25.net/AX25.2.2-Jul%2098-2.pdf
+ * @see https://web.tapr.org/meetings/DCC_1995/DCC1995-Modul128-4AX.25-PE1CHL.pdf
+ * @see https://eindhoven.space/wp-content/uploads/2022/12/fx-25_01_06.pdf
+ *
  */
 
 #ifndef AX25_HAL_H

@@ -37,7 +37,7 @@
  * @def LIBAX25V22_VERSION_MINOR
  * @brief Indicate some change on API or opcode or very important correction in functionality
  */
-#define LIBAX25V22_VERSION_MINOR 1
+#define LIBAX25V22_VERSION_MINOR 2
 
 /**
  * @def LIBAX25V22_VERSION_PATCH
