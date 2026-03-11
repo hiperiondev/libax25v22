@@ -30,7 +30,6 @@
  *
  * All time values are in milliseconds unless stated otherwise.
  *
- * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #ifndef AX25_HAL_H
@@ -38,6 +37,8 @@
 
 #include <stdint.h>
 #include <stddef.h>
+
+#include "ax25_mux.h"
 
 /* =========================================================================
  * 0.  COMPILE-TIME PLATFORM CONFIGURATION
@@ -49,22 +50,29 @@
  * Increase for multi-link implementations.
  */
 #ifndef HAL_TIMER_MAX
-#  define HAL_TIMER_MAX   8
+#define HAL_TIMER_MAX   ((AX25_MUX_MAX_LINKS * 4U) + 4U)
 #endif
 
 /**
- * Size of the receive ring buffer (bytes) for incoming serial/KISS data.
- * Must be a power of two for efficient masking.
+ * Size of the receive ring buffer (bytes).
+ * NOTE: Actual usable capacity is (HAL_SERIAL_RX_BUF_SIZE - 1) bytes
+ * due to the sentinel-based full/empty distinction used by the ring buffer
+ * (head == tail means empty; (tail+1)&mask == head means full).
+ * Callers must not assume all HAL_SERIAL_RX_BUF_SIZE bytes are storable.
+ * Must be a power of two.
  */
 #ifndef HAL_SERIAL_RX_BUF_SIZE
-#  define HAL_SERIAL_RX_BUF_SIZE   512
+#define HAL_SERIAL_RX_BUF_SIZE   512U
 #endif
+
+/* Actual maximum bytes that can be buffered before overflow occurs. */
+#define HAL_SERIAL_RX_BUF_CAPACITY  (HAL_SERIAL_RX_BUF_SIZE - 1U)
 
 /**
  * Size of the transmit ring buffer (bytes).
  */
 #ifndef HAL_SERIAL_TX_BUF_SIZE
-#  define HAL_SERIAL_TX_BUF_SIZE   512
+#define HAL_SERIAL_TX_BUF_SIZE   512
 #endif
 
 /**
@@ -72,12 +80,12 @@
  * support.  Used only when HAL_MEM_USE_POOL is defined.
  */
 #ifndef HAL_MEM_POOL_ENTRIES
-#  define HAL_MEM_POOL_ENTRIES  32
+#define HAL_MEM_POOL_ENTRIES  32
 #endif
 
 /** Enable debug/log output (define to 0 to strip all log calls). */
 #ifndef HAL_LOG_ENABLE
-#  define HAL_LOG_ENABLE  1
+#define HAL_LOG_ENABLE  1
 #endif
 
 /* =========================================================================
@@ -144,7 +152,7 @@ uint32_t hal_tick_ms(void);
  * @return Elapsed time in milliseconds (capped at UINT32_MAX).
  */
 static inline uint32_t hal_elapsed_ms(uint32_t since_ms) {
-    return hal_tick_ms() - since_ms;   /* unsigned subtraction wraps OK */
+    return hal_tick_ms() - since_ms; /* unsigned subtraction wraps OK */
 }
 
 /* =========================================================================
@@ -354,6 +362,13 @@ void hal_serial_rx_flush(uint8_t port);
  */
 hal_err_t hal_serial_tx_flush(uint8_t port, uint32_t timeout_ms);
 
+// Non-blocking transmit-idle query.
+// Returns 1 when the TX ring buffer is empty and no bytes remain in flight.
+// Used by the AX.25 physical layer to detect when it is safe to deassert PTT
+// without blocking the main loop.
+// Returns negative (HAL_ERR_NODEV) for an invalid or closed port.
+int8_t hal_tx_idle(uint8_t port);
+
 /* =========================================================================
  * 8.  PSEUDO-RANDOM NUMBER GENERATOR
  *
@@ -425,7 +440,7 @@ void hal_critical_exit(uint32_t key);
  * @param  size  Number of bytes to allocate (max 65535).
  * @return Pointer to allocated block, or NULL on failure.
  */
-void *hal_mem_alloc(uint16_t size);
+void* hal_mem_alloc(uint16_t size);
 
 /**
  * @brief  Free a previously allocated block.
@@ -442,7 +457,7 @@ void hal_mem_free(void *ptr);
  * @param  size  Number of bytes.
  * @return Zeroed memory block, or NULL on failure.
  */
-void *hal_mem_calloc(uint16_t size);
+void* hal_mem_calloc(uint16_t size);
 
 /**
  * @brief  Resize a previously allocated memory block.
@@ -461,7 +476,7 @@ void *hal_mem_calloc(uint16_t size);
  * @param  new_size  Desired new size in bytes (max 65535).
  * @return Pointer to resized block, or NULL on failure.
  */
-void *hal_mem_realloc(void *ptr, uint16_t new_size);
+void* hal_mem_realloc(void *ptr, uint16_t new_size);
 
 /* =========================================================================
  * 11. CRC-16 / CCITT (FCS)
@@ -502,7 +517,7 @@ uint16_t hal_crc16_update(uint16_t crc, const uint8_t *buf, uint16_t len);
  * @return Final 16-bit FCS value.
  */
 static inline uint16_t hal_crc16_final(uint16_t crc) {
-    return crc ^ (uint16_t)0xFFFFU;
+    return crc ^ (uint16_t) 0xFFFFU;
 }
 
 /**
@@ -523,10 +538,10 @@ uint16_t hal_crc16_buf(const uint8_t *buf, uint16_t len);
 
 /** Log severity levels */
 typedef enum {
-    HAL_LOG_ERROR = 0,   /**< Critical errors                        */
-    HAL_LOG_WARN  = 1,   /**< Warnings (recoverable)                 */
-    HAL_LOG_INFO  = 2,   /**< Informational state changes            */
-    HAL_LOG_DEBUG = 3    /**< Verbose debug (frame-level)            */
+    HAL_LOG_ERROR = 0, /**< Critical errors                        */
+    HAL_LOG_WARN = 1, /**< Warnings (recoverable)                 */
+    HAL_LOG_INFO = 2, /**< Informational state changes            */
+    HAL_LOG_DEBUG = 3 /**< Verbose debug (frame-level)            */
 } hal_log_level_t;
 
 /**
@@ -584,11 +599,11 @@ void hal_wdog_kick(void);
  * All timing values in milliseconds (32-bit), no floats.
  */
 typedef struct {
-    uint32_t txdelay_ms;   /**< PTT keyup delay before first flag (def 500)  */
-    uint32_t txtail_ms;    /**< PTT hold after last bit         (def  50)    */
-    uint32_t slottime_ms;  /**< CSMA slot time                  (def 100)    */
-    uint8_t  persist;      /**< p-persistence 0-255 (p=(v+1)/256)(def  63)   */
-    uint8_t  full_duplex;  /**< 0=half, 1=full duplex                        */
+    uint32_t txdelay_ms; /**< PTT keyup delay before first flag (def 500)  */
+    uint32_t txtail_ms; /**< PTT hold after last bit         (def  50)    */
+    uint32_t slottime_ms; /**< CSMA slot time                  (def 100)    */
+    uint8_t persist; /**< p-persistence 0-255 (p=(v+1)/256)(def  63)   */
+    uint8_t full_duplex; /**< 0=half, 1=full duplex                        */
 } hal_channel_params_t;
 
 /**
@@ -609,6 +624,19 @@ hal_err_t hal_channel_params_get(uint8_t port, hal_channel_params_t *params);
  */
 hal_err_t hal_channel_params_set(uint8_t port, const hal_channel_params_t *params);
 
+// Synchronize HAL channel parameters from a received KISS parameter set.
+// Converts KISS 10-ms-unit fields to milliseconds and writes them into
+// the HAL channel parameter block. No float; all arithmetic is 8/16-bit.
+//
+// @param port       Logical port index.
+// @param txdelay    KISS TxDelay in 10 ms units.
+// @param persist    KISS Persistence P value 0-255.
+// @param slottime   KISS SlotTime in 10 ms units.
+// @param txtail     KISS TxTail in 10 ms units.
+// @param full_duplex  0 = half-duplex, 1 = full-duplex.
+// @return HAL_OK or HAL_ERR_NODEV.
+hal_err_t hal_channel_params_from_kiss(uint8_t port, uint8_t txdelay, uint8_t persist, uint8_t slottime, uint8_t txtail, uint8_t full_duplex);
+
 /* =========================================================================
  * 15. PLATFORM INFO (OPTIONAL INTROSPECTION)
  * ========================================================================= */
@@ -620,7 +648,7 @@ hal_err_t hal_channel_params_set(uint8_t port, const hal_channel_params_t *param
  *
  * @return Pointer to a constant string (not heap allocated).
  */
-const char *hal_platform_id(void);
+const char* hal_platform_id(void);
 
 /* =========================================================================
  * END OF AX25 HAL API

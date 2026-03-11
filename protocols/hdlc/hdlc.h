@@ -284,7 +284,7 @@ static inline int hdlc_encoded_size_max(int frameLen) {
  *          during encoding.
  *
  * @see hdlc_frame_decode()
- * @see CRC() (defined in common.h)
+ * @see hal_crc16_buf() (declared in hal.h)
  */
 void hdlc_frame_encode(unsigned char *frame, int frameLen, unsigned char *encodedFrame, int *encodedLen);
 
@@ -338,7 +338,7 @@ void hdlc_frame_encode(unsigned char *frame, int frameLen, unsigned char *encode
  *          and decodedLen are undefined.
  *
  * @see hdlc_frame_encode()
- * @see CRC() (defined in common.h)
+ * @see hal_crc16_buf() (declared in hal.h)
  */
 hdlc_error_t hdlc_frame_decode(unsigned char *encodedFrame, int encodedLen, unsigned char *decodedFrame, int *decodedLen);
 

@@ -15,6 +15,7 @@
 #include <stddef.h>
 
 #include "kiss.h"
+#include "hal.h"
 
 // ---------------------------------------------------------------------------
 // Internal helper: encode one raw data byte into the tx buffer applying
@@ -400,6 +401,11 @@ static void kiss_dispatch_frame(ax25_kiss_ctx_t *ctx) {
                 ctx->ports[port].txdelay = ctx->rx_buf[0];
             }
 
+            // Sync all KISS params to HAL after any parameter command.
+            // Fields not updated in this command carry their current values.
+            hal_channel_params_from_kiss(port, ctx->ports[port].txdelay, ctx->ports[port].persistence, ctx->ports[port].slottime, ctx->ports[port].txtail,
+                    ctx->ports[port].full_duplex ? 1U : 0U);
+
             // Count received command frames
             ctx->stats.rx_cmd_frames++;
 
@@ -411,6 +417,11 @@ static void kiss_dispatch_frame(ax25_kiss_ctx_t *ctx) {
                 ctx->ports[port].persistence = ctx->rx_buf[0];
             }
 
+            // Sync all KISS params to HAL after any parameter command.
+            // Fields not updated in this command carry their current values.
+            hal_channel_params_from_kiss(port, ctx->ports[port].txdelay, ctx->ports[port].persistence, ctx->ports[port].slottime, ctx->ports[port].txtail,
+                    ctx->ports[port].full_duplex ? 1U : 0U);
+
             // Count received command frames
             ctx->stats.rx_cmd_frames++;
         break;
@@ -420,6 +431,11 @@ static void kiss_dispatch_frame(ax25_kiss_ctx_t *ctx) {
             if (ctx->rx_len >= 1u) {
                 ctx->ports[port].slottime = ctx->rx_buf[0];
             }
+
+            // Sync all KISS params to HAL after any parameter command.
+            // Fields not updated in this command carry their current values.
+            hal_channel_params_from_kiss(port, ctx->ports[port].txdelay, ctx->ports[port].persistence, ctx->ports[port].slottime, ctx->ports[port].txtail,
+                    ctx->ports[port].full_duplex ? 1U : 0U);
 
             // Count received command frames
             ctx->stats.rx_cmd_frames++;
@@ -431,6 +447,11 @@ static void kiss_dispatch_frame(ax25_kiss_ctx_t *ctx) {
                 ctx->ports[port].txtail = ctx->rx_buf[0];
             }
 
+            // Sync all KISS params to HAL after any parameter command.
+            // Fields not updated in this command carry their current values.
+            hal_channel_params_from_kiss(port, ctx->ports[port].txdelay, ctx->ports[port].persistence, ctx->ports[port].slottime, ctx->ports[port].txtail,
+                    ctx->ports[port].full_duplex ? 1U : 0U);
+
             // Count received command frames
             ctx->stats.rx_cmd_frames++;
         break;
@@ -440,6 +461,11 @@ static void kiss_dispatch_frame(ax25_kiss_ctx_t *ctx) {
             if (ctx->rx_len >= 1u) {
                 ctx->ports[port].full_duplex = (ctx->rx_buf[0] != 0u);
             }
+
+            // Sync all KISS params to HAL after any parameter command.
+            // Fields not updated in this command carry their current values.
+            hal_channel_params_from_kiss(port, ctx->ports[port].txdelay, ctx->ports[port].persistence, ctx->ports[port].slottime, ctx->ports[port].txtail,
+                    ctx->ports[port].full_duplex ? 1U : 0U);
 
             // Count received command frames
             ctx->stats.rx_cmd_frames++;

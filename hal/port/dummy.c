@@ -20,17 +20,9 @@
  *  - Division is avoided in hot paths; modulo power-of-two uses masking.
  *  - The CRC table is const and placed in .rodata.
  *  - The PRNG is a 32-bit Galois LFSR – 4 instructions per bit, no divide.
- *
- * Build:
- *   gcc -std=c99 -O2 -Wall -Wextra -o test_hal hal_dummy.c -I.
- *
- * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-/* ── POSIX feature macros must come before ANY include ─────────────────── */
 #define _POSIX_C_SOURCE 200809L
-
-#include "hal.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +35,9 @@
 #include <termios.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <signal.h>
+
+#include "hal.h"
 
 /* =========================================================================
  * INTERNAL CONSTANTS
@@ -53,8 +48,8 @@
 #define RING_TX_MASK        ((uint16_t)(HAL_SERIAL_TX_BUF_SIZE - 1U))
 
 /* Compile-time check that buffer sizes are powers of two */
-typedef char _rx_pow2_check[(HAL_SERIAL_RX_BUF_SIZE & (HAL_SERIAL_RX_BUF_SIZE-1)) == 0 ? 1 : -1];
-typedef char _tx_pow2_check[(HAL_SERIAL_TX_BUF_SIZE & (HAL_SERIAL_TX_BUF_SIZE-1)) == 0 ? 1 : -1];
+typedef char _rx_pow2_check[(HAL_SERIAL_RX_BUF_SIZE & (HAL_SERIAL_RX_BUF_SIZE - 1)) == 0 ? 1 : -1];
+typedef char _tx_pow2_check[(HAL_SERIAL_TX_BUF_SIZE & (HAL_SERIAL_TX_BUF_SIZE - 1)) == 0 ? 1 : -1];
 
 /* =========================================================================
  * SECTION 1 – TICK COUNTER
@@ -65,38 +60,44 @@ typedef char _tx_pow2_check[(HAL_SERIAL_TX_BUF_SIZE & (HAL_SERIAL_TX_BUF_SIZE-1)
  * zero, avoiding an immediate 49-day wrap concern.
  * ========================================================================= */
 
-static uint32_t g_tick_epoch_sec;   /* seconds part of init time    */
-static uint32_t g_tick_epoch_usec;  /* microseconds part of init time */
+static uint32_t g_tick_epoch_sec; /* seconds part of init time    */
+static uint32_t g_tick_epoch_usec; /* microseconds part of init time */
 
-/**
- * Return elapsed milliseconds since hal_init().
- * Maximum representable value: ~49.7 days.
- * Uses only 32-bit arithmetic; no 64-bit, no float.
- */
+// g_saved_mask stores the signal mask active before the first
+// hal_critical_enter() so hal_critical_exit() can restore it exactly.
+static sigset_t g_saved_mask;
+
+// Return elapsed milliseconds since hal_init().
+// Result is a 32-bit counter that wraps after ~49.7 days.
+// Callers measure elapsed time as (current - past) with unsigned
+// subtraction, which handles the wrap transparently.
 uint32_t hal_tick_ms(void) {
     struct timeval tv;
     uint32_t sec_delta;
-    uint32_t usec_now;
-    uint32_t ms;
+    uint32_t usec_delta;
 
     gettimeofday(&tv, NULL);
 
-    /* Compute (tv - epoch) entirely in 32-bit */
-    sec_delta = (uint32_t)tv.tv_sec - g_tick_epoch_sec;
-    usec_now  = (uint32_t)tv.tv_usec;
+    // Both sides are cast to uint32_t before subtraction.
+    // If tv_sec has crossed a 2^32 boundary the truncated values
+    // still subtract correctly modulo 2^32, which is intentional:
+    // the result wraps the same way hal_elapsed_ms() expects.
+    sec_delta = (uint32_t) tv.tv_sec - g_tick_epoch_sec;
+    usec_delta = (uint32_t) tv.tv_usec;
 
-    /* Handle microsecond borrow */
-    if (usec_now < g_tick_epoch_usec) {
+    // Handle microsecond borrow when current usec < epoch usec.
+    if (usec_delta < g_tick_epoch_usec) {
         sec_delta -= 1U;
-        usec_now  += 1000000U;
+        usec_delta += 1000000U;
     }
-    usec_now -= g_tick_epoch_usec;
+    usec_delta -= g_tick_epoch_usec;
 
-    /* ms = sec_delta * 1000 + usec_now / 1000
-     * Avoid 64-bit: sec_delta is bounded by ~49 days = 4,233,600 s
-     * 4,233,600 * 1000 = 4,233,600,000 < 2^32 (4,294,967,295) ✓  */
-    ms = sec_delta * 1000U + usec_now / 1000U;
-    return ms;
+    // sec_delta * 1000: intentional 32-bit wrap after ~49.7 days.
+    // usec_delta / 1000: integer division, range [0, 999].
+    // On targets without a hardware divider gcc synthesises a
+    // multiply-shift sequence for the constant divisor 1000,
+    // so no actual divide instruction is emitted on Cortex-M.
+    return sec_delta * 1000U + usec_delta / 1000U;
 }
 
 /* =========================================================================
@@ -104,67 +105,77 @@ uint32_t hal_tick_ms(void) {
  * ========================================================================= */
 
 typedef struct {
-    uint32_t start_ms;   /* tick value when timer was started  */
-    uint32_t period_ms;  /* timeout period                     */
-    uint8_t  active;     /* 1=running, 0=stopped               */
+    uint32_t start_ms; /* tick value when timer was started  */
+    uint32_t period_ms; /* timeout period                     */
+    uint8_t active; /* 1=running, 0=stopped               */
 } timer_slot_t;
 
 static timer_slot_t g_timers[HAL_TIMER_MAX];
-static uint8_t      g_timer_used[HAL_TIMER_MAX];
+static uint8_t g_timer_used[HAL_TIMER_MAX];
 
 hal_timer_t hal_timer_alloc(void) {
     uint8_t i;
     for (i = 0U; i < HAL_TIMER_MAX; ++i) {
         if (!g_timer_used[i]) {
-            g_timer_used[i]     = 1U;
-            g_timers[i].active  = 0U;
+            g_timer_used[i] = 1U;
+            g_timers[i].active = 0U;
             g_timers[i].period_ms = 0U;
-            return (hal_timer_t)i;
+            return (hal_timer_t) i;
         }
     }
     return HAL_TIMER_INVALID;
 }
 
 void hal_timer_free(hal_timer_t t) {
-    if (t < 0 || (uint8_t)t >= HAL_TIMER_MAX) return;
-    g_timers[(uint8_t)t].active = 0U;
-    g_timer_used[(uint8_t)t]    = 0U;
+    if (t < 0 || (uint8_t) t >= HAL_TIMER_MAX)
+        return;
+    g_timers[(uint8_t) t].active = 0U;
+    g_timer_used[(uint8_t) t] = 0U;
 }
 
 hal_err_t hal_timer_start(hal_timer_t t, uint32_t period_ms) {
-    if (t < 0 || (uint8_t)t >= HAL_TIMER_MAX) return HAL_ERR_INVAL;
-    g_timers[(uint8_t)t].start_ms  = hal_tick_ms();
-    g_timers[(uint8_t)t].period_ms = period_ms;
-    g_timers[(uint8_t)t].active    = 1U;
+    if (t < 0 || (uint8_t) t >= HAL_TIMER_MAX)
+        return HAL_ERR_INVAL;
+    g_timers[(uint8_t) t].start_ms = hal_tick_ms();
+    g_timers[(uint8_t) t].period_ms = period_ms;
+    g_timers[(uint8_t) t].active = 1U;
     return HAL_OK;
 }
 
 void hal_timer_stop(hal_timer_t t) {
-    if (t < 0 || (uint8_t)t >= HAL_TIMER_MAX) return;
-    g_timers[(uint8_t)t].active = 0U;
+    if (t < 0 || (uint8_t) t >= HAL_TIMER_MAX)
+        return;
+    g_timers[(uint8_t) t].active = 0U;
 }
 
 uint8_t hal_timer_expired(hal_timer_t t) {
     uint32_t elapsed;
-    if (t < 0 || (uint8_t)t >= HAL_TIMER_MAX) return 0U;
-    if (!g_timers[(uint8_t)t].active) return 0U;
-    elapsed = hal_elapsed_ms(g_timers[(uint8_t)t].start_ms);
-    return (elapsed >= g_timers[(uint8_t)t].period_ms) ? 1U : 0U;
+    if (t < 0 || (uint8_t) t >= HAL_TIMER_MAX)
+        return 0U;
+    if (!g_timers[(uint8_t) t].active)
+        return 0U;
+    elapsed = hal_elapsed_ms(g_timers[(uint8_t) t].start_ms);
+    return (elapsed >= g_timers[(uint8_t) t].period_ms) ? 1U : 0U;
 }
 
 uint8_t hal_timer_running(hal_timer_t t) {
-    if (t < 0 || (uint8_t)t >= HAL_TIMER_MAX) return 0U;
-    if (!g_timers[(uint8_t)t].active) return 0U;
+    if (t < 0 || (uint8_t) t >= HAL_TIMER_MAX)
+        return 0U;
+    if (!g_timers[(uint8_t) t].active)
+        return 0U;
     return hal_timer_expired(t) ? 0U : 1U;
 }
 
 uint32_t hal_timer_remaining_ms(hal_timer_t t) {
     uint32_t elapsed;
-    if (t < 0 || (uint8_t)t >= HAL_TIMER_MAX) return 0U;
-    if (!g_timers[(uint8_t)t].active) return 0U;
-    elapsed = hal_elapsed_ms(g_timers[(uint8_t)t].start_ms);
-    if (elapsed >= g_timers[(uint8_t)t].period_ms) return 0U;
-    return g_timers[(uint8_t)t].period_ms - elapsed;
+    if (t < 0 || (uint8_t) t >= HAL_TIMER_MAX)
+        return 0U;
+    if (!g_timers[(uint8_t) t].active)
+        return 0U;
+    elapsed = hal_elapsed_ms(g_timers[(uint8_t) t].start_ms);
+    if (elapsed >= g_timers[(uint8_t) t].period_ms)
+        return 0U;
+    return g_timers[(uint8_t) t].period_ms - elapsed;
 }
 
 /* =========================================================================
@@ -174,15 +185,17 @@ uint32_t hal_timer_remaining_ms(hal_timer_t t) {
 static uint8_t g_ptt_state[HAL_MAX_PORTS];
 
 hal_err_t hal_ptt_set(uint8_t port, uint8_t assert_tx) {
-    if (port >= HAL_MAX_PORTS) return HAL_ERR_NODEV;
+    if (port >= HAL_MAX_PORTS)
+        return HAL_ERR_NODEV;
     g_ptt_state[port] = assert_tx ? 1U : 0U;
     HAL_LOGI("[PTT] port=%u  %s\n", port, assert_tx ? "ASSERT (TX ON)" : "DEASSERT (TX OFF)");
     return HAL_OK;
 }
 
 int8_t hal_ptt_get(uint8_t port) {
-    if (port >= HAL_MAX_PORTS) return (int8_t)HAL_ERR_NODEV;
-    return (int8_t)g_ptt_state[port];
+    if (port >= HAL_MAX_PORTS)
+        return (int8_t) HAL_ERR_NODEV;
+    return (int8_t) g_ptt_state[port];
 }
 
 /* =========================================================================
@@ -193,8 +206,9 @@ int8_t hal_ptt_get(uint8_t port) {
  * ========================================================================= */
 
 int8_t hal_dcd_get(uint8_t port) {
-    if (port >= HAL_MAX_PORTS) return (int8_t)HAL_ERR_NODEV;
-    return 0;  /* channel always idle */
+    if (port >= HAL_MAX_PORTS)
+        return (int8_t) HAL_ERR_NODEV;
+    return 0; /* channel always idle */
 }
 
 /* =========================================================================
@@ -213,17 +227,17 @@ int8_t hal_dcd_get(uint8_t port) {
  * ========================================================================= */
 
 typedef struct {
-    uint8_t  rx_buf[HAL_SERIAL_RX_BUF_SIZE];
+    uint8_t rx_buf[HAL_SERIAL_RX_BUF_SIZE];
     uint16_t rx_head;
     uint16_t rx_tail;
 
-    uint8_t  tx_buf[HAL_SERIAL_TX_BUF_SIZE];
+    uint8_t tx_buf[HAL_SERIAL_TX_BUF_SIZE];
     uint16_t tx_head;
     uint16_t tx_tail;
 
-    int      fd_rx;   /* read file descriptor  (-1 = stdin)  */
-    int      fd_tx;   /* write file descriptor (-1 = stdout) */
-    uint8_t  open;
+    int fd_rx; /* read file descriptor  (-1 = stdin)  */
+    int fd_tx; /* write file descriptor (-1 = stdout) */
+    uint8_t open;
 } serial_port_t;
 
 static serial_port_t g_serial[HAL_MAX_PORTS];
@@ -231,21 +245,23 @@ static serial_port_t g_serial[HAL_MAX_PORTS];
 /* ── Ring buffer helpers (16-bit arithmetic only) ── */
 
 static inline uint16_t ring_used(uint16_t head, uint16_t tail, uint16_t mask) {
-    return (uint16_t)((tail - head) & mask);
+    return (uint16_t) ((tail - head) & mask);
 }
 
 static inline uint16_t ring_free(uint16_t head, uint16_t tail, uint16_t mask) {
-    return (uint16_t)(mask - ring_used(head, tail, mask));
+    return (uint16_t) (mask - ring_used(head, tail, mask));
 }
 
 hal_err_t hal_serial_put(uint8_t port, uint8_t byte) {
     serial_port_t *s;
-    uint16_t       next;
+    uint16_t next;
 
-    if (port >= HAL_MAX_PORTS || !g_serial[port].open) return HAL_ERR_NODEV;
-    s    = &g_serial[port];
-    next = (uint16_t)((s->tx_tail + 1U) & RING_TX_MASK);
-    if (next == s->tx_head) return HAL_ERR_BUSY;   /* buffer full */
+    if (port >= HAL_MAX_PORTS || !g_serial[port].open)
+        return HAL_ERR_NODEV;
+    s = &g_serial[port];
+    next = (uint16_t) ((s->tx_tail + 1U) & RING_TX_MASK);
+    if (next == s->tx_head)
+        return HAL_ERR_BUSY; /* buffer full */
     s->tx_buf[s->tx_tail] = byte;
     s->tx_tail = next;
     return HAL_OK;
@@ -254,33 +270,39 @@ hal_err_t hal_serial_put(uint8_t port, uint8_t byte) {
 uint16_t hal_serial_write(uint8_t port, const uint8_t *buf, uint16_t len) {
     uint16_t i;
     for (i = 0U; i < len; ++i) {
-        if (hal_serial_put(port, buf[i]) != HAL_OK) break;
+        if (hal_serial_put(port, buf[i]) != HAL_OK)
+            break;
     }
     return i;
 }
 
 hal_err_t hal_serial_get(uint8_t port, uint8_t *byte) {
     serial_port_t *s;
-    if (port >= HAL_MAX_PORTS || !g_serial[port].open) return HAL_ERR_NODEV;
+    if (port >= HAL_MAX_PORTS || !g_serial[port].open)
+        return HAL_ERR_NODEV;
     s = &g_serial[port];
-    if (s->rx_head == s->rx_tail) return HAL_ERR_BUSY;  /* empty */
-    *byte      = s->rx_buf[s->rx_head];
-    s->rx_head = (uint16_t)((s->rx_head + 1U) & RING_RX_MASK);
+    if (s->rx_head == s->rx_tail)
+        return HAL_ERR_BUSY; /* empty */
+    *byte = s->rx_buf[s->rx_head];
+    s->rx_head = (uint16_t) ((s->rx_head + 1U) & RING_RX_MASK);
     return HAL_OK;
 }
 
 int16_t hal_serial_rx_available(uint8_t port) {
-    if (port >= HAL_MAX_PORTS || !g_serial[port].open) return (int16_t)HAL_ERR_NODEV;
-    return (int16_t)ring_used(g_serial[port].rx_head, g_serial[port].rx_tail, RING_RX_MASK);
+    if (port >= HAL_MAX_PORTS || !g_serial[port].open)
+        return (int16_t) HAL_ERR_NODEV;
+    return (int16_t) ring_used(g_serial[port].rx_head, g_serial[port].rx_tail, RING_RX_MASK);
 }
 
 int16_t hal_serial_tx_free(uint8_t port) {
-    if (port >= HAL_MAX_PORTS || !g_serial[port].open) return (int16_t)HAL_ERR_NODEV;
-    return (int16_t)ring_free(g_serial[port].tx_head, g_serial[port].tx_tail, RING_TX_MASK);
+    if (port >= HAL_MAX_PORTS || !g_serial[port].open)
+        return (int16_t) HAL_ERR_NODEV;
+    return (int16_t) ring_free(g_serial[port].tx_head, g_serial[port].tx_tail, RING_TX_MASK);
 }
 
 void hal_serial_rx_flush(uint8_t port) {
-    if (port >= HAL_MAX_PORTS) return;
+    if (port >= HAL_MAX_PORTS)
+        return;
     g_serial[port].rx_head = g_serial[port].rx_tail = 0U;
 }
 
@@ -288,17 +310,26 @@ hal_err_t hal_serial_tx_flush(uint8_t port, uint32_t timeout_ms) {
     uint32_t t0 = hal_tick_ms();
     while (g_serial[port].tx_head != g_serial[port].tx_tail) {
         hal_wdog_kick();
-        if (hal_elapsed_ms(t0) >= timeout_ms) return HAL_ERR_TIMEOUT;
+        if (hal_elapsed_ms(t0) >= timeout_ms)
+            return HAL_ERR_TIMEOUT;
         /* drain one byte */
         {
             uint8_t b = g_serial[port].tx_buf[g_serial[port].tx_head];
-            g_serial[port].tx_head =
-                (uint16_t)((g_serial[port].tx_head + 1U) & RING_TX_MASK);
+            g_serial[port].tx_head = (uint16_t) ((g_serial[port].tx_head + 1U) & RING_TX_MASK);
             int fd = (g_serial[port].fd_tx >= 0) ? g_serial[port].fd_tx : STDOUT_FILENO;
-            if (write(fd, &b, 1) < 0) { /* best-effort */ }
+            if (write(fd, &b, 1) < 0) { /* best-effort */
+            }
         }
     }
     return HAL_OK;
+}
+
+int8_t hal_tx_idle(uint8_t port) {
+    if (port >= HAL_MAX_PORTS || !g_serial[port].open)
+        return (int8_t) HAL_ERR_NODEV;
+    // In the Linux dummy the TX ring buffer IS the transmit pipeline.
+    // Return 1 (idle) when head == tail (buffer empty), 0 otherwise.
+    return (g_serial[port].tx_head == g_serial[port].tx_tail) ? 1 : 0;
 }
 
 /**
@@ -310,29 +341,32 @@ hal_err_t hal_serial_tx_flush(uint8_t port, uint32_t timeout_ms) {
  */
 void hal_serial_poll(uint8_t port) {
     serial_port_t *s;
-    ssize_t        n;
-    uint8_t        tmp[64];
-    uint16_t       i;
-    int            fd_rx, fd_tx;
+    ssize_t n;
+    uint8_t tmp[64];
+    uint16_t i;
+    int fd_rx, fd_tx;
 
-    if (port >= HAL_MAX_PORTS || !g_serial[port].open) return;
-    s     = &g_serial[port];
+    if (port >= HAL_MAX_PORTS || !g_serial[port].open)
+        return;
+    s = &g_serial[port];
     fd_rx = (s->fd_rx >= 0) ? s->fd_rx : STDIN_FILENO;
     fd_tx = (s->fd_tx >= 0) ? s->fd_tx : STDOUT_FILENO;
 
     /* Drain TX ring to file descriptor */
     while (s->tx_head != s->tx_tail) {
         uint8_t b = s->tx_buf[s->tx_head];
-        s->tx_head = (uint16_t)((s->tx_head + 1U) & RING_TX_MASK);
-        if (write(fd_tx, &b, 1) < 0) { /* best-effort */ }
+        s->tx_head = (uint16_t) ((s->tx_head + 1U) & RING_TX_MASK);
+        if (write(fd_tx, &b, 1) < 0) { /* best-effort */
+        }
     }
 
     /* Fill RX ring from file descriptor (non-blocking read) */
     n = read(fd_rx, tmp, sizeof(tmp));
     if (n > 0) {
-        for (i = 0U; i < (uint16_t)n; ++i) {
-            uint16_t next = (uint16_t)((s->rx_tail + 1U) & RING_RX_MASK);
-            if (next == s->rx_head) break;   /* ring full – drop byte */
+        for (i = 0U; i < (uint16_t) n; ++i) {
+            uint16_t next = (uint16_t) ((s->rx_tail + 1U) & RING_RX_MASK);
+            if (next == s->rx_head)
+                break; /* ring full – drop byte */
             s->rx_buf[s->rx_tail] = tmp[i];
             s->rx_tail = next;
         }
@@ -346,24 +380,25 @@ void hal_serial_poll(uint8_t port) {
  * No division, no 64-bit, no float.
  * ========================================================================= */
 
-static uint32_t g_lfsr = 0xACE1u;   /* must be non-zero */
+static uint32_t g_lfsr = 0xACE1u; /* must be non-zero */
 
 void hal_random_seed(uint32_t seed) {
     g_lfsr = (seed != 0U) ? seed : 0xDEADBEEFU;
 }
 
 uint8_t hal_random_byte(void) {
-    uint8_t  i;
+    uint8_t i;
     uint32_t r = 0U;
     /* Collect 8 bits from the LFSR */
     for (i = 0U; i < 8U; ++i) {
         /* Galois LFSR, polynomial 0xB4BCD35C (maximal length 32) */
         uint32_t lsb = g_lfsr & 1U;
         g_lfsr >>= 1U;
-        if (lsb) g_lfsr ^= 0xB4BCD35CU;
+        if (lsb)
+            g_lfsr ^= 0xB4BCD35CU;
         r = (r << 1U) | lsb;
     }
-    return (uint8_t)(r & 0xFFU);
+    return (uint8_t) (r & 0xFFU);
 }
 
 /* =========================================================================
@@ -380,15 +415,31 @@ uint8_t hal_random_byte(void) {
 static uint32_t g_crit_depth = 0U;
 
 uint32_t hal_critical_enter(void) {
+    // Save current nesting depth as key; nested calls restore correctly.
     uint32_t key = g_crit_depth;
+
+    // On outermost entry block ALL signals so any POSIX signal handler
+    // (e.g. SIGALRM-driven timer tick) cannot race with protected state.
+    if (g_crit_depth == 0U) {
+        sigset_t block_all;
+        sigfillset(&block_all);
+        sigprocmask(SIG_BLOCK, &block_all, &g_saved_mask);
+    }
+
     ++g_crit_depth;
-    /* On first nesting level disable non-fatal signals (simplified) */
+
     return key;
 }
 
 void hal_critical_exit(uint32_t key) {
-    if (g_crit_depth > 0U) --g_crit_depth;
-    (void)key;
+    (void) key;
+
+    if (g_crit_depth > 0U) {
+        --g_crit_depth;
+        if (g_crit_depth == 0U) {
+            sigprocmask(SIG_SETMASK, &g_saved_mask, NULL);
+        }
+    }
 }
 
 /* =========================================================================
@@ -398,23 +449,25 @@ void hal_critical_exit(uint32_t key) {
  * For a bare-metal MCU replace with a fixed-block pool allocator.
  * ========================================================================= */
 
-void *hal_mem_alloc(uint16_t size) {
-    if (size == 0U) return NULL;
-    return malloc((size_t)size);
+void* hal_mem_alloc(uint16_t size) {
+    if (size == 0U)
+        return NULL;
+    return malloc((size_t) size);
 }
 
 void hal_mem_free(void *ptr) {
     free(ptr);
 }
 
-void *hal_mem_calloc(uint16_t size) {
-    if (size == 0U) return NULL;
-    return calloc(1U, (size_t)size);
+void* hal_mem_calloc(uint16_t size) {
+    if (size == 0U)
+        return NULL;
+    return calloc(1U, (size_t) size);
 }
 
-void *hal_mem_realloc(void *ptr, uint16_t new_size) {
+void* hal_mem_realloc(void *ptr, uint16_t new_size) {
     if (new_size == 0) {
-        free(ptr);   /* Matches realloc(ptr, 0) semantics */
+        free(ptr); /* Matches realloc(ptr, 0) semantics */
         return NULL;
     }
     void *p = realloc(ptr, (size_t) new_size);
@@ -433,46 +486,28 @@ void *hal_mem_realloc(void *ptr, uint16_t new_size) {
  * Verified against:  CCITT FCS (ISO 3309) used by HDLC and AX.25.
  * ========================================================================= */
 
-static const uint16_t crc16_table[256] = {
-    0x0000U, 0x1189U, 0x2312U, 0x329BU, 0x4624U, 0x57ADU, 0x6536U, 0x74BFU,
-    0x8C48U, 0x9DC1U, 0xAF5AU, 0xBED3U, 0xCA6CU, 0xDBE5U, 0xE97EU, 0xF8F7U,
-    0x1081U, 0x0108U, 0x3393U, 0x221AU, 0x56A5U, 0x472CU, 0x75B7U, 0x643EU,
-    0x9CC9U, 0x8D40U, 0xBFDBU, 0xAE52U, 0xDAEDU, 0xCB64U, 0xF9FFU, 0xE876U,
-    0x2102U, 0x308BU, 0x0210U, 0x1399U, 0x6726U, 0x76AFU, 0x4434U, 0x55BDU,
-    0xAD4AU, 0xBCC3U, 0x8E58U, 0x9FD1U, 0xEB6EU, 0xFAE7U, 0xC87CU, 0xD9F5U,
-    0x3183U, 0x200AU, 0x1291U, 0x0318U, 0x77A7U, 0x662EU, 0x54B5U, 0x453CU,
-    0xBDCBU, 0xAC42U, 0x9ED9U, 0x8F50U, 0xFBEFU, 0xEA66U, 0xD8FDU, 0xC974U,
-    0x4204U, 0x538DU, 0x6116U, 0x709FU, 0x0420U, 0x15A9U, 0x2732U, 0x36BBU,
-    0xCE4CU, 0xDFC5U, 0xED5EU, 0xFCD7U, 0x8868U, 0x99E1U, 0xAB7AU, 0xBAF3U,
-    0x5285U, 0x430CU, 0x7197U, 0x601EU, 0x14A1U, 0x0528U, 0x37B3U, 0x263AU,
-    0xDECDU, 0xCF44U, 0xFDDFU, 0xEC56U, 0x98E9U, 0x8960U, 0xBBFBU, 0xAA72U,
-    0x6306U, 0x728FU, 0x4014U, 0x519DU, 0x2522U, 0x34ABU, 0x0630U, 0x17B9U,
-    0xEF4EU, 0xFEC7U, 0xCC5CU, 0xDDD5U, 0xA96AU, 0xB8E3U, 0x8A78U, 0x9BF1U,
-    0x7387U, 0x620EU, 0x5095U, 0x411CU, 0x35A3U, 0x242AU, 0x16B1U, 0x0738U,
-    0xFFCFU, 0xEE46U, 0xDCDDU, 0xCD54U, 0xB9EBU, 0xA862U, 0x9AF9U, 0x8B70U,
-    0x8408U, 0x9581U, 0xA71AU, 0xB693U, 0xC22CU, 0xD3A5U, 0xE13EU, 0xF0B7U,
-    0x0840U, 0x19C9U, 0x2B52U, 0x3ADBU, 0x4E64U, 0x5FEDU, 0x6D76U, 0x7CFFU,
-    0x9489U, 0x8500U, 0xB79BU, 0xA612U, 0xD2ADU, 0xC324U, 0xF1BFU, 0xE036U,
-    0x18C1U, 0x0948U, 0x3BD3U, 0x2A5AU, 0x5EE5U, 0x4F6CU, 0x7DF7U, 0x6C7EU,
-    0xA50AU, 0xB483U, 0x8618U, 0x9791U, 0xE32EU, 0xF2A7U, 0xC03CU, 0xD1B5U,
-    0x2942U, 0x38CBU, 0x0A50U, 0x1BD9U, 0x6F66U, 0x7EEFU, 0x4C74U, 0x5DFDU,
-    0xB58BU, 0xA402U, 0x9699U, 0x8710U, 0xF3AFU, 0xE226U, 0xD0BDU, 0xC134U,
-    0x39C3U, 0x284AU, 0x1AD1U, 0x0B58U, 0x7FE7U, 0x6E6EU, 0x5CF5U, 0x4D7CU,
-    0xC60CU, 0xD785U, 0xE51EU, 0xF497U, 0x8028U, 0x91A1U, 0xA33AU, 0xB2B3U,
-    0x4A44U, 0x5BCDU, 0x6956U, 0x78DFU, 0x0C60U, 0x1DE9U, 0x2F72U, 0x3EFBU,
-    0xD68DU, 0xC704U, 0xF59FU, 0xE416U, 0x90A9U, 0x8120U, 0xB3BBU, 0xA232U,
-    0x5AC5U, 0x4B4CU, 0x79D7U, 0x685EU, 0x1CE1U, 0x0D68U, 0x3FF3U, 0x2E7AU,
-    0xE70EU, 0xF687U, 0xC41CU, 0xD595U, 0xA12AU, 0xB0A3U, 0x8238U, 0x93B1U,
-    0x6B46U, 0x7ACFU, 0x4854U, 0x59DDU, 0x2D62U, 0x3CEBU, 0x0E70U, 0x1FF9U,
-    0xF78FU, 0xE606U, 0xD49DU, 0xC514U, 0xB1ABU, 0xA022U, 0x92B9U, 0x8330U,
-    0x7BC7U, 0x6A4EU, 0x58D5U, 0x495CU, 0x3DE3U, 0x2C6AU, 0x1EF1U, 0x0F78U
-};
+static const uint16_t crc16_table[256] = { 0x0000U, 0x1189U, 0x2312U, 0x329BU, 0x4624U, 0x57ADU, 0x6536U, 0x74BFU, 0x8C48U, 0x9DC1U, 0xAF5AU, 0xBED3U, 0xCA6CU,
+        0xDBE5U, 0xE97EU, 0xF8F7U, 0x1081U, 0x0108U, 0x3393U, 0x221AU, 0x56A5U, 0x472CU, 0x75B7U, 0x643EU, 0x9CC9U, 0x8D40U, 0xBFDBU, 0xAE52U, 0xDAEDU, 0xCB64U,
+        0xF9FFU, 0xE876U, 0x2102U, 0x308BU, 0x0210U, 0x1399U, 0x6726U, 0x76AFU, 0x4434U, 0x55BDU, 0xAD4AU, 0xBCC3U, 0x8E58U, 0x9FD1U, 0xEB6EU, 0xFAE7U, 0xC87CU,
+        0xD9F5U, 0x3183U, 0x200AU, 0x1291U, 0x0318U, 0x77A7U, 0x662EU, 0x54B5U, 0x453CU, 0xBDCBU, 0xAC42U, 0x9ED9U, 0x8F50U, 0xFBEFU, 0xEA66U, 0xD8FDU, 0xC974U,
+        0x4204U, 0x538DU, 0x6116U, 0x709FU, 0x0420U, 0x15A9U, 0x2732U, 0x36BBU, 0xCE4CU, 0xDFC5U, 0xED5EU, 0xFCD7U, 0x8868U, 0x99E1U, 0xAB7AU, 0xBAF3U, 0x5285U,
+        0x430CU, 0x7197U, 0x601EU, 0x14A1U, 0x0528U, 0x37B3U, 0x263AU, 0xDECDU, 0xCF44U, 0xFDDFU, 0xEC56U, 0x98E9U, 0x8960U, 0xBBFBU, 0xAA72U, 0x6306U, 0x728FU,
+        0x4014U, 0x519DU, 0x2522U, 0x34ABU, 0x0630U, 0x17B9U, 0xEF4EU, 0xFEC7U, 0xCC5CU, 0xDDD5U, 0xA96AU, 0xB8E3U, 0x8A78U, 0x9BF1U, 0x7387U, 0x620EU, 0x5095U,
+        0x411CU, 0x35A3U, 0x242AU, 0x16B1U, 0x0738U, 0xFFCFU, 0xEE46U, 0xDCDDU, 0xCD54U, 0xB9EBU, 0xA862U, 0x9AF9U, 0x8B70U, 0x8408U, 0x9581U, 0xA71AU, 0xB693U,
+        0xC22CU, 0xD3A5U, 0xE13EU, 0xF0B7U, 0x0840U, 0x19C9U, 0x2B52U, 0x3ADBU, 0x4E64U, 0x5FEDU, 0x6D76U, 0x7CFFU, 0x9489U, 0x8500U, 0xB79BU, 0xA612U, 0xD2ADU,
+        0xC324U, 0xF1BFU, 0xE036U, 0x18C1U, 0x0948U, 0x3BD3U, 0x2A5AU, 0x5EE5U, 0x4F6CU, 0x7DF7U, 0x6C7EU, 0xA50AU, 0xB483U, 0x8618U, 0x9791U, 0xE32EU, 0xF2A7U,
+        0xC03CU, 0xD1B5U, 0x2942U, 0x38CBU, 0x0A50U, 0x1BD9U, 0x6F66U, 0x7EEFU, 0x4C74U, 0x5DFDU, 0xB58BU, 0xA402U, 0x9699U, 0x8710U, 0xF3AFU, 0xE226U, 0xD0BDU,
+        0xC134U, 0x39C3U, 0x284AU, 0x1AD1U, 0x0B58U, 0x7FE7U, 0x6E6EU, 0x5CF5U, 0x4D7CU, 0xC60CU, 0xD785U, 0xE51EU, 0xF497U, 0x8028U, 0x91A1U, 0xA33AU, 0xB2B3U,
+        0x4A44U, 0x5BCDU, 0x6956U, 0x78DFU, 0x0C60U, 0x1DE9U, 0x2F72U, 0x3EFBU, 0xD68DU, 0xC704U, 0xF59FU, 0xE416U, 0x90A9U, 0x8120U, 0xB3BBU, 0xA232U, 0x5AC5U,
+        0x4B4CU, 0x79D7U, 0x685EU, 0x1CE1U, 0x0D68U, 0x3FF3U, 0x2E7AU, 0xE70EU, 0xF687U, 0xC41CU, 0xD595U, 0xA12AU, 0xB0A3U, 0x8238U, 0x93B1U, 0x6B46U, 0x7ACFU,
+        0x4854U, 0x59DDU, 0x2D62U, 0x3CEBU, 0x0E70U, 0x1FF9U, 0xF78FU, 0xE606U, 0xD49DU, 0xC514U, 0xB1ABU, 0xA022U, 0x92B9U, 0x8330U, 0x7BC7U, 0x6A4EU, 0x58D5U,
+        0x495CU, 0x3DE3U, 0x2C6AU, 0x1EF1U, 0x0F78U };
 
 uint16_t hal_crc16_update(uint16_t crc, const uint8_t *buf, uint16_t len) {
     uint16_t i;
     for (i = 0U; i < len; ++i) {
         /* table-driven Galois CRC: crc = (crc >> 8) ^ table[(crc ^ *buf) & 0xFF] */
-        crc = (uint16_t)((crc >> 8U) ^ crc16_table[(crc ^ (uint16_t)buf[i]) & 0x00FFU]);
+        crc = (uint16_t) ((crc >> 8U) ^ crc16_table[(crc ^ (uint16_t) buf[i]) & 0x00FFU]);
     }
     return crc;
 }
@@ -485,17 +520,16 @@ uint16_t hal_crc16_buf(const uint8_t *buf, uint16_t len) {
  * SECTION 10 – LOGGING
  * ========================================================================= */
 
-static const char * const g_level_str[4] = { "ERR", "WRN", "INF", "DBG" };
+static const char *const g_level_str[4] = { "ERR", "WRN", "INF", "DBG" };
 
 void hal_log(hal_log_level_t level, const char *fmt, ...) {
 #if HAL_LOG_ENABLE
     va_list ap;
     uint32_t ms = hal_tick_ms();
     /* Print timestamp as %u.%03u to avoid float; ms is 32-bit */
-    uint32_t s   = ms / 1000U;
-    uint32_t frac = ms - (s * 1000U);   /* 0..999 */
-    fprintf(stderr, "[%5u.%03u][%s] ", (unsigned)s, (unsigned)frac,
-            (level <= HAL_LOG_DEBUG) ? g_level_str[(uint8_t)level] : "???");
+    uint32_t s = ms / 1000U;
+    uint32_t frac = ms - (s * 1000U); /* 0..999 */
+    fprintf(stderr, "[%5u.%03u][%s] ", (unsigned) s, (unsigned) frac, (level <= HAL_LOG_DEBUG) ? g_level_str[(uint8_t) level] : "???");
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
@@ -516,28 +550,43 @@ void hal_wdog_kick(void) {
  * SECTION 12 – CHANNEL ACCESS PARAMETERS
  * ========================================================================= */
 
-static hal_channel_params_t g_chan_params[HAL_MAX_PORTS] = {
-    { .txdelay_ms  = 500U,   /* 500 ms keyup delay  (KISS default = 50 * 10ms) */
-      .txtail_ms   =  50U,   /*  50 ms tail                                     */
-      .slottime_ms = 100U,   /* 100 ms slot time    (KISS default = 10 * 10ms) */
-      .persist     =  63U,   /* p ≈ 0.25                                        */
-      .full_duplex =   0U }, /* half duplex                                     */
-    { .txdelay_ms  = 500U,
-      .txtail_ms   =  50U,
-      .slottime_ms = 100U,
-      .persist     =  63U,
-      .full_duplex =   0U }
-};
+static hal_channel_params_t g_chan_params[HAL_MAX_PORTS] = { { .txdelay_ms = 500U, /* 500 ms keyup delay  (KISS default = 50 * 10ms) */
+.txtail_ms = 50U, /*  50 ms tail                                     */
+.slottime_ms = 100U, /* 100 ms slot time    (KISS default = 10 * 10ms) */
+.persist = 63U, /* p ≈ 0.25                                        */
+.full_duplex = 0U }, /* half duplex                                     */
+{ .txdelay_ms = 500U, .txtail_ms = 50U, .slottime_ms = 100U, .persist = 63U, .full_duplex = 0U } };
 
 hal_err_t hal_channel_params_get(uint8_t port, hal_channel_params_t *params) {
-    if (port >= HAL_MAX_PORTS || !params) return HAL_ERR_INVAL;
+    if (port >= HAL_MAX_PORTS || !params)
+        return HAL_ERR_INVAL;
     *params = g_chan_params[port];
     return HAL_OK;
 }
 
 hal_err_t hal_channel_params_set(uint8_t port, const hal_channel_params_t *params) {
-    if (port >= HAL_MAX_PORTS || !params) return HAL_ERR_INVAL;
+    if (port >= HAL_MAX_PORTS || !params)
+        return HAL_ERR_INVAL;
     g_chan_params[port] = *params;
+    return HAL_OK;
+}
+
+// Sync HAL channel params from KISS wire values.
+// All five fields are written atomically as a struct copy.
+// Multiply by 10U converts KISS 10-ms units to milliseconds;
+// uint8_t * 10U = max 2550, fits in uint32_t with no overflow.
+hal_err_t hal_channel_params_from_kiss(uint8_t port, uint8_t txdelay, uint8_t persist, uint8_t slottime, uint8_t txtail, uint8_t full_duplex) {
+    hal_channel_params_t p;
+    if (port >= HAL_MAX_PORTS)
+        return HAL_ERR_NODEV;
+    // Convert KISS 10-ms units to milliseconds (8-bit x 10 fits uint32_t)
+    p.txdelay_ms = (uint32_t) txdelay * 10U;
+    p.slottime_ms = (uint32_t) slottime * 10U;
+    p.txtail_ms = (uint32_t) txtail * 10U;
+    // persist is the raw KISS P-value 0-255; CSMA uses: random_byte() <= persist
+    p.persist = persist;
+    p.full_duplex = (full_duplex != 0U) ? 1U : 0U;
+    g_chan_params[port] = p;
     return HAL_OK;
 }
 
@@ -545,7 +594,7 @@ hal_err_t hal_channel_params_set(uint8_t port, const hal_channel_params_t *param
  * SECTION 13 – PLATFORM ID
  * ========================================================================= */
 
-const char *hal_platform_id(void) {
+const char* hal_platform_id(void) {
     return "Linux/dummy";
 }
 
@@ -555,18 +604,24 @@ const char *hal_platform_id(void) {
 
 hal_err_t hal_init(void) {
     struct timeval tv;
-    uint8_t        i;
+    uint8_t i;
 
     /* Capture epoch for tick counter */
     gettimeofday(&tv, NULL);
-    g_tick_epoch_sec  = (uint32_t)tv.tv_sec;
-    g_tick_epoch_usec = (uint32_t)tv.tv_usec;
+    g_tick_epoch_sec = (uint32_t) tv.tv_sec;
+    g_tick_epoch_usec = (uint32_t) tv.tv_usec;
 
-    /* Seed PRNG from epoch sub-second bits */
-    hal_random_seed((uint32_t)tv.tv_usec ^ 0x5A5A5A5AU);
+    // Mix usec + sec + PID to prevent identical seeds when tv_usec is zero
+    // (e.g. at second boundaries or on MCUs where tv_usec starts at 0).
+    // Shifting PID left by 8 spreads its bits into the upper half of the word
+    // so low-PID values (1, 2, ...) do not alias with the time fields.
+    uint32_t seed = (uint32_t) tv.tv_usec ^ (uint32_t) tv.tv_sec ^ ((uint32_t) getpid() << 8U);
+    if (seed == 0U)
+        seed = 0xDEADBEEFU;
+    hal_random_seed(seed);
 
     /* Clear timer pool */
-    memset(g_timers,     0, sizeof(g_timers));
+    memset(g_timers, 0, sizeof(g_timers));
     memset(g_timer_used, 0, sizeof(g_timer_used));
 
     /* Clear PTT state */
@@ -575,16 +630,16 @@ hal_err_t hal_init(void) {
     /* Initialise serial ports: port 0 → stdin/stdout (non-blocking) */
     memset(g_serial, 0, sizeof(g_serial));
     for (i = 0U; i < HAL_MAX_PORTS; ++i) {
-        g_serial[i].fd_rx = -1;  /* use stdin  */
-        g_serial[i].fd_tx = -1;  /* use stdout */
-        g_serial[i].open  = 1U;
+        g_serial[i].fd_rx = -1; /* use stdin  */
+        g_serial[i].fd_tx = -1; /* use stdout */
+        g_serial[i].open = 1U;
     }
 
     /* Put stdin into non-blocking, raw mode for the dummy */
     {
         int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
         if (flags >= 0) {
-            (void)fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+            (void) fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
         }
     }
 
@@ -595,14 +650,21 @@ hal_err_t hal_init(void) {
 void hal_deinit(void) {
     uint8_t i;
 
+    /* Stop all running timers first to prevent callbacks firing into      */
+    /* already-freed state machine memory after deinit.                    */
+    for (i = 0U; i < HAL_TIMER_MAX; ++i) {
+        g_timers[i].active = 0U;
+        g_timer_used[i] = 0U;
+    }
+
     /* Deassert all PTT lines */
     for (i = 0U; i < HAL_MAX_PORTS; ++i) {
-        (void)hal_ptt_set(i, 0U);
+        (void) hal_ptt_set(i, 0U);
     }
 
     /* Flush TX buffers with a 1-second deadline */
     for (i = 0U; i < HAL_MAX_PORTS; ++i) {
-        (void)hal_serial_tx_flush(i, 1000U);
+        (void) hal_serial_tx_flush(i, 1000U);
     }
 
     HAL_LOGI("HAL deinit complete\n");
@@ -629,24 +691,43 @@ void hal_deinit(void) {
  */
 hal_err_t hal_serial_open(uint8_t port, const char *devpath, uint32_t baud) {
     struct termios tios;
-    speed_t        speed;
-    int            fd;
+    speed_t speed;
+    int fd;
 
-    if (port >= HAL_MAX_PORTS || !devpath) return HAL_ERR_INVAL;
+    if (port >= HAL_MAX_PORTS || !devpath)
+        return HAL_ERR_INVAL;
 
     /* Map numeric baud to Bxxx constant */
     switch (baud) {
-        case    300U: speed =    B300; break;
-        case   1200U: speed =   B1200; break;
-        case   2400U: speed =   B2400; break;
-        case   4800U: speed =   B4800; break;
-        case   9600U: speed =   B9600; break;
-        case  19200U: speed =  B19200; break;
-        case  38400U: speed =  B38400; break;
-        case  57600U: speed =  B57600; break;
-        case 115200U: speed = B115200; break;
+        case 300U:
+            speed = B300;
+        break;
+        case 1200U:
+            speed = B1200;
+        break;
+        case 2400U:
+            speed = B2400;
+        break;
+        case 4800U:
+            speed = B4800;
+        break;
+        case 9600U:
+            speed = B9600;
+        break;
+        case 19200U:
+            speed = B19200;
+        break;
+        case 38400U:
+            speed = B38400;
+        break;
+        case 57600U:
+            speed = B57600;
+        break;
+        case 115200U:
+            speed = B115200;
+        break;
         default:
-            HAL_LOGE("hal_serial_open: unsupported baud %u\n", (unsigned)baud);
+            HAL_LOGE("hal_serial_open: unsupported baud %u\n", (unsigned )baud);
             return HAL_ERR_INVAL;
     }
 
@@ -660,11 +741,11 @@ hal_err_t hal_serial_open(uint8_t port, const char *devpath, uint32_t baud) {
     memset(&tios, 0, sizeof(tios));
     cfsetispeed(&tios, speed);
     cfsetospeed(&tios, speed);
-    tios.c_cflag  = (tcflag_t)(CS8 | CREAD | CLOCAL);
-    tios.c_iflag  = 0;
-    tios.c_oflag  = 0;
-    tios.c_lflag  = 0;
-    tios.c_cc[VMIN]  = 0;
+    tios.c_cflag = (tcflag_t) (CS8 | CREAD | CLOCAL);
+    tios.c_iflag = 0;
+    tios.c_oflag = 0;
+    tios.c_lflag = 0;
+    tios.c_cc[VMIN] = 0;
     tios.c_cc[VTIME] = 0;
 
     if (tcsetattr(fd, TCSANOW, &tios) < 0) {
@@ -674,14 +755,14 @@ hal_err_t hal_serial_open(uint8_t port, const char *devpath, uint32_t baud) {
     }
 
     /* Close previous fd if any */
-    if (g_serial[port].fd_rx > 0) close(g_serial[port].fd_rx);
+    if (g_serial[port].fd_rx > 0)
+        close(g_serial[port].fd_rx);
 
     g_serial[port].fd_rx = fd;
     g_serial[port].fd_tx = fd;
-    g_serial[port].open  = 1U;
+    g_serial[port].open = 1U;
 
-    HAL_LOGI("hal_serial_open: port %u → %s @ %u baud\n",
-             (unsigned)port, devpath, (unsigned)baud);
+    HAL_LOGI("hal_serial_open: port %u → %s @ %u baud\n", (unsigned )port, devpath, (unsigned )baud);
     return HAL_OK;
 }
 
@@ -691,7 +772,8 @@ hal_err_t hal_serial_open(uint8_t port, const char *devpath, uint32_t baud) {
  * @param  port  Logical port index.
  */
 void hal_serial_close(uint8_t port) {
-    if (port >= HAL_MAX_PORTS) return;
+    if (port >= HAL_MAX_PORTS)
+        return;
     if (g_serial[port].fd_rx > STDERR_FILENO) {
         close(g_serial[port].fd_rx);
     }

@@ -35,6 +35,7 @@
 #include "test_common.h"
 #include "hdlc.h"
 #include "common.h"
+#include "hal.h"
 
 // Counter required by TEST_ASSERT
 static uint32_t assert_count = 0;
@@ -49,7 +50,7 @@ static void debug_bitstream(const char *label, const unsigned char *buf, int len
         for (int b = 0; b < 8; b++)
             printf("%d", (buf[i] >> b) & 1);
         printf("  (LSB-first)\n");
-    } DEBUG_FRAME("Raw hex", buf, len);
+    }DEBUG_FRAME("Raw hex", buf, len);
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +141,7 @@ static uint8_t* nrzi_encode(const unsigned char *nrz_bytes, int byte_len, int *o
             printf("\n");
     }
     printf("\n");
-    DEBUG_VAR("Total transitions", count_nrzi_transitions(levels, total_bits)); DEBUG_PRINT("=== NRZI ENCODE END ===");
+    DEBUG_VAR("Total transitions", count_nrzi_transitions(levels, total_bits));DEBUG_PRINT("=== NRZI ENCODE END ===");
     return levels;
 }
 
@@ -503,7 +504,7 @@ static int test_crc_embed_and_verify(void) {
     DEBUG_PRINT("=== ENTERING TEST: test_crc_embed_and_verify ===");
     printf("\n--- test_crc_embed_and_verify ---\n");
     unsigned char data[] = { '1', '2', '3', '4', '5', '6', '7', '8', '9' };
-    uint16_t crc = CRC(data, 9);
+    uint16_t crc = hal_crc16_buf(data, 9);
     DEBUG_VAR("CRC(123456789)", crc);
     TEST_ASSERT(crc == 0x906E, "CRC check value", crc);
 
@@ -511,7 +512,8 @@ static int test_crc_embed_and_verify(void) {
     memcpy(frame, data, 9);
     frame[9] = (unsigned char) (crc & 0xFF);
     frame[10] = (unsigned char) (crc >> 8);
-    bool valid = CRC_verify(frame, 11);
+    // CRC_verify replaced: hal_crc16_buf over data+FCS residual must equal 0x0F47
+    bool valid = (hal_crc16_buf(frame, 11) == 0x0F47u);
     DEBUG_BOOL("CRC_verify", valid);
     TEST_ASSERT(valid, "CRC_verify true (0x0F47 residue)", 0);
     return 0;

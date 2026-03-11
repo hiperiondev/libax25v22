@@ -47,6 +47,7 @@
 #include "il2p_rs.h"
 #include "il2p_header.h"
 #include "il2p.h"
+#include "hal.h"
 
 // Test infrastructure (mirrors test_common.h style)
 #include "test_common.h"
@@ -59,14 +60,16 @@ static void fill_address(ax25_address_t *addr, const char *call, uint8_t ssid) {
     memset(addr->callsign, ' ', 6);
     addr->callsign[6] = '\0';
     size_t l = strlen(call);
-    if (l > 6) l = 6;
+    if (l > 6)
+        l = 6;
     memcpy(addr->callsign, call, l);
     addr->ssid = ssid;
 }
 
 static void print_buf(const char *label, const uint8_t *buf, size_t len) {
     printf("  [DBG] %-40s (%3zu bytes): ", label, len);
-    for (size_t i = 0; i < len; i++) printf("%02X ", buf[i]);
+    for (size_t i = 0; i < len; i++)
+        printf("%02X ", buf[i]);
     printf("\n");
 }
 
@@ -83,8 +86,8 @@ static int test_gf256(void) {
 
     // Addition is XOR
     TEST_ASSERT(gf_add(0x53, 0xCA) == (0x53 ^ 0xCA), "gf_add is XOR", 0);
-    TEST_ASSERT(gf_add(0x00, 0xFF) == 0xFF,           "gf_add identity",0);
-    TEST_ASSERT(gf_add(0xAB, 0xAB) == 0x00,           "gf_add self-inverse", 0);
+    TEST_ASSERT(gf_add(0x00, 0xFF) == 0xFF, "gf_add identity", 0);
+    TEST_ASSERT(gf_add(0xAB, 0xAB) == 0x00, "gf_add self-inverse", 0);
 
     // Subtraction identical to addition in GF(2^m)
     TEST_ASSERT(gf_sub(0x53, 0xCA) == gf_add(0x53, 0xCA), "gf_sub == gf_add", 0);
@@ -106,8 +109,7 @@ static int test_gf256(void) {
     TEST_ASSERT(gf_mul(gf_mul(a, b), c) == gf_mul(a, gf_mul(b, c)), "gf_mul associative", 0);
 
     // Distributivity: a*(b+c) == a*b + a*c
-    TEST_ASSERT(gf_mul(a, gf_add(b, c)) == gf_add(gf_mul(a, b), gf_mul(a, c)),
-                "gf_mul distributive", 0);
+    TEST_ASSERT(gf_mul(a, gf_add(b, c)) == gf_add(gf_mul(a, b), gf_mul(a, c)), "gf_mul distributive", 0);
 
     // Division: a / a == 1
     TEST_ASSERT(gf_div(0xAB, 0xAB) == 0x01, "gf_div self is 1", 0);
@@ -155,32 +157,26 @@ static int test_gf256(void) {
 static int test_crc(void) {
     printf("\n=== CRC-CCITT ===\n");
 
-    // NULL / empty edge cases
-    TEST_ASSERT(CRC(NULL, 10) == 0xFFFF, "CRC(NULL) returns 0xFFFF", 0);
-    TEST_ASSERT(CRC((unsigned char*)"A", 0) == 0xFFFF, "CRC(len=0) returns 0xFFFF", 0);
-
-    // Known AX.25 test vector: CRC of {0x00} is well-defined
-    // Build a simple known vector: "123456789" check value = 0x906E for CRC-CCITT/X-25
-    // (AX.25 uses CRC-16/IBM-SDLC which is the same as X-25)
+    // Known AX.25 test vector
     // Check value for "123456789" in CRC-16/X-25 = 0x906E
-    uint8_t test_str[] = {'1','2','3','4','5','6','7','8','9'};
-    uint16_t crc_val = CRC(test_str, 9);
+    uint8_t test_str[] = { '1', '2', '3', '4', '5', '6', '7', '8', '9' };
+    uint16_t crc_val = hal_crc16_buf(test_str, 9);
     printf("  [DBG] CRC('123456789') = 0x%04X (expected 0x906E)\n", crc_val);
     TEST_ASSERT(crc_val == 0x906E, "CRC('123456789') == 0x906E", crc_val);
 
-    // Round-trip: calculate CRC, append as [lo, hi], verify
-    uint8_t frame[16] = {0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x00};
+    // Round-trip: calculate CRC, append as [lo, hi], verify via 0x0F47 residual
+    uint8_t frame[16] = { 0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x00 };
     size_t data_len = 4;
-    uint16_t fcs = CRC(frame, data_len);
-    frame[data_len]     = (uint8_t)(fcs & 0xFF);
-    frame[data_len + 1] = (uint8_t)((fcs >> 8) & 0xFF);
-    printf("  [DBG] FCS=0x%04X appended as [%02X %02X]\n",
-           fcs, frame[data_len], frame[data_len+1]);
-    TEST_ASSERT(CRC_verify(frame, data_len + 2), "CRC_verify round-trip", fcs);
+    uint16_t fcs = hal_crc16_buf(frame, (uint16_t) data_len);
+    frame[data_len] = (uint8_t) (fcs & 0xFF);
+    frame[data_len + 1] = (uint8_t) ((fcs >> 8) & 0xFF);
+    printf("  [DBG] FCS=0x%04X appended as [%02X %02X]\n", fcs, frame[data_len], frame[data_len + 1]);
+    // CRC_verify replaced: hal_crc16_buf over data+FCS must yield residual 0x0F47
+    TEST_ASSERT(hal_crc16_buf(frame, (uint16_t )(data_len + 2)) == 0x0F47u, "CRC_verify round-trip", fcs);
 
     // Corrupt one byte and verify fails
     frame[0] ^= 0xFF;
-    TEST_ASSERT(!CRC_verify(frame, data_len + 2), "CRC_verify detects corruption", 0);
+    TEST_ASSERT(hal_crc16_buf(frame, (uint16_t )(data_len + 2)) != 0x0F47u, "CRC_verify detects corruption", 0);
 
     return 0;
 }
@@ -194,8 +190,7 @@ static int test_sixbit(void) {
     // Single character encode/decode round-trips
     uint8_t out;
     TEST_ASSERT(il2p_sixbit_encode_char('A', &out), "encode 'A'", 0);
-    printf("  [DBG] 'A'(0x41) -> sixbit 0x%02X, decode -> 0x%02X ('%c')\n",
-           out, il2p_sixbit_decode_char(out), il2p_sixbit_decode_char(out));
+    printf("  [DBG] 'A'(0x41) -> sixbit 0x%02X, decode -> 0x%02X ('%c')\n", out, il2p_sixbit_decode_char(out), il2p_sixbit_decode_char(out));
     TEST_ASSERT(il2p_sixbit_decode_char(out) == 'A', "decode 'A'", 0);
 
     TEST_ASSERT(il2p_sixbit_encode_char('0', &out), "encode '0'", 0);
@@ -210,17 +205,15 @@ static int test_sixbit(void) {
     TEST_ASSERT(!il2p_sixbit_encode_char(0x60, &out), "reject 0x60 (lowercase)", 0);
 
     // Callsign round-trips
-    struct { const char *call; bool expect_ok; } calls[] = {
-        { "W1AW  ", true  },
-        { "VE3XYZ", true  },
-        { "N0CALL", true  },
-        { "KA1ABC", true  },
-        { "      ", true  }, // all spaces
-        { "ab1cde", false }, // lowercase -- not SIXBIT-encodable
-        { "W1\x80Z  ", false }, // non-ASCII character
-    };
+    struct {
+        const char *call;
+        bool expect_ok;
+    } calls[] = { { "W1AW  ", true }, { "VE3XYZ", true }, { "N0CALL", true }, { "KA1ABC", true }, { "      ", true },  // all spaces
+            { "ab1cde", false },  // lowercase -- not SIXBIT-encodable
+            { "W1\x80Z  ", false },  // non-ASCII character
+            };
 
-    for (size_t i = 0; i < sizeof(calls)/sizeof(calls[0]); i++) {
+    for (size_t i = 0; i < sizeof(calls) / sizeof(calls[0]); i++) {
         uint8_t sb[6];
         bool ok = il2p_sixbit_encode_callsign(calls[i].call, sb);
         printf("  [DBG] encode_callsign(\"%s\") -> %s\n", calls[i].call, ok ? "OK" : "FAIL");
@@ -244,8 +237,10 @@ static int test_sixbit(void) {
 
     // NULL safety
     // use explicit variable instead of compound literal for C99 portability
-    { uint8_t tmp6[6] = {0};
-      TEST_ASSERT(!il2p_sixbit_encode_callsign(NULL, tmp6), "NULL callsign rejected", 0); }
+    {
+        uint8_t tmp6[6] = { 0 };
+        TEST_ASSERT(!il2p_sixbit_encode_callsign(NULL, tmp6), "NULL callsign rejected", 0);
+    }
     TEST_ASSERT(!il2p_sixbit_encode_callsign("W1AW  ", NULL), "NULL output rejected", 0);
 
     return 0;
@@ -259,9 +254,10 @@ static int test_rs(void) {
 
     // --- Header RS block: 13 data + 2 parity ---
     {
-        uint8_t block[IL2P_RS_HDR_DATA + IL2P_RS_HDR_PARITY + 1]; // +1 safety
+        uint8_t block[IL2P_RS_HDR_DATA + IL2P_RS_HDR_PARITY + 1];  // +1 safety
         uint8_t orig[IL2P_RS_HDR_DATA];
-        for (uint8_t i = 0; i < IL2P_RS_HDR_DATA; i++) orig[i] = (uint8_t)(0xA0 + i);
+        for (uint8_t i = 0; i < IL2P_RS_HDR_DATA; i++)
+            orig[i] = (uint8_t) (0xA0 + i);
         memcpy(block, orig, IL2P_RS_HDR_DATA);
         print_buf("RS header data in", block, IL2P_RS_HDR_DATA);
 
@@ -279,13 +275,11 @@ static int test_rs(void) {
         uint8_t block_err[IL2P_RS_HDR_DATA + IL2P_RS_HDR_PARITY];
         memcpy(block_err, block, sizeof(block_err));
         block_err[3] ^= 0xFF;
-        printf("  [DBG] Injected error at byte 3: 0x%02X -> 0x%02X\n",
-               block[3], block_err[3]);
+        printf("  [DBG] Injected error at byte 3: 0x%02X -> 0x%02X\n", block[3], block_err[3]);
         int8_t corr1 = il2p_rs_decode(block_err, IL2P_RS_HDR_DATA, IL2P_RS_HDR_PARITY);
         printf("  [DBG] RS decode corrections (1 error): %d\n", corr1);
         TEST_ASSERT(corr1 == 1, "RS header corrects 1 error", corr1);
-        TEST_ASSERT(memcmp(block_err, orig, IL2P_RS_HDR_DATA) == 0,
-                    "RS header data restored after 1 error", 0);
+        TEST_ASSERT(memcmp(block_err, orig, IL2P_RS_HDR_DATA) == 0, "RS header data restored after 1 error", 0);
 
         // Introduce 2 errors -- exceeds t=1, should fail
         uint8_t block_err2[IL2P_RS_HDR_DATA + IL2P_RS_HDR_PARITY];
@@ -302,7 +296,8 @@ static int test_rs(void) {
         uint8_t data_len = 50;
         uint8_t block[IL2P_RS_PAY_MAX_DATA + IL2P_RS_PAY_PARITY];
         uint8_t orig[IL2P_RS_PAY_MAX_DATA];
-        for (uint8_t i = 0; i < data_len; i++) orig[i] = (uint8_t)(i * 7 + 13);
+        for (uint8_t i = 0; i < data_len; i++)
+            orig[i] = (uint8_t) (i * 7 + 13);
         memcpy(block, orig, data_len);
 
         bool enc_ok = il2p_rs_encode(block, data_len, IL2P_RS_PAY_PARITY);
@@ -320,10 +315,12 @@ static int test_rs(void) {
         // Re-encode fresh
         memcpy(block8, orig, data_len);
         il2p_rs_encode(block8, data_len, IL2P_RS_PAY_PARITY);
-        uint8_t err_positions[8] = {0, 5, 10, 15, 20, 25, 30, 35};
-        for (int i = 0; i < 8; i++) block8[err_positions[i]] ^= 0xAA;
+        uint8_t err_positions[8] = { 0, 5, 10, 15, 20, 25, 30, 35 };
+        for (int i = 0; i < 8; i++)
+            block8[err_positions[i]] ^= 0xAA;
         printf("  [DBG] Injected 8 errors at positions: ");
-        for (int i = 0; i < 8; i++) printf("%u ", err_positions[i]);
+        for (int i = 0; i < 8; i++)
+            printf("%u ", err_positions[i]);
         printf("\n");
         int8_t c8 = il2p_rs_decode(block8, data_len, IL2P_RS_PAY_PARITY);
         printf("  [DBG] RS payload decode (8 errors): %d\n", c8);
@@ -334,7 +331,8 @@ static int test_rs(void) {
         uint8_t block9[IL2P_RS_PAY_MAX_DATA + IL2P_RS_PAY_PARITY];
         memcpy(block9, orig, data_len);
         il2p_rs_encode(block9, data_len, IL2P_RS_PAY_PARITY);
-        for (int i = 0; i < 9; i++) block9[i] ^= 0x55;
+        for (int i = 0; i < 9; i++)
+            block9[i] ^= 0x55;
         int8_t c9 = il2p_rs_decode(block9, data_len, IL2P_RS_PAY_PARITY);
         printf("  [DBG] RS payload decode result (9 errors, t=8): %d (expect -1)\n", c9);
         TEST_ASSERT(c9 == -1, "RS payload fails on 9 errors (t=8)", c9);
@@ -343,8 +341,8 @@ static int test_rs(void) {
         uint8_t blkp[IL2P_RS_PAY_MAX_DATA + IL2P_RS_PAY_PARITY];
         memcpy(blkp, orig, data_len);
         il2p_rs_encode(blkp, data_len, IL2P_RS_PAY_PARITY);
-        blkp[data_len + 0] ^= 0xFF; // corrupt first parity byte
-        blkp[data_len + 1] ^= 0xFF; // corrupt second parity byte
+        blkp[data_len + 0] ^= 0xFF;  // corrupt first parity byte
+        blkp[data_len + 1] ^= 0xFF;  // corrupt second parity byte
         int8_t cp = il2p_rs_decode(blkp, data_len, IL2P_RS_PAY_PARITY);
         printf("  [DBG] RS payload decode (2 parity errors): %d\n", cp);
         TEST_ASSERT(cp == 2, "RS corrects errors in parity bytes", cp);
@@ -355,7 +353,8 @@ static int test_rs(void) {
     {
         uint8_t block[IL2P_RS_PAY_MAX_DATA + IL2P_RS_PAY_PARITY];
         uint8_t orig[IL2P_RS_PAY_MAX_DATA];
-        for (int i = 0; i < IL2P_RS_PAY_MAX_DATA; i++) orig[i] = (uint8_t)(i ^ 0x5A);
+        for (int i = 0; i < IL2P_RS_PAY_MAX_DATA; i++)
+            orig[i] = (uint8_t) (i ^ 0x5A);
         memcpy(block, orig, IL2P_RS_PAY_MAX_DATA);
         bool enc = il2p_rs_encode(block, IL2P_RS_PAY_MAX_DATA, IL2P_RS_PAY_PARITY);
         TEST_ASSERT(enc, "RS max block encode", 0);
@@ -388,27 +387,35 @@ static int test_lfsr(void) {
         scrambled[i] = il2p_lfsr_step_byte(&lfsr, zeros[i]);
     }
     bool all_zero = true;
-    for (size_t i = 0; i < 16; i++) if (scrambled[i] != 0) { all_zero = false; break; }
+    for (size_t i = 0; i < 16; i++)
+        if (scrambled[i] != 0) {
+            all_zero = false;
+            break;
+        }
     printf("  [DBG] scrambled all-zeros: ");
-    for (int i = 0; i < 8; i++) printf("%02X ", scrambled[i]);
+    for (int i = 0; i < 8; i++)
+        printf("%02X ", scrambled[i]);
     printf("...\n");
     TEST_ASSERT(!all_zero, "LFSR scrambles zeros to non-zero", 0);
 
     // Round-trip: scramble then descramble (same LFSR XOR = inverse)
     uint8_t data[32];
-    for (size_t i = 0; i < sizeof(data); i++) data[i] = (uint8_t)(i * 37 + 0xAB);
+    for (size_t i = 0; i < sizeof(data); i++)
+        data[i] = (uint8_t) (i * 37 + 0xAB);
     uint8_t orig[32];
     memcpy(orig, data, sizeof(data));
 
     // Scramble
     il2p_lfsr_reset(&lfsr);
     uint8_t enc[32];
-    for (size_t i = 0; i < 32; i++) enc[i] = il2p_lfsr_step_byte(&lfsr, data[i]);
+    for (size_t i = 0; i < 32; i++)
+        enc[i] = il2p_lfsr_step_byte(&lfsr, data[i]);
 
     // Descramble (reset LFSR same initial state, XOR again)
     il2p_lfsr_reset(&lfsr);
     uint8_t dec[32];
-    for (size_t i = 0; i < 32; i++) dec[i] = il2p_lfsr_step_byte(&lfsr, enc[i]);
+    for (size_t i = 0; i < 32; i++)
+        dec[i] = il2p_lfsr_step_byte(&lfsr, enc[i]);
 
     print_buf("LFSR original", orig, 16);
     print_buf("LFSR scrambled", enc, 16);
@@ -417,20 +424,24 @@ static int test_lfsr(void) {
 
     // Test using the convenience functions
     uint8_t buf1[20], buf2[20];
-    for (size_t i = 0; i < 20; i++) buf1[i] = buf2[i] = (uint8_t)(0x55 ^ i);
+    for (size_t i = 0; i < 20; i++)
+        buf1[i] = buf2[i] = (uint8_t) (0x55 ^ i);
     il2p_lfsr_scramble(&lfsr, buf1, 20);
     il2p_lfsr_descramble(&lfsr, buf1, 20);
     TEST_ASSERT(memcmp(buf1, buf2, 20) == 0, "LFSR scramble+descramble convenience round-trip", 0);
 
     // Different blocks get independent LFSR state (reset between blocks)
     uint8_t blkA[8], blkB[8];
-    for (size_t i = 0; i < 8; i++) blkA[i] = blkB[i] = (uint8_t)i;
+    for (size_t i = 0; i < 8; i++)
+        blkA[i] = blkB[i] = (uint8_t) i;
     // Block A
     il2p_lfsr_reset(&lfsr);
-    for (size_t i = 0; i < 8; i++) blkA[i] = il2p_lfsr_step_byte(&lfsr, blkA[i]);
+    for (size_t i = 0; i < 8; i++)
+        blkA[i] = il2p_lfsr_step_byte(&lfsr, blkA[i]);
     // Block B (identical input, reset LFSR)
     il2p_lfsr_reset(&lfsr);
-    for (size_t i = 0; i < 8; i++) blkB[i] = il2p_lfsr_step_byte(&lfsr, blkB[i]);
+    for (size_t i = 0; i < 8; i++)
+        blkB[i] = il2p_lfsr_step_byte(&lfsr, blkB[i]);
     // They must produce identical output since LFSR was reset
     TEST_ASSERT(memcmp(blkA, blkB, 8) == 0, "LFSR reset gives identical output for same input", 0);
 
@@ -453,7 +464,7 @@ static int test_sync(void) {
     printf("\n=== Sync word ===\n");
 
     // Write and verify bytes
-    uint8_t buf[8] = {0};
+    uint8_t buf[8] = { 0 };
     il2p_sync_write(buf);
     printf("  [DBG] sync bytes: %02X %02X %02X\n", buf[0], buf[1], buf[2]);
     TEST_ASSERT(buf[0] == 0xF1, "sync byte 0 = 0xF1", buf[0]);
@@ -462,14 +473,12 @@ static int test_sync(void) {
     TEST_ASSERT(buf[3] == 0x00, "sync no overflow", buf[3]);
 
     // Match: exact sync word (0 bit errors)
-    TEST_ASSERT(il2p_sync_bit_errors(IL2P_SYNC_WORD) == 0,
-                "sync match 0 errors", 0);
+    TEST_ASSERT(il2p_sync_bit_errors(IL2P_SYNC_WORD) == 0, "sync match 0 errors", 0);
     TEST_ASSERT(il2p_sync_match(IL2P_SYNC_WORD), "sync_match exact", 0);
 
     // 1-bit error (should still match per IL2P_SYNC_MAX_ERRORS=1)
     uint32_t one_err = IL2P_SYNC_WORD ^ 0x000001UL;
-    printf("  [DBG] 1-bit flip candidate: 0x%06lX, errors=%u\n",
-           (unsigned long)one_err, il2p_sync_bit_errors(one_err));
+    printf("  [DBG] 1-bit flip candidate: 0x%06lX, errors=%u\n", (unsigned long) one_err, il2p_sync_bit_errors(one_err));
     TEST_ASSERT(il2p_sync_bit_errors(one_err) == 1, "1-bit error count == 1", 0);
     TEST_ASSERT(il2p_sync_match(one_err), "sync_match 1 bit error", 0);
 
@@ -484,32 +493,34 @@ static int test_sync(void) {
     TEST_ASSERT(!il2p_sync_match(0xFFFFFFUL), "sync_match rejects all ones", 0);
 
     // Search: exact match at byte 0
-    uint8_t frame[32] = {0};
+    uint8_t frame[32] = { 0 };
     il2p_sync_write(frame);
-    size_t byte_off; uint8_t bit_off;
+    size_t byte_off;
+    uint8_t bit_off;
     bool found = il2p_sync_search(frame, 32, &byte_off, &bit_off);
-    printf("  [DBG] sync search (at offset 0): found=%d byte_off=%zu bit_off=%u\n",
-           found, byte_off, bit_off);
+    printf("  [DBG] sync search (at offset 0): found=%d byte_off=%zu bit_off=%u\n", found, byte_off, bit_off);
     TEST_ASSERT(found, "sync search finds word at offset 0", 0);
-    TEST_ASSERT(byte_off == 0, "sync search byte_off == 0", (int)byte_off);
-    TEST_ASSERT(bit_off  == 0, "sync search bit_off == 0", bit_off);
+    TEST_ASSERT(byte_off == 0, "sync search byte_off == 0", (int )byte_off);
+    TEST_ASSERT(bit_off == 0, "sync search bit_off == 0", bit_off);
 
     // Search: sync word at a non-zero offset
-    uint8_t frame2[32] = {0};
-    frame2[5] = 0xF1; frame2[6] = 0x5E; frame2[7] = 0x48;
+    uint8_t frame2[32] = { 0 };
+    frame2[5] = 0xF1;
+    frame2[6] = 0x5E;
+    frame2[7] = 0x48;
     found = il2p_sync_search(frame2, 32, &byte_off, &bit_off);
-    printf("  [DBG] sync search (at offset 5): found=%d byte_off=%zu bit_off=%u\n",
-           found, byte_off, bit_off);
+    printf("  [DBG] sync search (at offset 5): found=%d byte_off=%zu bit_off=%u\n", found, byte_off, bit_off);
     TEST_ASSERT(found, "sync search finds word at offset 5", 0);
-    TEST_ASSERT(byte_off == 5, "sync search byte_off == 5", (int)byte_off);
-    TEST_ASSERT(bit_off  == 0, "sync search bit_off == 0 (byte-aligned)", bit_off);
+    TEST_ASSERT(byte_off == 5, "sync search byte_off == 5", (int )byte_off);
+    TEST_ASSERT(bit_off == 0, "sync search bit_off == 0 (byte-aligned)", bit_off);
 
     // Search: 1-bit corrupt sync word should still be found
-    uint8_t frame3[32] = {0xFF, 0x00}; // noise prefix
-    frame3[2] = 0xF1; frame3[3] = 0x5E; frame3[4] = 0x49; // last byte: 0x48^0x01
+    uint8_t frame3[32] = { 0xFF, 0x00 };  // noise prefix
+    frame3[2] = 0xF1;
+    frame3[3] = 0x5E;
+    frame3[4] = 0x49;  // last byte: 0x48^0x01
     found = il2p_sync_search(frame3, 32, &byte_off, &bit_off);
-    printf("  [DBG] sync search (1-bit error): found=%d byte_off=%zu bit_off=%u\n",
-           found, byte_off, bit_off);
+    printf("  [DBG] sync search (1-bit error): found=%d byte_off=%zu bit_off=%u\n", found, byte_off, bit_off);
     TEST_ASSERT(found, "sync search finds word with 1-bit error", 0);
 
     // Search: no sync word in buffer
@@ -538,19 +549,17 @@ static int test_header(void) {
     // Build a Type 1 header manually
     il2p_header_t hdr_in, hdr_out;
     memset(&hdr_in, 0, sizeof(hdr_in));
-    hdr_in.hdr_type          = IL2P_HDR_TYPE_1_TRANSLATED;
+    hdr_in.hdr_type = IL2P_HDR_TYPE_1_TRANSLATED;
     hdr_in.payload_byte_count = 42;
-    hdr_in.pid               = IL2P_PID_NO_L3;
-    hdr_in.control           = 0x7F;
-    hdr_in.ui                = 0;
-    hdr_in.dest_ssid         = 3;
-    hdr_in.src_ssid          = 0;
+    hdr_in.pid = IL2P_PID_NO_L3;
+    hdr_in.control = 0x7F;
+    hdr_in.ui = 0;
+    hdr_in.dest_ssid = 3;
+    hdr_in.src_ssid = 0;
 
     // SIXBIT-encode callsigns
-    TEST_ASSERT(il2p_sixbit_encode_callsign("W1AW  ", hdr_in.dest_callsign),
-                "encode dest callsign", 0);
-    TEST_ASSERT(il2p_sixbit_encode_callsign("VE3TKI", hdr_in.src_callsign),
-                "encode src callsign", 0);
+    TEST_ASSERT(il2p_sixbit_encode_callsign("W1AW  ", hdr_in.dest_callsign), "encode dest callsign", 0);
+    TEST_ASSERT(il2p_sixbit_encode_callsign("VE3TKI", hdr_in.src_callsign), "encode src callsign", 0);
 
     // Encode header to 13 bytes
     uint8_t raw_hdr[IL2P_HEADER_SIZE];
@@ -564,48 +573,43 @@ static int test_header(void) {
     TEST_ASSERT(dec_ok, "header decode returns true", 0);
 
     printf("  [DBG] hdr_type: in=%u out=%u\n", hdr_in.hdr_type, hdr_out.hdr_type);
-    printf("  [DBG] payload_byte_count: in=%u out=%u\n",
-           hdr_in.payload_byte_count, hdr_out.payload_byte_count);
+    printf("  [DBG] payload_byte_count: in=%u out=%u\n", hdr_in.payload_byte_count, hdr_out.payload_byte_count);
     printf("  [DBG] pid: in=%u out=%u\n", hdr_in.pid, hdr_out.pid);
     printf("  [DBG] control: in=0x%02X out=0x%02X\n", hdr_in.control, hdr_out.control);
     printf("  [DBG] dest_ssid: in=%u out=%u\n", hdr_in.dest_ssid, hdr_out.dest_ssid);
     printf("  [DBG] src_ssid: in=%u out=%u\n", hdr_in.src_ssid, hdr_out.src_ssid);
 
     TEST_ASSERT(hdr_out.hdr_type == hdr_in.hdr_type, "header hdr_type round-trip", hdr_out.hdr_type);
-    TEST_ASSERT(hdr_out.payload_byte_count == hdr_in.payload_byte_count,
-                "header payload_byte_count round-trip", hdr_out.payload_byte_count);
+    TEST_ASSERT(hdr_out.payload_byte_count == hdr_in.payload_byte_count, "header payload_byte_count round-trip", hdr_out.payload_byte_count);
     TEST_ASSERT(hdr_out.pid == hdr_in.pid, "header pid round-trip", hdr_out.pid);
     TEST_ASSERT(hdr_out.control == hdr_in.control, "header control round-trip", hdr_out.control);
     TEST_ASSERT(hdr_out.dest_ssid == hdr_in.dest_ssid, "header dest_ssid round-trip", hdr_out.dest_ssid);
     TEST_ASSERT(hdr_out.src_ssid == hdr_in.src_ssid, "header src_ssid round-trip", hdr_out.src_ssid);
     TEST_ASSERT(hdr_out.ui == hdr_in.ui, "header ui round-trip", hdr_out.ui);
-    TEST_ASSERT(memcmp(hdr_out.dest_callsign, hdr_in.dest_callsign, 6) == 0,
-                "header dest_callsign round-trip", 0);
-    TEST_ASSERT(memcmp(hdr_out.src_callsign, hdr_in.src_callsign, 6) == 0,
-                "header src_callsign round-trip", 0);
+    TEST_ASSERT(memcmp(hdr_out.dest_callsign, hdr_in.dest_callsign, 6) == 0, "header dest_callsign round-trip", 0);
+    TEST_ASSERT(memcmp(hdr_out.src_callsign, hdr_in.src_callsign, 6) == 0, "header src_callsign round-trip", 0);
 
     // Type 0 header: all address fields should be zero
     il2p_header_t hdr_t0_in, hdr_t0_out;
     memset(&hdr_t0_in, 0, sizeof(hdr_t0_in));
-    hdr_t0_in.hdr_type           = IL2P_HDR_TYPE_0_TRANSPARENT;
-    hdr_t0_in.payload_byte_count = 1023; // Max payload
+    hdr_t0_in.hdr_type = IL2P_HDR_TYPE_0_TRANSPARENT;
+    hdr_t0_in.payload_byte_count = 1023;  // Max payload
     uint8_t raw_t0[IL2P_HEADER_SIZE];
     il2p_header_encode(&hdr_t0_in, raw_t0);
     il2p_header_decode(raw_t0, &hdr_t0_out);
-    printf("  [DBG] Type 0: payload_byte_count in=%u out=%u\n",
-           hdr_t0_in.payload_byte_count, hdr_t0_out.payload_byte_count);
-    TEST_ASSERT(hdr_t0_out.hdr_type == IL2P_HDR_TYPE_0_TRANSPARENT,
-                "header Type 0 round-trip", hdr_t0_out.hdr_type);
-    TEST_ASSERT(hdr_t0_out.payload_byte_count == 1023,
-                "header max payload_byte_count round-trip", hdr_t0_out.payload_byte_count);
+    printf("  [DBG] Type 0: payload_byte_count in=%u out=%u\n", hdr_t0_in.payload_byte_count, hdr_t0_out.payload_byte_count);
+    TEST_ASSERT(hdr_t0_out.hdr_type == IL2P_HDR_TYPE_0_TRANSPARENT, "header Type 0 round-trip", hdr_t0_out.hdr_type);
+    TEST_ASSERT(hdr_t0_out.payload_byte_count == 1023, "header max payload_byte_count round-trip", hdr_t0_out.payload_byte_count);
 
     // Zero payload
-    il2p_header_t hdr_z; memset(&hdr_z, 0, sizeof(hdr_z));
+    il2p_header_t hdr_z;
+    memset(&hdr_z, 0, sizeof(hdr_z));
     hdr_z.hdr_type = IL2P_HDR_TYPE_0_TRANSPARENT;
     hdr_z.payload_byte_count = 0;
     uint8_t raw_z[IL2P_HEADER_SIZE];
     il2p_header_encode(&hdr_z, raw_z);
-    il2p_header_t hdr_z_out; memset(&hdr_z_out, 0xFF, sizeof(hdr_z_out));
+    il2p_header_t hdr_z_out;
+    memset(&hdr_z_out, 0xFF, sizeof(hdr_z_out));
     il2p_header_decode(raw_z, &hdr_z_out);
     TEST_ASSERT(hdr_z_out.payload_byte_count == 0, "header zero payload count round-trip", 0);
 
@@ -615,29 +619,22 @@ static int test_header(void) {
 
     // PID mapping round-trip
     {
-        struct { uint8_t ax25; uint8_t il2p; } pid_map[] = {
-            { 0xF0, IL2P_PID_NO_L3    },
-            { 0xCC, IL2P_PID_ARPA_IP  },
-            { 0xCD, IL2P_PID_ARPA_ARP },
-            { 0x01, IL2P_PID_X25_PLP  },
-            { 0x06, IL2P_PID_COMP_TCP },
-            { 0x07, IL2P_PID_UNCOMP_TCP},
-            { 0x08, IL2P_PID_SEGMENT  },
-        };
-        for (size_t i = 0; i < sizeof(pid_map)/sizeof(pid_map[0]); i++) {
+        struct {
+            uint8_t ax25;
+            uint8_t il2p;
+        } pid_map[] = { { 0xF0, IL2P_PID_NO_L3 }, { 0xCC, IL2P_PID_ARPA_IP }, { 0xCD, IL2P_PID_ARPA_ARP }, { 0x01, IL2P_PID_X25_PLP },
+                { 0x06, IL2P_PID_COMP_TCP }, { 0x07, IL2P_PID_UNCOMP_TCP }, { 0x08, IL2P_PID_SEGMENT }, };
+        for (size_t i = 0; i < sizeof(pid_map) / sizeof(pid_map[0]); i++) {
             uint8_t il2p = il2p_pid_from_ax25(pid_map[i].ax25, false, false);
             uint8_t ax25 = il2p_pid_to_ax25(il2p);
-            printf("  [DBG] PID ax25=0x%02X -> il2p=0x%02X -> ax25=0x%02X\n",
-                   pid_map[i].ax25, il2p, ax25);
+            printf("  [DBG] PID ax25=0x%02X -> il2p=0x%02X -> ax25=0x%02X\n", pid_map[i].ax25, il2p, ax25);
             TEST_ASSERT(il2p == pid_map[i].il2p, "PID ax25->il2p mapping", il2p);
             TEST_ASSERT(ax25 == pid_map[i].ax25, "PID il2p->ax25 mapping", ax25);
         }
         // S-frame PID
-        TEST_ASSERT(il2p_pid_from_ax25(0x00, true, false) == IL2P_PID_S_FRAME,
-                    "S-frame PID mapping", 0);
+        TEST_ASSERT(il2p_pid_from_ax25(0x00, true, false) == IL2P_PID_S_FRAME, "S-frame PID mapping", 0);
         // U-frame PID
-        TEST_ASSERT(il2p_pid_from_ax25(0x00, false, true) == IL2P_PID_U_FRAME,
-                    "U-frame PID mapping", 0);
+        TEST_ASSERT(il2p_pid_from_ax25(0x00, false, true) == IL2P_PID_U_FRAME, "U-frame PID mapping", 0);
         // Unknown PID
         uint8_t unk = il2p_pid_from_ax25(0x99, false, false);
         printf("  [DBG] Unknown PID 0x99 -> il2p=0x%02X (expect 0xFF)\n", unk);
@@ -655,31 +652,27 @@ static int test_payload_blocks(void) {
 
     struct {
         uint16_t payload;
-        uint16_t exp_num; // ceil(payload / 239)
-    } cases[] = {
-        { 1,    1 },   // 1 byte -> 1 block
-        { 100,  1 },   // 100 bytes -> 1 block
-        { 239,  1 },   // exactly 1 max block
-        { 240,  2 },   // ceil(240/239) = 2
-        { 241,  2 },   // ceil(241/239) = 2
-        { 478,  2 },   // ceil(478/239) = 2 exactly
-        { 479,  3 },   // ceil(479/239) = 3
-        { 1023, 5 },   // ceil(1023/239) = 5
-    };
+        uint16_t exp_num;  // ceil(payload / 239)
+    } cases[] = { { 1, 1 },   // 1 byte -> 1 block
+            { 100, 1 },   // 100 bytes -> 1 block
+            { 239, 1 },   // exactly 1 max block
+            { 240, 2 },   // ceil(240/239) = 2
+            { 241, 2 },   // ceil(241/239) = 2
+            { 478, 2 },   // ceil(478/239) = 2 exactly
+            { 479, 3 },   // ceil(479/239) = 3
+            { 1023, 5 },   // ceil(1023/239) = 5
+            };
 
-    for (size_t i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         uint16_t num, lc, sc;
-        uint8_t  ls, ss;
+        uint8_t ls, ss;
         il2p_payload_block_sizes(cases[i].payload, &num, &ls, &ss, &lc, &sc);
-        printf("  [DBG] payload=%4u -> num=%u large(%u x %u) small(%u x %u)\n",
-               cases[i].payload, num, lc, ls, sc, ss);
+        printf("  [DBG] payload=%4u -> num=%u large(%u x %u) small(%u x %u)\n", cases[i].payload, num, lc, ls, sc, ss);
         // Verify total bytes matches
-        uint32_t total = (uint32_t)lc * (uint32_t)ls + (uint32_t)sc * (uint32_t)ss;
+        uint32_t total = (uint32_t) lc * (uint32_t) ls + (uint32_t) sc * (uint32_t) ss;
         printf("         total bytes: %u (expect %u)\n", total, cases[i].payload);
-        TEST_ASSERT(num == cases[i].exp_num,
-                    "block count", (int)(num - cases[i].exp_num));
-        TEST_ASSERT(total == cases[i].payload,
-                    "block sizes sum to payload length", (int)(total - cases[i].payload));
+        TEST_ASSERT(num == cases[i].exp_num, "block count", (int )(num - cases[i].exp_num));
+        TEST_ASSERT(total == cases[i].payload, "block sizes sum to payload length", (int )(total - cases[i].payload));
         // large >= small
         if (num > 0) {
             TEST_ASSERT(ls >= ss, "large_block_size >= small_block_size", 0);
@@ -687,7 +680,9 @@ static int test_payload_blocks(void) {
     }
 
     // Zero payload
-    uint16_t num; uint8_t ls, ss; uint16_t lc, sc;
+    uint16_t num;
+    uint8_t ls, ss;
+    uint16_t lc, sc;
     il2p_payload_block_sizes(0, &num, &ls, &ss, &lc, &sc);
     TEST_ASSERT(num == 0, "zero payload -> 0 blocks", 0);
 
@@ -706,26 +701,24 @@ static int test_header_from_ax25(void) {
         memset(&iframe, 0, sizeof(iframe));
         iframe.base.type = AX25_FRAME_INFORMATION_8BIT;
         fill_address(&iframe.base.header.destination, "W1AW  ", 0);
-        fill_address(&iframe.base.header.source,      "VE3TKI", 1);
+        fill_address(&iframe.base.header.source, "VE3TKI", 1);
         iframe.base.header.repeaters.num_repeaters = 0;
-        iframe.pid = 0xF0; // No Layer 3
-        iframe.ns  = 3;
-        iframe.nr  = 5;
-        iframe.pf  = 0;
-        uint8_t payload_data[] = {0x01, 0x02, 0x03};
-        iframe.payload     = payload_data;
+        iframe.pid = 0xF0;  // No Layer 3
+        iframe.ns = 3;
+        iframe.nr = 5;
+        iframe.pf = 0;
+        uint8_t payload_data[] = { 0x01, 0x02, 0x03 };
+        iframe.payload = payload_data;
         iframe.payload_len = 3;
 
         il2p_header_t hdr;
-        bool ok = il2p_header_from_ax25((const ax25_frame_t*)&iframe, 3, &hdr);
-        printf("  [DBG] I-frame from_ax25: ok=%d hdr_type=%u pid=0x%02X ctrl=0x%02X\n",
-               ok, hdr.hdr_type, hdr.pid, hdr.control);
+        bool ok = il2p_header_from_ax25((const ax25_frame_t*) &iframe, 3, &hdr);
+        printf("  [DBG] I-frame from_ax25: ok=%d hdr_type=%u pid=0x%02X ctrl=0x%02X\n", ok, hdr.hdr_type, hdr.pid, hdr.control);
         TEST_ASSERT(ok, "I-frame header_from_ax25 returns true", 0);
-        TEST_ASSERT(hdr.hdr_type == IL2P_HDR_TYPE_1_TRANSLATED,
-                    "I-frame selects Type 1", hdr.hdr_type);
+        TEST_ASSERT(hdr.hdr_type == IL2P_HDR_TYPE_1_TRANSLATED, "I-frame selects Type 1", hdr.hdr_type);
         TEST_ASSERT(hdr.pid == IL2P_PID_NO_L3, "I-frame PID mapped to NO_L3", hdr.pid);
         // control: P/F=0, NR=5, NS=3 -> 0b0_101_011 = 0x2B
-        uint8_t exp_ctrl = (uint8_t)((0 << 6) | (5 << 3) | 3);
+        uint8_t exp_ctrl = (uint8_t) ((0 << 6) | (5 << 3) | 3);
         printf("  [DBG] expected control=0x%02X got=0x%02X\n", exp_ctrl, hdr.control);
         TEST_ASSERT(hdr.control == exp_ctrl, "I-frame control subfield", hdr.control);
         TEST_ASSERT(hdr.payload_byte_count == 3, "I-frame payload_byte_count", 0);
@@ -737,22 +730,20 @@ static int test_header_from_ax25(void) {
         memset(&sframe, 0, sizeof(sframe));
         sframe.base.type = AX25_FRAME_SUPERVISORY_RR_8BIT;
         fill_address(&sframe.base.header.destination, "W1AW  ", 0);
-        fill_address(&sframe.base.header.source,      "VE3TKI", 0);
+        fill_address(&sframe.base.header.source, "VE3TKI", 0);
         sframe.base.header.repeaters.num_repeaters = 0;
-        sframe.nr   = 2;
-        sframe.pf   = 1;
-        sframe.code = 0; // RR
+        sframe.nr = 2;
+        sframe.pf = 1;
+        sframe.code = 0;  // RR
 
         il2p_header_t hdr;
-        bool ok = il2p_header_from_ax25((const ax25_frame_t*)&sframe, 0, &hdr);
-        printf("  [DBG] S-frame RR from_ax25: ok=%d hdr_type=%u pid=0x%02X ctrl=0x%02X\n",
-               ok, hdr.hdr_type, hdr.pid, hdr.control);
+        bool ok = il2p_header_from_ax25((const ax25_frame_t*) &sframe, 0, &hdr);
+        printf("  [DBG] S-frame RR from_ax25: ok=%d hdr_type=%u pid=0x%02X ctrl=0x%02X\n", ok, hdr.hdr_type, hdr.pid, hdr.control);
         TEST_ASSERT(ok, "S-frame header_from_ax25 returns true", 0);
-        TEST_ASSERT(hdr.hdr_type == IL2P_HDR_TYPE_1_TRANSLATED,
-                    "S-frame selects Type 1", hdr.hdr_type);
+        TEST_ASSERT(hdr.hdr_type == IL2P_HDR_TYPE_1_TRANSLATED, "S-frame selects Type 1", hdr.hdr_type);
         TEST_ASSERT(hdr.pid == IL2P_PID_S_FRAME, "S-frame PID", hdr.pid);
         // control: NR=2, C=1 (pf), OPCODE=0 (RR) -> 0b010_1_00 = bits: (2<<3)|(1<<2)|0 = 0x14
-        uint8_t exp_ctrl = (uint8_t)((2 << 3) | (1 << 2) | 0);
+        uint8_t exp_ctrl = (uint8_t) ((2 << 3) | (1 << 2) | 0);
         printf("  [DBG] expected control=0x%02X got=0x%02X\n", exp_ctrl, hdr.control);
         TEST_ASSERT(hdr.control == exp_ctrl, "S-frame RR control subfield", hdr.control);
     }
@@ -763,18 +754,16 @@ static int test_header_from_ax25(void) {
         memset(&uframe, 0, sizeof(uframe));
         uframe.base.type = AX25_FRAME_UNNUMBERED_SABM;
         fill_address(&uframe.base.header.destination, "W1AW  ", 0);
-        fill_address(&uframe.base.header.source,      "VE3TKI", 0);
+        fill_address(&uframe.base.header.source, "VE3TKI", 0);
         uframe.base.header.repeaters.num_repeaters = 0;
         uframe.base.header.cr = 1;
         uframe.pf = 1;
 
         il2p_header_t hdr;
-        bool ok = il2p_header_from_ax25((const ax25_frame_t*)&uframe, 0, &hdr);
-        printf("  [DBG] SABM from_ax25: ok=%d hdr_type=%u pid=0x%02X ctrl=0x%02X\n",
-               ok, hdr.hdr_type, hdr.pid, hdr.control);
+        bool ok = il2p_header_from_ax25((const ax25_frame_t*) &uframe, 0, &hdr);
+        printf("  [DBG] SABM from_ax25: ok=%d hdr_type=%u pid=0x%02X ctrl=0x%02X\n", ok, hdr.hdr_type, hdr.pid, hdr.control);
         TEST_ASSERT(ok, "SABM header_from_ax25 returns true", 0);
-        TEST_ASSERT(hdr.hdr_type == IL2P_HDR_TYPE_1_TRANSLATED,
-                    "SABM selects Type 1", hdr.hdr_type);
+        TEST_ASSERT(hdr.hdr_type == IL2P_HDR_TYPE_1_TRANSLATED, "SABM selects Type 1", hdr.hdr_type);
         TEST_ASSERT(hdr.pid == IL2P_PID_U_FRAME, "SABM PID is U_FRAME", hdr.pid);
     }
 
@@ -784,16 +773,14 @@ static int test_header_from_ax25(void) {
         memset(&uframe, 0, sizeof(uframe));
         uframe.base.type = AX25_FRAME_UNNUMBERED_SABME;
         fill_address(&uframe.base.header.destination, "W1AW  ", 0);
-        fill_address(&uframe.base.header.source,      "VE3TKI", 0);
+        fill_address(&uframe.base.header.source, "VE3TKI", 0);
         uframe.base.header.repeaters.num_repeaters = 0;
 
         il2p_header_t hdr;
-        bool ok = il2p_header_from_ax25((const ax25_frame_t*)&uframe, 0, &hdr);
-        printf("  [DBG] SABME from_ax25: ok=%d hdr_type=%u (expect Type 0)\n",
-               ok, hdr.hdr_type);
+        bool ok = il2p_header_from_ax25((const ax25_frame_t*) &uframe, 0, &hdr);
+        printf("  [DBG] SABME from_ax25: ok=%d hdr_type=%u (expect Type 0)\n", ok, hdr.hdr_type);
         TEST_ASSERT(ok, "SABME returns true", 0);
-        TEST_ASSERT(hdr.hdr_type == IL2P_HDR_TYPE_0_TRANSPARENT,
-                    "SABME forces Type 0", hdr.hdr_type);
+        TEST_ASSERT(hdr.hdr_type == IL2P_HDR_TYPE_0_TRANSPARENT, "SABME forces Type 0", hdr.hdr_type);
     }
 
     // --- Frame with repeaters forces Type 0 ---
@@ -802,7 +789,7 @@ static int test_header_from_ax25(void) {
         memset(&iframe, 0, sizeof(iframe));
         iframe.base.type = AX25_FRAME_INFORMATION_8BIT;
         fill_address(&iframe.base.header.destination, "W1AW  ", 0);
-        fill_address(&iframe.base.header.source,      "VE3TKI", 0);
+        fill_address(&iframe.base.header.source, "VE3TKI", 0);
         iframe.base.header.repeaters.num_repeaters = 1;
 
         // ax25_path_t uses 'repeaters[]' array (not 'addr[]') for the repeater addresses
@@ -810,12 +797,10 @@ static int test_header_from_ax25(void) {
         iframe.pid = 0xF0;
 
         il2p_header_t hdr;
-        bool ok = il2p_header_from_ax25((const ax25_frame_t*)&iframe, 10, &hdr);
-        printf("  [DBG] repeater frame from_ax25: ok=%d hdr_type=%u (expect Type 0)\n",
-               ok, hdr.hdr_type);
+        bool ok = il2p_header_from_ax25((const ax25_frame_t*) &iframe, 10, &hdr);
+        printf("  [DBG] repeater frame from_ax25: ok=%d hdr_type=%u (expect Type 0)\n", ok, hdr.hdr_type);
         TEST_ASSERT(ok, "repeater frame returns true", 0);
-        TEST_ASSERT(hdr.hdr_type == IL2P_HDR_TYPE_0_TRANSPARENT,
-                    "repeater frame forces Type 0", hdr.hdr_type);
+        TEST_ASSERT(hdr.hdr_type == IL2P_HDR_TYPE_0_TRANSPARENT, "repeater frame forces Type 0", hdr.hdr_type);
     }
 
     // --- UI frame ---
@@ -826,20 +811,18 @@ static int test_header_from_ax25(void) {
         // ax25_frame_t fields (type, header) are in .base.base, not .base.
         uiframe.base.base.type = AX25_FRAME_UNNUMBERED_INFORMATION;
         fill_address(&uiframe.base.base.header.destination, "W1AW  ", 0);
-        fill_address(&uiframe.base.base.header.source,      "VE3TKI", 0);
+        fill_address(&uiframe.base.base.header.source, "VE3TKI", 0);
         uiframe.base.base.header.repeaters.num_repeaters = 0;
         uiframe.pid = 0xF0;
-        uint8_t ui_data[] = {0xAA, 0xBB};
-        uiframe.payload     = ui_data;
+        uint8_t ui_data[] = { 0xAA, 0xBB };
+        uiframe.payload = ui_data;
         uiframe.payload_len = 2;
 
         il2p_header_t hdr;
-        bool ok = il2p_header_from_ax25((const ax25_frame_t*)&uiframe, 2, &hdr);
-        printf("  [DBG] UI frame from_ax25: ok=%d hdr_type=%u ui=%u pid=0x%02X\n",
-               ok, hdr.hdr_type, hdr.ui, hdr.pid);
+        bool ok = il2p_header_from_ax25((const ax25_frame_t*) &uiframe, 2, &hdr);
+        printf("  [DBG] UI frame from_ax25: ok=%d hdr_type=%u ui=%u pid=0x%02X\n", ok, hdr.hdr_type, hdr.ui, hdr.pid);
         TEST_ASSERT(ok, "UI frame header_from_ax25 returns true", 0);
-        TEST_ASSERT(hdr.hdr_type == IL2P_HDR_TYPE_1_TRANSLATED,
-                    "UI frame selects Type 1", hdr.hdr_type);
+        TEST_ASSERT(hdr.hdr_type == IL2P_HDR_TYPE_1_TRANSLATED, "UI frame selects Type 1", hdr.hdr_type);
         TEST_ASSERT(hdr.ui == 1, "UI frame sets ui=1", hdr.ui);
     }
 
@@ -854,7 +837,7 @@ static int test_il2p_roundtrip(void) {
 
     uint8_t il2p_buf[IL2P_MAX_FRAME_BYTES];
     uint8_t ax25_recovered[512];
-    size_t  il2p_len, ax25_len;
+    size_t il2p_len, ax25_len;
 
     // --- Type 1: I-frame with payload ---
     {
@@ -863,12 +846,12 @@ static int test_il2p_roundtrip(void) {
         memset(&iframe, 0, sizeof(iframe));
         iframe.base.type = AX25_FRAME_INFORMATION_8BIT;
         fill_address(&iframe.base.header.destination, "W1AW  ", 0);
-        fill_address(&iframe.base.header.source,      "VE3TKI", 1);
+        fill_address(&iframe.base.header.source, "VE3TKI", 1);
         iframe.base.header.repeaters.num_repeaters = 0;
         iframe.pid = 0xF0;
-        iframe.ns  = 1;
-        iframe.nr  = 2;
-        iframe.pf  = 0;
+        iframe.ns = 1;
+        iframe.nr = 2;
+        iframe.pf = 0;
 
         // Build a raw AX.25 I-frame byte sequence for the payload argument
         // AX.25 raw: [DEST 7B][SRC 7B][CTRL 1B][PID 1B][INFO...]
@@ -876,36 +859,35 @@ static int test_il2p_roundtrip(void) {
         size_t p = 0;
         // Destination (space-padded, shifted left 1)
         const char *dc = "W1AW  ";
-        for (int i = 0; i < 6; i++) raw[p++] = (uint8_t)((dc[i] & 0x7F) << 1);
-        raw[p++] = (uint8_t)((0 & 0x0F) << 1); // dest SSID
+        for (int i = 0; i < 6; i++)
+            raw[p++] = (uint8_t) ((dc[i] & 0x7F) << 1);
+        raw[p++] = (uint8_t) ((0 & 0x0F) << 1);  // dest SSID
         const char *sc2 = "VE3TKI";
-        for (int i = 0; i < 6; i++) raw[p++] = (uint8_t)((sc2[i] & 0x7F) << 1);
-        raw[p++] = (uint8_t)(((1 & 0x0F) << 1) | 0x01); // src SSID, last addr bit
-        raw[p++] = (uint8_t)((1 << 1) | (0 << 4) | (2 << 5)); // control
-        raw[p++] = 0xF0; // PID
+        for (int i = 0; i < 6; i++)
+            raw[p++] = (uint8_t) ((sc2[i] & 0x7F) << 1);
+        raw[p++] = (uint8_t) (((1 & 0x0F) << 1) | 0x01);  // src SSID, last addr bit
+        raw[p++] = (uint8_t) ((1 << 1) | (0 << 4) | (2 << 5));  // control
+        raw[p++] = 0xF0;  // PID
         uint8_t info[] = "Hello IL2P!";
         memcpy(&raw[p], info, sizeof(info));
         p += sizeof(info);
         size_t raw_len = p;
 
-        iframe.payload     = &raw[16]; // point at info field
+        iframe.payload = &raw[16];  // point at info field
         iframe.payload_len = sizeof(info);
 
         print_buf("AX.25 raw frame", raw, raw_len);
 
-        bool enc_ok = il2p_encode((const ax25_frame_t*)&iframe, raw, raw_len,
-                                   il2p_buf, sizeof(il2p_buf), &il2p_len);
+        bool enc_ok = il2p_encode((const ax25_frame_t*) &iframe, raw, raw_len, il2p_buf, sizeof(il2p_buf), &il2p_len);
         printf("  [DBG] il2p_encode: ok=%d len=%zu\n", enc_ok, il2p_len);
         print_buf("IL2P encoded", il2p_buf, il2p_len);
         TEST_ASSERT(enc_ok, "Type 1 I-frame encode", 0);
         TEST_ASSERT(il2p_len >= 3u + IL2P_HEADER_RS_SIZE, "IL2P output minimum length", 0);
 
         // Verify sync word at start
-        TEST_ASSERT(il2p_buf[0] == 0xF1 && il2p_buf[1] == 0x5E && il2p_buf[2] == 0x48,
-                    "IL2P sync word present at output start", 0);
+        TEST_ASSERT(il2p_buf[0] == 0xF1 && il2p_buf[1] == 0x5E && il2p_buf[2] == 0x48, "IL2P sync word present at output start", 0);
 
-        bool dec_ok = il2p_decode(il2p_buf, il2p_len,
-                                   ax25_recovered, sizeof(ax25_recovered), &ax25_len);
+        bool dec_ok = il2p_decode(il2p_buf, il2p_len, ax25_recovered, sizeof(ax25_recovered), &ax25_len);
         printf("  [DBG] il2p_decode: ok=%d ax25_len=%zu\n", dec_ok, ax25_len);
         print_buf("Recovered AX.25", ax25_recovered, ax25_len > 0 ? ax25_len : 0);
         TEST_ASSERT(dec_ok, "Type 1 I-frame decode", 0);
@@ -932,48 +914,48 @@ static int test_il2p_roundtrip(void) {
         memset(&iframe, 0, sizeof(iframe));
         iframe.base.type = AX25_FRAME_INFORMATION_8BIT;
         fill_address(&iframe.base.header.destination, "W1AW  ", 0);
-        fill_address(&iframe.base.header.source,      "VE3TKI", 0);
+        fill_address(&iframe.base.header.source, "VE3TKI", 0);
         iframe.base.header.repeaters.num_repeaters = 1;
         // ax25_path_t uses 'repeaters[]' array (not 'addr[]') for the repeater addresses
         fill_address(&iframe.base.header.repeaters.repeaters[0], "KB1EL ", 0);
         iframe.pid = 0xF0;
-        iframe.ns  = 0;
-        iframe.nr  = 0;
-        iframe.pf  = 0;
+        iframe.ns = 0;
+        iframe.nr = 0;
+        iframe.pf = 0;
 
         // Build full raw AX.25 frame with repeater
         uint8_t raw[128];
         size_t p = 0;
         const char *dc = "W1AW  ";
-        for (int i = 0; i < 6; i++) raw[p++] = (uint8_t)((dc[i] & 0x7F) << 1);
-        raw[p++] = (uint8_t)((0 & 0x0F) << 1);
+        for (int i = 0; i < 6; i++)
+            raw[p++] = (uint8_t) ((dc[i] & 0x7F) << 1);
+        raw[p++] = (uint8_t) ((0 & 0x0F) << 1);
         const char *sc2 = "VE3TKI";
-        for (int i = 0; i < 6; i++) raw[p++] = (uint8_t)((sc2[i] & 0x7F) << 1);
-        raw[p++] = (uint8_t)((0 & 0x0F) << 1); // no last-addr yet (repeater follows)
+        for (int i = 0; i < 6; i++)
+            raw[p++] = (uint8_t) ((sc2[i] & 0x7F) << 1);
+        raw[p++] = (uint8_t) ((0 & 0x0F) << 1);  // no last-addr yet (repeater follows)
         const char *rc = "KB1EL ";
-        for (int i = 0; i < 6; i++) raw[p++] = (uint8_t)((rc[i] & 0x7F) << 1);
-        raw[p++] = (uint8_t)(((0 & 0x0F) << 1) | 0x01); // last addr bit
-        raw[p++] = 0x00; // control
-        raw[p++] = 0xF0; // PID
+        for (int i = 0; i < 6; i++)
+            raw[p++] = (uint8_t) ((rc[i] & 0x7F) << 1);
+        raw[p++] = (uint8_t) (((0 & 0x0F) << 1) | 0x01);  // last addr bit
+        raw[p++] = 0x00;  // control
+        raw[p++] = 0xF0;  // PID
         uint8_t info[] = "Type0 Test";
         memcpy(&raw[p], info, sizeof(info));
         p += sizeof(info);
         size_t raw_len = p;
 
-        iframe.payload     = &raw[p - sizeof(info)];
+        iframe.payload = &raw[p - sizeof(info)];
         iframe.payload_len = sizeof(info);
 
         print_buf("AX.25 raw (Type 0)", raw, raw_len);
 
-        bool enc_ok = il2p_encode((const ax25_frame_t*)&iframe, raw, raw_len,
-                                   il2p_buf, sizeof(il2p_buf), &il2p_len);
+        bool enc_ok = il2p_encode((const ax25_frame_t*) &iframe, raw, raw_len, il2p_buf, sizeof(il2p_buf), &il2p_len);
         printf("  [DBG] Type 0 encode: ok=%d len=%zu\n", enc_ok, il2p_len);
         TEST_ASSERT(enc_ok, "Type 0 encode", 0);
 
-        bool dec_ok = il2p_decode(il2p_buf, il2p_len,
-                                   ax25_recovered, sizeof(ax25_recovered), &ax25_len);
-        printf("  [DBG] Type 0 decode: ok=%d ax25_len=%zu (expected %zu)\n",
-               dec_ok, ax25_len, raw_len);
+        bool dec_ok = il2p_decode(il2p_buf, il2p_len, ax25_recovered, sizeof(ax25_recovered), &ax25_len);
+        printf("  [DBG] Type 0 decode: ok=%d ax25_len=%zu (expected %zu)\n", dec_ok, ax25_len, raw_len);
         TEST_ASSERT(dec_ok, "Type 0 decode", 0);
         TEST_ASSERT(ax25_len == raw_len, "Type 0 recovered length matches original", 0);
         COMPARE_FRAME(ax25_recovered, ax25_len, raw, raw_len, "Type 0 exact AX.25 recovery");
@@ -986,30 +968,30 @@ static int test_il2p_roundtrip(void) {
         memset(&sframe, 0, sizeof(sframe));
         sframe.base.type = AX25_FRAME_SUPERVISORY_RNR_8BIT;
         fill_address(&sframe.base.header.destination, "N0CALL", 0);
-        fill_address(&sframe.base.header.source,      "W6XYZ ", 0);
+        fill_address(&sframe.base.header.source, "W6XYZ ", 0);
         sframe.base.header.repeaters.num_repeaters = 0;
-        sframe.nr   = 4;
-        sframe.pf   = 0;
-        sframe.code = 1; // RNR
+        sframe.nr = 4;
+        sframe.pf = 0;
+        sframe.code = 1;  // RNR
 
         uint8_t raw[32];
         size_t p = 0;
         const char *dc = "N0CALL";
-        for (int i = 0; i < 6; i++) raw[p++] = (uint8_t)((dc[i] & 0x7F) << 1);
-        raw[p++] = (uint8_t)((0 & 0x0F) << 1);
+        for (int i = 0; i < 6; i++)
+            raw[p++] = (uint8_t) ((dc[i] & 0x7F) << 1);
+        raw[p++] = (uint8_t) ((0 & 0x0F) << 1);
         const char *sc2 = "W6XYZ ";
-        for (int i = 0; i < 6; i++) raw[p++] = (uint8_t)((sc2[i] & 0x7F) << 1);
-        raw[p++] = (uint8_t)(((0 & 0x0F) << 1) | 0x01);
-        raw[p++] = (uint8_t)(0x01 | (1 << 2) | (4 << 5)); // S-frame ctrl: RNR NR=4
+        for (int i = 0; i < 6; i++)
+            raw[p++] = (uint8_t) ((sc2[i] & 0x7F) << 1);
+        raw[p++] = (uint8_t) (((0 & 0x0F) << 1) | 0x01);
+        raw[p++] = (uint8_t) (0x01 | (1 << 2) | (4 << 5));  // S-frame ctrl: RNR NR=4
         size_t raw_len = p;
 
-        bool enc_ok = il2p_encode((const ax25_frame_t*)&sframe, raw, raw_len,
-                                   il2p_buf, sizeof(il2p_buf), &il2p_len);
+        bool enc_ok = il2p_encode((const ax25_frame_t*) &sframe, raw, raw_len, il2p_buf, sizeof(il2p_buf), &il2p_len);
         printf("  [DBG] S-frame encode: ok=%d len=%zu\n", enc_ok, il2p_len);
         TEST_ASSERT(enc_ok, "S-frame encode", 0);
 
-        bool dec_ok = il2p_decode(il2p_buf, il2p_len,
-                                   ax25_recovered, sizeof(ax25_recovered), &ax25_len);
+        bool dec_ok = il2p_decode(il2p_buf, il2p_len, ax25_recovered, sizeof(ax25_recovered), &ax25_len);
         printf("  [DBG] S-frame decode: ok=%d ax25_len=%zu\n", dec_ok, ax25_len);
         TEST_ASSERT(dec_ok, "S-frame decode", 0);
         TEST_ASSERT(ax25_len > 0, "S-frame recovered non-empty", 0);
@@ -1024,35 +1006,35 @@ static int test_il2p_roundtrip(void) {
         // ax25_frame_t fields (type, header) are in .base.base, not .base.
         uiframe.base.base.type = AX25_FRAME_UNNUMBERED_INFORMATION;
         fill_address(&uiframe.base.base.header.destination, "APRS  ", 0);
-        fill_address(&uiframe.base.base.header.source,      "KG7BRD", 1);
+        fill_address(&uiframe.base.base.header.source, "KG7BRD", 1);
         uiframe.base.base.header.repeaters.num_repeaters = 0;
         uiframe.pid = 0xF0;
 
         uint8_t ui_data[] = "!1234.56N/01234.56E#APRS comment";
-        uiframe.payload     = ui_data;
+        uiframe.payload = ui_data;
         uiframe.payload_len = sizeof(ui_data) - 1;
 
         uint8_t raw[128];
         size_t p = 0;
         const char *dc = "APRS  ";
-        for (int i = 0; i < 6; i++) raw[p++] = (uint8_t)((dc[i] & 0x7F) << 1);
-        raw[p++] = (uint8_t)((0 & 0x0F) << 1);
+        for (int i = 0; i < 6; i++)
+            raw[p++] = (uint8_t) ((dc[i] & 0x7F) << 1);
+        raw[p++] = (uint8_t) ((0 & 0x0F) << 1);
         const char *sc2 = "KG7BRD";
-        for (int i = 0; i < 6; i++) raw[p++] = (uint8_t)((sc2[i] & 0x7F) << 1);
-        raw[p++] = (uint8_t)(((1 & 0x0F) << 1) | 0x01);
-        raw[p++] = 0x03; // UI control
-        raw[p++] = 0xF0; // No Layer 3
+        for (int i = 0; i < 6; i++)
+            raw[p++] = (uint8_t) ((sc2[i] & 0x7F) << 1);
+        raw[p++] = (uint8_t) (((1 & 0x0F) << 1) | 0x01);
+        raw[p++] = 0x03;  // UI control
+        raw[p++] = 0xF0;  // No Layer 3
         memcpy(&raw[p], ui_data, uiframe.payload_len);
         p += uiframe.payload_len;
         size_t raw_len = p;
 
-        bool enc_ok = il2p_encode((const ax25_frame_t*)&uiframe, raw, raw_len,
-                                   il2p_buf, sizeof(il2p_buf), &il2p_len);
+        bool enc_ok = il2p_encode((const ax25_frame_t*) &uiframe, raw, raw_len, il2p_buf, sizeof(il2p_buf), &il2p_len);
         printf("  [DBG] UI encode: ok=%d len=%zu\n", enc_ok, il2p_len);
         TEST_ASSERT(enc_ok, "UI frame encode", 0);
 
-        bool dec_ok = il2p_decode(il2p_buf, il2p_len,
-                                   ax25_recovered, sizeof(ax25_recovered), &ax25_len);
+        bool dec_ok = il2p_decode(il2p_buf, il2p_len, ax25_recovered, sizeof(ax25_recovered), &ax25_len);
         printf("  [DBG] UI decode: ok=%d ax25_len=%zu\n", dec_ok, ax25_len);
         TEST_ASSERT(dec_ok, "UI frame decode", 0);
     }
@@ -1071,33 +1053,41 @@ static int test_il2p_error_correction(void) {
     memset(&iframe, 0, sizeof(iframe));
     iframe.base.type = AX25_FRAME_INFORMATION_8BIT;
     fill_address(&iframe.base.header.destination, "W1AW  ", 0);
-    fill_address(&iframe.base.header.source,      "VE3TKI", 0);
-    iframe.base.header.repeaters.num_repeaters = 1; // Force Type 0
+    fill_address(&iframe.base.header.source, "VE3TKI", 0);
+    iframe.base.header.repeaters.num_repeaters = 1;  // Force Type 0
     // ax25_path_t uses 'repeaters[]' array (not 'addr[]') for the repeater addresses
     fill_address(&iframe.base.header.repeaters.repeaters[0], "KB1EL ", 0);
-    iframe.pid = 0xF0; iframe.ns = 0; iframe.nr = 0; iframe.pf = 0;
+    iframe.pid = 0xF0;
+    iframe.ns = 0;
+    iframe.nr = 0;
+    iframe.pf = 0;
 
     uint8_t raw[64];
     size_t p = 0;
     const char *dc = "W1AW  ";
-    for (int i = 0; i < 6; i++) raw[p++] = (uint8_t)((dc[i] & 0x7F) << 1);
+    for (int i = 0; i < 6; i++)
+        raw[p++] = (uint8_t) ((dc[i] & 0x7F) << 1);
     raw[p++] = 0x00;
     const char *sc2 = "VE3TKI";
-    for (int i = 0; i < 6; i++) raw[p++] = (uint8_t)((sc2[i] & 0x7F) << 1);
+    for (int i = 0; i < 6; i++)
+        raw[p++] = (uint8_t) ((sc2[i] & 0x7F) << 1);
     raw[p++] = 0x00;
     const char *rc = "KB1EL ";
-    for (int i = 0; i < 6; i++) raw[p++] = (uint8_t)((rc[i] & 0x7F) << 1);
+    for (int i = 0; i < 6; i++)
+        raw[p++] = (uint8_t) ((rc[i] & 0x7F) << 1);
     raw[p++] = 0x01;
-    raw[p++] = 0x00; raw[p++] = 0xF0;
+    raw[p++] = 0x00;
+    raw[p++] = 0xF0;
     uint8_t info[] = "ErrorTest";
-    memcpy(&raw[p], info, sizeof(info)); p += sizeof(info);
+    memcpy(&raw[p], info, sizeof(info));
+    p += sizeof(info);
     size_t raw_len = p;
-    iframe.payload = &raw[p - sizeof(info)]; iframe.payload_len = sizeof(info);
+    iframe.payload = &raw[p - sizeof(info)];
+    iframe.payload_len = sizeof(info);
 
     uint8_t il2p_buf[IL2P_MAX_FRAME_BYTES];
-    size_t  il2p_len;
-    bool enc_ok = il2p_encode((const ax25_frame_t*)&iframe, raw, raw_len,
-                               il2p_buf, sizeof(il2p_buf), &il2p_len);
+    size_t il2p_len;
+    bool enc_ok = il2p_encode((const ax25_frame_t*) &iframe, raw, raw_len, il2p_buf, sizeof(il2p_buf), &il2p_len);
     TEST_ASSERT(enc_ok, "encode for error test", 0);
     printf("  [DBG] encoded IL2P length: %zu\n", il2p_len);
 
@@ -1108,14 +1098,12 @@ static int test_il2p_error_correction(void) {
     size_t payload_start = 3 + IL2P_HEADER_RS_SIZE;
     if (payload_start < il2p_len) {
         il2p_corrupt[payload_start] ^= 0xFF;
-        printf("  [DBG] Corrupted byte at offset %zu: 0x%02X -> 0x%02X\n",
-               payload_start, il2p_buf[payload_start], il2p_corrupt[payload_start]);
+        printf("  [DBG] Corrupted byte at offset %zu: 0x%02X -> 0x%02X\n", payload_start, il2p_buf[payload_start], il2p_corrupt[payload_start]);
     }
 
     uint8_t ax25_out[512];
-    size_t  ax25_len;
-    bool dec_ok = il2p_decode(il2p_corrupt, il2p_len,
-                               ax25_out, sizeof(ax25_out), &ax25_len);
+    size_t ax25_len;
+    bool dec_ok = il2p_decode(il2p_corrupt, il2p_len, ax25_out, sizeof(ax25_out), &ax25_len);
     printf("  [DBG] decode with 1 payload error: ok=%d len=%zu\n", dec_ok, ax25_len);
     TEST_ASSERT(dec_ok, "decode survives 1 payload byte error (RS correction)", 0);
     TEST_ASSERT(ax25_len == raw_len, "recovered length correct after 1 error", 0);
@@ -1123,11 +1111,9 @@ static int test_il2p_error_correction(void) {
 
     // Corrupt 1 byte in the HEADER RS block area (after sync)
     memcpy(il2p_corrupt, il2p_buf, il2p_len);
-    il2p_corrupt[3] ^= 0xFF; // First header byte
-    printf("  [DBG] Corrupted header byte at offset 3: 0x%02X -> 0x%02X\n",
-           il2p_buf[3], il2p_corrupt[3]);
-    dec_ok = il2p_decode(il2p_corrupt, il2p_len,
-                          ax25_out, sizeof(ax25_out), &ax25_len);
+    il2p_corrupt[3] ^= 0xFF;  // First header byte
+    printf("  [DBG] Corrupted header byte at offset 3: 0x%02X -> 0x%02X\n", il2p_buf[3], il2p_corrupt[3]);
+    dec_ok = il2p_decode(il2p_corrupt, il2p_len, ax25_out, sizeof(ax25_out), &ax25_len);
     printf("  [DBG] decode with 1 header error: ok=%d len=%zu\n", dec_ok, ax25_len);
     TEST_ASSERT(dec_ok, "decode survives 1 header byte error (RS correction)", 0);
     COMPARE_FRAME(ax25_out, ax25_len, raw, raw_len, "data intact after 1 header error");
@@ -1146,7 +1132,7 @@ static int test_il2p_large_payload(void) {
     memset(&iframe, 0, sizeof(iframe));
     iframe.base.type = AX25_FRAME_INFORMATION_8BIT;
     fill_address(&iframe.base.header.destination, "W1AW  ", 0);
-    fill_address(&iframe.base.header.source,      "VE3TKI", 0);
+    fill_address(&iframe.base.header.source, "VE3TKI", 0);
     iframe.base.header.repeaters.num_repeaters = 1;
     // ax25_path_t uses 'repeaters[]' array (not 'addr[]') for the repeater addresses
     fill_address(&iframe.base.header.repeaters.repeaters[0], "KB1EL ", 0);
@@ -1155,36 +1141,38 @@ static int test_il2p_large_payload(void) {
     static uint8_t large_raw[700];
     size_t p = 0;
     const char *dc = "W1AW  ";
-    for (int i = 0; i < 6; i++) large_raw[p++] = (uint8_t)((dc[i] & 0x7F) << 1);
+    for (int i = 0; i < 6; i++)
+        large_raw[p++] = (uint8_t) ((dc[i] & 0x7F) << 1);
     large_raw[p++] = 0x00;
     const char *sc2 = "VE3TKI";
-    for (int i = 0; i < 6; i++) large_raw[p++] = (uint8_t)((sc2[i] & 0x7F) << 1);
+    for (int i = 0; i < 6; i++)
+        large_raw[p++] = (uint8_t) ((sc2[i] & 0x7F) << 1);
     large_raw[p++] = 0x00;
     const char *rc = "KB1EL ";
-    for (int i = 0; i < 6; i++) large_raw[p++] = (uint8_t)((rc[i] & 0x7F) << 1);
+    for (int i = 0; i < 6; i++)
+        large_raw[p++] = (uint8_t) ((rc[i] & 0x7F) << 1);
     large_raw[p++] = 0x01;
-    large_raw[p++] = 0x00; large_raw[p++] = 0xF0;
+    large_raw[p++] = 0x00;
+    large_raw[p++] = 0xF0;
     // Fill info field with a recognisable pattern
-    for (int i = 0; i < 600; i++) large_raw[p++] = (uint8_t)(i & 0xFF);
+    for (int i = 0; i < 600; i++)
+        large_raw[p++] = (uint8_t) (i & 0xFF);
     size_t raw_len = p;
-    iframe.payload     = &large_raw[23];
+    iframe.payload = &large_raw[23];
     iframe.payload_len = 600;
 
     printf("  [DBG] Large raw frame: %zu bytes\n", raw_len);
 
     uint8_t il2p_buf[IL2P_MAX_FRAME_BYTES];
-    size_t  il2p_len;
-    bool enc_ok = il2p_encode((const ax25_frame_t*)&iframe, large_raw, raw_len,
-                               il2p_buf, sizeof(il2p_buf), &il2p_len);
+    size_t il2p_len;
+    bool enc_ok = il2p_encode((const ax25_frame_t*) &iframe, large_raw, raw_len, il2p_buf, sizeof(il2p_buf), &il2p_len);
     printf("  [DBG] Large payload encode: ok=%d il2p_len=%zu\n", enc_ok, il2p_len);
     TEST_ASSERT(enc_ok, "large payload encode", 0);
 
     uint8_t ax25_out[1024];
-    size_t  ax25_len;
-    bool dec_ok = il2p_decode(il2p_buf, il2p_len,
-                               ax25_out, sizeof(ax25_out), &ax25_len);
-    printf("  [DBG] Large payload decode: ok=%d ax25_len=%zu (expected %zu)\n",
-           dec_ok, ax25_len, raw_len);
+    size_t ax25_len;
+    bool dec_ok = il2p_decode(il2p_buf, il2p_len, ax25_out, sizeof(ax25_out), &ax25_len);
+    printf("  [DBG] Large payload decode: ok=%d ax25_len=%zu (expected %zu)\n", dec_ok, ax25_len, raw_len);
     TEST_ASSERT(dec_ok, "large payload decode", 0);
     TEST_ASSERT(ax25_len == raw_len, "large payload recovered length", 0);
     COMPARE_FRAME(ax25_out, ax25_len, large_raw, raw_len, "large payload exact recovery");
@@ -1208,24 +1196,22 @@ static int test_edge_cases(void) {
     ax25_information_frame_t iframe;
     memset(&iframe, 0, sizeof(iframe));
 
-    TEST_ASSERT(!il2p_encode(NULL,   dummy, 1, dummy, sizeof(dummy), &len),
-                "il2p_encode NULL frame", 0);
-    TEST_ASSERT(!il2p_encode((ax25_frame_t*)&iframe, NULL, 1, dummy, sizeof(dummy), &len),
-                "il2p_encode NULL raw", 0);
-    TEST_ASSERT(!il2p_encode((ax25_frame_t*)&iframe, dummy, 1, NULL, sizeof(dummy), &len),
-                "il2p_encode NULL out", 0);
-    TEST_ASSERT(!il2p_encode((ax25_frame_t*)&iframe, dummy, 1, dummy, sizeof(dummy), NULL),
-                "il2p_encode NULL out_len", 0);
+    TEST_ASSERT(!il2p_encode(NULL, dummy, 1, dummy, sizeof(dummy), &len), "il2p_encode NULL frame", 0);
+    TEST_ASSERT(!il2p_encode((ax25_frame_t*)&iframe, NULL, 1, dummy, sizeof(dummy), &len), "il2p_encode NULL raw", 0);
+    TEST_ASSERT(!il2p_encode((ax25_frame_t*)&iframe, dummy, 1, NULL, sizeof(dummy), &len), "il2p_encode NULL out", 0);
+    TEST_ASSERT(!il2p_encode((ax25_frame_t*)&iframe, dummy, 1, dummy, sizeof(dummy), NULL), "il2p_encode NULL out_len", 0);
 
     // il2p_decode NULL args
-    TEST_ASSERT(!il2p_decode(NULL,  8, dummy, sizeof(dummy), &len), "il2p_decode NULL in", 0);
-    TEST_ASSERT(!il2p_decode(dummy, 8, NULL,  sizeof(dummy), &len), "il2p_decode NULL out", 0);
+    TEST_ASSERT(!il2p_decode(NULL, 8, dummy, sizeof(dummy), &len), "il2p_decode NULL in", 0);
+    TEST_ASSERT(!il2p_decode(dummy, 8, NULL, sizeof(dummy), &len), "il2p_decode NULL out", 0);
     TEST_ASSERT(!il2p_decode(dummy, 8, dummy, sizeof(dummy), NULL), "il2p_decode NULL ax25_len", 0);
 
     // il2p_decode on random data (should fail gracefully without crash)
     uint8_t noise[64];
-    for (size_t i = 0; i < 64; i++) noise[i] = (uint8_t)(i * 113 + 7);
-    uint8_t ax25_out[512]; size_t ax25_len;
+    for (size_t i = 0; i < 64; i++)
+        noise[i] = (uint8_t) (i * 113 + 7);
+    uint8_t ax25_out[512];
+    size_t ax25_len;
     bool dec = il2p_decode(noise, 64, ax25_out, sizeof(ax25_out), &ax25_len);
     printf("  [DBG] decode random noise: %s\n", dec ? "decoded (sync false match)" : "failed (expected)");
     // We do not assert decode==false since a 1-bit tolerant sync search might
@@ -1238,9 +1224,7 @@ static int test_edge_cases(void) {
     // il2p_encode with raw_len > IL2P_MAX_PAYLOAD_BYTES
     uint8_t big[IL2P_MAX_PAYLOAD_BYTES + 2];
     memset(big, 0, sizeof(big));
-    TEST_ASSERT(!il2p_encode((ax25_frame_t*)&iframe, big, IL2P_MAX_PAYLOAD_BYTES + 1,
-                              dummy, sizeof(dummy), &len),
-                "il2p_encode rejects oversized payload", 0);
+    TEST_ASSERT(!il2p_encode((ax25_frame_t*)&iframe, big, IL2P_MAX_PAYLOAD_BYTES + 1, dummy, sizeof(dummy), &len), "il2p_encode rejects oversized payload", 0);
 
     // il2p_rs_encode NULL block
     TEST_ASSERT(!il2p_rs_encode(NULL, 10, 2), "rs_encode NULL block", 0);
@@ -1266,7 +1250,8 @@ static int test_scramble_rs_pipeline(void) {
     // Build a block, scramble, RS encode, introduce errors, RS decode, descramble
     uint8_t data_len = 30;
     uint8_t orig[30];
-    for (uint8_t i = 0; i < data_len; i++) orig[i] = (uint8_t)(i * 11 + 0x37);
+    for (uint8_t i = 0; i < data_len; i++)
+        orig[i] = (uint8_t) (i * 11 + 0x37);
 
     uint8_t block[30 + IL2P_RS_PAY_PARITY];
     memcpy(block, orig, data_len);
@@ -1286,7 +1271,7 @@ static int test_scramble_rs_pipeline(void) {
     print_buf("After RS encode (data+parity)", block, data_len + IL2P_RS_PAY_PARITY);
 
     // Introduce 3 errors
-    block[5]  ^= 0xAA;
+    block[5] ^= 0xAA;
     block[12] ^= 0x55;
     block[20] ^= 0xFF;
     printf("  [DBG] Injected 3 errors at bytes 5, 12, 20\n");
@@ -1303,8 +1288,7 @@ static int test_scramble_rs_pipeline(void) {
     }
     print_buf("After descramble", block, data_len);
 
-    TEST_ASSERT(memcmp(block, orig, data_len) == 0,
-                "data recovered through scramble+RS pipeline", 0);
+    TEST_ASSERT(memcmp(block, orig, data_len) == 0, "data recovered through scramble+RS pipeline", 0);
 
     return 0;
 }

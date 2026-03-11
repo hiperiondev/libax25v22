@@ -28,6 +28,7 @@
 #include "common.h"
 #include "ax25.h"
 #include "hdlc.h"
+#include "hal.h"
 
 // Helper function to check if data is printable ASCII
 bool is_printable_ascii(const uint8_t *data, size_t len) {
@@ -299,10 +300,13 @@ void hdlc_frame_print(unsigned char *hdlc_frame, int hdlc_len) {
     // FCS in HDLC content is at the end (last 2 bytes before flag)
     frame_with_fcs[ax25_len] = content[content_len - 2];
     frame_with_fcs[ax25_len + 1] = content[content_len - 1];
-    uint16_t calculated_crc = CRC(frame_with_fcs, ax25_len);
 
-    // Get FCS from content
-    uint16_t fcs = (content[content_len - 2] << 8) | content[content_len - 1];
+    // Use hal_crc16_buf() directly; CRC() wrapper has been removed.
+    // hal_crc16_buf computes CRC-CCITT (init 0xFFFF, final XOR 0xFFFF) over data only.
+    uint16_t calculated_crc = hal_crc16_buf(ax25_frame_original, (uint16_t) ax25_len);
+
+    // FCS in HDLC is stored LSB-first: low byte at content_len-2, high byte at content_len-1
+    uint16_t fcs = (uint16_t) (content[content_len - 2]) | ((uint16_t) (content[content_len - 1]) << 8);
 
     // Print start flag
     printf("Start Flag: 0x7E\n");

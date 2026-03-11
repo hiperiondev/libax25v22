@@ -6,27 +6,14 @@
  * @date 2026
  *
  * @section Overview
- * This header provides common utility functions, type definitions, and constants
- * used throughout the libax25v22 library. It includes CRC calculation functions
- * compliant with ISO 3309 HDLC standards, string manipulation utilities for
- * embedded systems, and timing conversion macros.
+ * used throughout the libax25v22 library. It includes string manipulation
+ * utilities for embedded systems and timing conversion macros.
+ * CRC-CCITT is provided by hal_crc16_buf() / hal_crc16_update() in hal.h.
  *
  * @section Standards_References
  * - AX.25 Link Access Protocol for Amateur Packet Radio, Version 2.2 (July 1998)
  *   Section 2.2.7: Frame-Check Sequence (FCS)
  * - ISO 3309:1979 HDLC frame structure
- * - ITU-T Recommendation X.25: CRC-CCITT implementation
- *
- * @section CRC_Implementation
- * The CRC-CCITT implementation follows AX.25 v2.2 Section 2.2.7 which specifies:
- * - Generator polynomial: G(x) = x^16 + x^12 + x^5 + 1 (0x1021)
- * - Initial value: 0xFFFF (all ones)
- * - Final XOR: 0xFFFF (ones' complement of result)
- * - Bit order: LSB-first processing (reflected input)
- *
- * Two implementations are provided:
- * 1. Bit-by-bit (default): Zero memory overhead, suitable for microcontrollers
- * 2. Table-driven (USE_CRC_TABLE defined): 512 bytes flash, 8x faster
  *
  * @see https://github.com/hiperiondev/libax25v22
  * @see https://www.ax25.net/AX25.2.2-Jul%2098-2.pdf
@@ -91,8 +78,8 @@
  *   -------------------------
  *   MAX_FRAME_SIZE       : 340 bytes
  *
- * @warning Frames exceeding this size are rejected by CRC() with the error
- *          sentinel 0xFFFF, which callers treat as a CRC failure. Any value
+ *@warning Frames exceeding this size should be rejected by the caller before
+ *          passing to hal_crc16_buf(). Any value
  *          smaller than 289 will cause silent, false CRC errors on fully-loaded
  *          frames that are otherwise perfectly valid per AX.25 v2.2.
  *          The 340-byte value is retained for compatibility with legacy
@@ -193,107 +180,6 @@
  * @warning Overflow may occur if t > 429496729 (approximately 4.9 days of ticks)
  */
 #define TICKS_TO_MS(t)   ((uint32_t)(t) * 10u)
-
-/*============================================================================*/
-/* CRC-CCITT Function Declarations                                            */
-/*============================================================================*/
-
-/**
- * @defgroup CRCFunctions CRC-CCITT Calculation Functions
- * @brief Frame Check Sequence (FCS) calculation per ISO 3309 / AX.25 v2.2
- *
- * These functions implement the 16-bit Cyclic Redundancy Check (CRC) used
- * for error detection in AX.25 frames. The implementation is compliant with:
- * - AX.25 v2.2 Section 2.2.7: Frame-Check Sequence
- * - ISO 3309:1979 HDLC frame structure
- * - ITU-T Recommendation X.25 (CRC-CCITT)
- *
- * @section CRC_Algorithm
- * The CRC-CCITT uses the following parameters:
- * - Name: CRC-CCITT, CRC-16-X25, CRC-16-CCITT
- * - Polynomial: 0x1021 (x^16 + x^12 + x^5 + 1)
- * - Reversed polynomial (LSB-first): 0x8408
- * - Initial value: 0xFFFF (all ones)
- * - Final XOR: 0xFFFF (ones' complement)
- * - Check value: 0xF0B8 (CRC over "123456789")
- *
- * @section Implementation_Notes
- * Two implementations are available:
- * 1. Bit-by-bit (default): Processes each bit individually, zero RAM overhead
- * 2. Table-driven (USE_CRC_TABLE defined): 512-byte lookup table, ~8x faster
- *
- * The bit-by-bit method is suitable for memory-constrained microcontrollers.
- * The table-driven method is recommended when flash space is available.
- */
-
-/**
- * @brief Calculate CRC-CCITT over a data buffer
- *
- * Computes the 16-bit Frame Check Sequence (FCS) for the provided data
- * buffer using the CRC-CCITT algorithm. This function can be used to:
- * - Generate FCS for outgoing frames (append result to frame)
- * - Verify incoming frames (result should be 0xF0B8 for valid frames)
- *
- * @param[in] frame Pointer to data buffer for CRC calculation
- * @param[in] len   Length of data in bytes
- *
- * @return Calculated CRC value (ones' complement of final shift register)
- *         Returns 0xFFFF if frame is NULL or len is 0
- *         Returns 0xFFFF if len exceeds MAX_FRAME_SIZE
- *
- * @section Usage_FCS_Generation
- * @code
- * uint8_t frame[MAX_FRAME_SIZE];
- * size_t frame_len = ...;  // Length without FCS
- * uint16_t fcs = CRC(frame, frame_len);
- * frame[frame_len++] = fcs & 0xFF;      // Low byte first (LSB)
- * frame[frame_len++] = (fcs >> 8) & 0xFF; // High byte
- * @endcode
- *
- * @section Usage_FCS_Verification
- * @code
- * uint16_t result = CRC(frame_with_fcs, total_len);
- * if (result == 0xF0B8) {
- *     // Frame is valid
- * }
- * @endcode
- *
- * @note The CRC is calculated LSB-first (bit 0 of each byte first).
- * @note For verification, calculate CRC over entire frame including FCS.
- *       A valid frame will yield the magic constant 0xF0B8.
- * @see CRC_verify() for simplified verification
- * @see MAX_FRAME_SIZE for maximum allowed length
- */
-uint16_t CRC(unsigned char *frame, size_t len);
-
-/**
- * @brief Verify frame integrity using embedded FCS
- *
- * Validates a received frame by calculating the CRC over the entire
- * frame including the Frame Check Sequence field. For a valid AX.25
- * frame, this calculation yields the magic constant 0xF0B8.
- *
- * This method is preferred over extracting and comparing the FCS because:
- * - No byte order reversal required
- * - Single CRC calculation
- * - Matches HDLC/AX.25 standard verification method
- *
- * @param[in] frame Pointer to frame buffer including FCS
- * @param[in] len   Total length of frame including FCS (must be >= 2)
- *
- * @return true if frame CRC is valid (result == 0xF0B8)
- *         false if frame is NULL, len < 2, or CRC mismatch
- *
- * @section Verification_Algorithm
- * Per AX.25 v2.2 and ISO 3309, a valid frame satisfies:
- * @code
- * CRC(frame_data || fcs_low || fcs_high) == 0xF0B8
- * @endcode
- *
- * @note The magic constant 0xF0B8 is the residual value of a correct CRC.
- * @see CRC() for the underlying calculation function
- */
-bool CRC_verify(unsigned char *frame, size_t len);
 
 /*============================================================================*/
 /* String Utility Function Declarations                                       */
