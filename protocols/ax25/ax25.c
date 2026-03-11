@@ -1705,6 +1705,7 @@ ax25_xid_parameter_t* ax25_xid_big_endian_new(int pi, uint32_t value, size_t len
     }
 
     ax25_xid_parameter_t *param = ax25_xid_raw_parameter_new(pi, pv, len, err);
+    hal_mem_free(pv);
 
     return param;
 }
