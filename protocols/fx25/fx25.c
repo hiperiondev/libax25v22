@@ -11,9 +11,9 @@
  * @see https://eindhoven.space/wp-content/uploads/2022/12/fx-25_01_06.pdf
  */
 
-#include <stdlib.h>
 #include <string.h>
 
+#include "hal.h"
 #include "fx25_rs.h"
 #include "fx25.h"
 

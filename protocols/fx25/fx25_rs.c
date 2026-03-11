@@ -14,12 +14,13 @@
 #include <string.h>
 #include <stdio.h>
 
+#include "hal.h"
 #include "fx25_rs.h"
 #include "fx25_gf256.h"
 #include "fx25.h"
 
 #ifdef RS_DEBUG
-#define DEBUG_PRINT(...) printf(__VA_ARGS__)
+#define DEBUG_PRINT(...) HAL_LOGD(__VA_ARGS__)
 #else
 #define DEBUG_PRINT(...)
 #endif

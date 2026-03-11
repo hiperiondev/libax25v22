@@ -13,6 +13,8 @@
 #include <string.h>
 #include "ax25_mux.h"
 
+#include "hal.h"
+
 // static connection table per AX.25 v2.2 SDL Appendix C3
 // Provides O(n) lookup of connections by (dest, src) address-pair key.
 // Static allocation: no heap required, safe for all embedded targets.
@@ -75,63 +77,74 @@ static int8_t ax25_mux_select_next(const ax25_mux_t *mux) {
 uint8_t ax25_mux_lm_seize_request(ax25_mux_t *mux, uint8_t link_id, const uint8_t *frame, size_t len, uint8_t priority) {
     if (!mux || link_id >= AX25_MUX_MAX_LINKS || !frame || len == 0 || len > AX25_MUX_FRAME_BUF)
         return 1;
+    uint32_t key = hal_critical_enter();
     ax25_mux_link_t *l = &mux->links[link_id];
-    if (!l->active || l->seize_pending)
+    if (!l->active || l->seize_pending) {
+        hal_critical_exit(key);
         return 2;
+    }
     memcpy(l->pending_frame, frame, len);
     l->pending_len = len;
     l->seize_pending = true;
     l->seize_priority = priority;
+    hal_critical_exit(key);
+    HAL_LOGD("ax25_mux: link %u seize request pri=%u len=%u", (unsigned)link_id, (unsigned)priority, (unsigned)len);
+
     return 0;
 }
 
 void ax25_mux_lm_release(ax25_mux_t *mux, uint8_t link_id) {
     if (!mux || link_id >= AX25_MUX_MAX_LINKS)
         return;
+
+    uint32_t key = hal_critical_enter();
     ax25_mux_link_t *l = &mux->links[link_id];
     l->seize_pending = false;
     l->pending_len = 0;
     if (mux->seized_link == link_id) {
         mux->seized_link = AX25_MUX_NO_SEIZED;
-        /* immediately serve next pending request (burst support) */
         int8_t next = ax25_mux_select_next(mux);
         if (next >= 0) {
             mux->seized_link = (uint8_t) next;
-            // Clear seize_pending on the newly seized link and advance
-            // last_served for correct round-robin fairness.
-            // Without this, seize_pending stays true: ax25_mux_lm_seize_request
-            // would return error 2 for this link on any subsequent request,
-            // and round-robin would stall at the same slot indefinitely.
             mux->links[next].seize_pending = false;
             mux->last_served = (uint8_t) next;
             ax25_mux_link_t *nl = &mux->links[next];
+            hal_critical_exit(key);
+            HAL_LOGD("ax25_mux: link %u released, serving link %d", (unsigned)link_id, (int)next);
             if (nl->lm_seize_confirm && nl->pending_len > 0) {
                 nl->lm_seize_confirm(nl->confirm_user_data, nl->pending_frame, nl->pending_len);
             }
+            return;
         }
     }
+
+    hal_critical_exit(key);
+    HAL_LOGD("ax25_mux: link %u released, channel idle", (unsigned)link_id);
 }
 
 void ax25_mux_tick(ax25_mux_t *mux, uint32_t current_tick_10ms) {
     if (!mux)
         return;
-    (void) current_tick_10ms; /* reserved for future timed seize */
-    if (mux->seized_link != AX25_MUX_NO_SEIZED)
-        return; /* already seized, wait for release */
+    (void) current_tick_10ms;
+    uint32_t key = hal_critical_enter();
+    if (mux->seized_link != AX25_MUX_NO_SEIZED) {
+        hal_critical_exit(key);
+        return;
+    }
     int8_t next = ax25_mux_select_next(mux);
     if (next >= 0) {
         mux->seized_link = (uint8_t) next;
-        // Clear seize_pending and advance last_served when granting the
-        // channel via the tick path, mirroring ax25_mux_get_next_to_serve().
-        // Without this the link cannot re-request the channel and round-robin
-        // does not advance.
         mux->links[next].seize_pending = false;
         mux->last_served = (uint8_t) next;
         ax25_mux_link_t *l = &mux->links[next];
+        hal_critical_exit(key);
+        HAL_LOGD("ax25_mux: tick grants channel to link %d", (int)next);
         if (l->lm_seize_confirm && l->pending_len > 0) {
             l->lm_seize_confirm(l->confirm_user_data, l->pending_frame, l->pending_len);
         }
+        return;
     }
+    hal_critical_exit(key);
 }
 
 void ax25_mux_set_lm_seize_confirm(ax25_mux_t *mux, uint8_t link_id, ax25_lm_seize_confirm_t confirm, void *user_data) {
@@ -206,10 +219,10 @@ int8_t ax25_mux_get_next_to_serve(ax25_mux_t *mux) {
 uint8_t ax25_mux_init(ax25_mux_t *mux) {
     if (!mux)
         return 1;
-
     memset(mux, 0, sizeof(ax25_mux_t));
     mux->last_served = 0;
     mux->seized_link = AX25_MUX_NO_SEIZED;
+    HAL_LOGI("ax25_mux: initialized (max links=%u)", (unsigned)AX25_MUX_MAX_LINKS);
 
     return 0;
 }
@@ -218,6 +231,8 @@ uint8_t ax25_mux_register_link(ax25_mux_t *mux, ax25_connection_t *conn, const a
         uint8_t *link_id_out) {
     if (!mux || !conn || !local_addr || !peer_addr || !link_id_out)
         return 1;
+
+    uint32_t key = hal_critical_enter();
     for (int i = 0; i < AX25_MUX_MAX_LINKS; i++) {
         if (!mux->links[i].active) {
             mux->links[i].conn = conn;
@@ -225,27 +240,39 @@ uint8_t ax25_mux_register_link(ax25_mux_t *mux, ax25_connection_t *conn, const a
             mux->links[i].peer_addr = *peer_addr;
             mux->links[i].active = true;
             mux->links[i].seize_pending = false;
-            mux->links[i].seize_priority = 128;  // default medium priority
+            mux->links[i].seize_priority = 128;
             mux->links[i].pending_len = 0;
             mux->links[i].lm_seize_confirm = NULL;
             mux->links[i].confirm_user_data = NULL;
             *link_id_out = (uint8_t) i;
             mux->num_active++;
+            hal_critical_exit(key);
+            HAL_LOGI("ax25_mux: link %u registered (active=%u)", (unsigned)i, (unsigned)mux->num_active);
             return 0;
         }
     }
-    return 2;  // no free slots
+    hal_critical_exit(key);
+    HAL_LOGW("ax25_mux: no free link slots");
+
+    return 2;
 }
 
 uint8_t ax25_mux_unregister_link(ax25_mux_t *mux, uint8_t link_id) {
     if (!mux || link_id >= AX25_MUX_MAX_LINKS)
         return 1;
+
+    uint32_t key = hal_critical_enter();
     if (mux->links[link_id].active) {
         mux->links[link_id].active = false;
         mux->links[link_id].conn = NULL;
         if (mux->num_active > 0)
             mux->num_active--;
+        hal_critical_exit(key);
+        HAL_LOGI("ax25_mux: link %u unregistered (active=%u)", (unsigned)link_id, (unsigned)mux->num_active);
+        return 0;
     }
+    hal_critical_exit(key);
+
     return 0;
 }
 
@@ -284,31 +311,43 @@ ax25_conn_t* ax25_find_conn(const char *dest, const char *src) {
 
 ax25_conn_t* ax25_alloc_conn(const char *dest, const char *src, ax25_connection_t *conn) {
     uint8_t i;
-    // validate arguments
     if (!dest || !src || !conn)
         return NULL;
-    // reject duplicate (dest, src) pair — first registration wins
-    if (ax25_find_conn(dest, src) != NULL)
+
+    uint32_t key = hal_critical_enter();
+    if (ax25_find_conn(dest, src) != NULL) {
+        hal_critical_exit(key);
+        HAL_LOGW("ax25_mux: ax25_alloc_conn duplicate entry rejected");
         return NULL;
-    // claim the first free slot
+    }
     for (i = 0; i < AX25_MAX_CONNECTIONS; i++) {
         if (!conn_table[i].active) {
             strncpy(conn_table[i].dest, dest, 7);
             strncpy(conn_table[i].src, src, 7);
             conn_table[i].conn = conn;
             conn_table[i].active = 1;
+            hal_critical_exit(key);
+            HAL_LOGD("ax25_mux: connection allocated slot %u", (unsigned)i);
             return &conn_table[i];
         }
     }
-    return NULL;  // table full
+    hal_critical_exit(key);
+    HAL_LOGE("ax25_mux: connection table full");
+
+    return NULL;
 }
 
 void ax25_free_conn(ax25_conn_t *entry) {
     if (!entry)
         return;
+
+    uint32_t key = hal_critical_enter();
     entry->active = 0;
     entry->conn = NULL;
     // clear keys so stale data does not cause false positives on future lookups
     memset(entry->dest, 0, sizeof(entry->dest));
     memset(entry->src, 0, sizeof(entry->src));
+    hal_critical_exit(key);
+    HAL_LOGD("ax25_mux: connection slot freed");
+
 }

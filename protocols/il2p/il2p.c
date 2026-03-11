@@ -9,8 +9,7 @@
 #include "il2p.h"
 #include "il2p_sync.h"
 #include "il2p_sixbit.h"
-#include "fx25_gf256.h"
-#include "common.h"
+#include "hal.h"
 
 // -----------------------------------------------------------------------
 // Internal: encode one RS block (scramble then append parity)
@@ -156,29 +155,24 @@ bool il2p_encode(const ax25_frame_t *frame, const uint8_t *raw_ax25, size_t raw_
             c_r_bit = (uint8_t) (hdr.control & 1u);
         }
         // Compute CRC over raw_ax25 with bytes 6 and 13 replaced by canonical C/R values.
-        // Process one byte at a time to avoid a large temporary buffer on the stack.
-        uint16_t running = 0xFFFFu;
-        for (size_t idx = 0u; idx < raw_len; idx++) {
-            uint8_t b;
-            if (idx == 6u)
-                b = (uint8_t) ((raw_ax25[6u] & 0x7Fu) | (uint8_t) (c_r_bit << 7u));
-            else if (idx == 13u)
-                b = (uint8_t) ((raw_ax25[13u] & 0x7Fu) | (uint8_t) ((1u - c_r_bit) << 7u));
-            else
-                b = raw_ax25[idx];
-            // CRC-CCITT bit-by-bit step (LSB-first, reversed polynomial 0x8408)
-            for (uint8_t bit = 0u; bit < 8u; bit++) {
-                uint8_t bv = (b >> bit) & 1u;
-                uint8_t lsb = (uint8_t) (running & 1u);
-                running >>= 1u;
-                if (bv ^ lsb)
-                    running ^= 0x8408u;
+        // Uses hal_crc16_update() per byte to substitute the two address bytes.
+        {
+            uint16_t running = HAL_CRC16_INIT;
+            for (size_t idx = 0u; idx < raw_len; idx++) {
+                uint8_t b;
+                if (idx == 6u)
+                    b = (uint8_t) ((raw_ax25[6u] & 0x7Fu) | (uint8_t) (c_r_bit << 7u));
+                else if (idx == 13u)
+                    b = (uint8_t) ((raw_ax25[13u] & 0x7Fu) | (uint8_t) ((1u - c_r_bit) << 7u));
+                else
+                    b = raw_ax25[idx];
+                running = hal_crc16_update(running, &b, 1u);
             }
+            crc16 = hal_crc16_final(running);
         }
-        crc16 = (uint16_t) (~running & 0xFFFFu);
     } else {
         // Type 0: raw AX.25 passes through verbatim; CRC over unmodified bytes
-        crc16 = CRC((unsigned char*) (uintptr_t) raw_ax25, raw_len);
+        crc16 = hal_crc16_buf(raw_ax25, (uint16_t) raw_len);
     }
 
     // Hamming encode table (from IL2P spec section "Hamming Encode Table")
@@ -433,7 +427,7 @@ bool il2p_decode(const uint8_t *in, size_t in_len, uint8_t *ax25_out, size_t ax2
     }
     pos += 4u;
     // Recompute CRC over the fully reconstructed AX.25 frame and compare
-    uint16_t calc_crc = CRC((unsigned char*) ax25_out, *ax25_len);
+    uint16_t calc_crc = hal_crc16_buf(ax25_out, (uint16_t) *ax25_len);
     if (calc_crc != rx_crc16) {
         return false;  // CRC mismatch: RS corrected but frame data is still wrong
     }

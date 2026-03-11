@@ -13,6 +13,7 @@
 
 #include <string.h>
 
+#include "hal.h"
 #include "fx25.h"
 #include "hdlc.h"
 #include "fx25_hdlc.h"
@@ -34,8 +35,10 @@ fx25_hdlc_err_t fx25_hdlc_encode(const uint8_t *ax25_frame, size_t ax25_len, uin
 
     hdlc_frame_encode((unsigned char*) ax25_frame, ax25_len, hdlc_frame, &hdlc_len);
 
-    if (hdlc_len <= 0)
+    if (hdlc_len <= 0) {
+        HAL_LOGE("fx25_hdlc_encode: HDLC encode failed");
         return FX25_HDLC_ERR_HDLC_ENCODE;
+    }
 
     // Step 2: Select or validate FX.25 mode
     const fx25_mode_t *selected_mode = NULL;
@@ -43,8 +46,10 @@ fx25_hdlc_err_t fx25_hdlc_encode(const uint8_t *ax25_frame, size_t ax25_len, uin
     if (mode_id == 0) {
         // Auto-select mode based on HDLC frame length and channel quality
         mode_id = fx25_select_mode_for_conditions(hdlc_len, channel_quality);
-        if (mode_id == 0)
+        if (mode_id == 0) {
+            HAL_LOGE("fx25_hdlc_encode: auto mode select failed, frame too large (%u bytes)", (unsigned )hdlc_len);
             return FX25_HDLC_ERR_AUTO_SELECT;
+        }
 
         selected_mode = fx25_get_mode(mode_id);
         if (!selected_mode)
@@ -63,8 +68,10 @@ fx25_hdlc_err_t fx25_hdlc_encode(const uint8_t *ax25_frame, size_t ax25_len, uin
     // Step 3: Apply FX.25 RS encoding
     fx25_frame_t fx25;
     uint8_t err = fx25_encode(hdlc_frame, hdlc_len, mode_id, &fx25);
-    if (err != 0)
+    if (err != 0) {
+        HAL_LOGE("fx25_hdlc_encode: RS encode failed (err=%u)", err);
         return FX25_HDLC_ERR_RS_ENCODE;
+    }
 
     // Step 4: Build complete FX.25 transmission frame
     size_t idx = 0;
@@ -88,6 +95,7 @@ fx25_hdlc_err_t fx25_hdlc_encode(const uint8_t *ax25_frame, size_t ax25_len, uin
     }
 
     *output_len = idx;
+    HAL_LOGD("fx25_hdlc_encode: OK, mode=%u, output=%u bytes", mode_id, (unsigned )idx);
 
     // Clean up FX.25 frame resources
     fx25_frame_free(&fx25);
@@ -112,6 +120,7 @@ fx25_hdlc_err_t fx25_hdlc_decode(const uint8_t *rx_data, size_t rx_len, uint8_t 
     fx25_frame_t fx25;
     uint8_t err = fx25_decode(rx_data, rx_len, &fx25, corrected_errors);
     if (err != 0) {
+        HAL_LOGE("fx25_hdlc_decode: RS decode failed (err=%u)", err);
         return FX25_HDLC_ERR_RS_DECODE;
     }
 
@@ -133,6 +142,7 @@ fx25_hdlc_err_t fx25_hdlc_decode(const uint8_t *rx_data, size_t rx_len, uint8_t 
     }
 
     if (hdlc_start < 0) {
+        HAL_LOGE("fx25_hdlc_decode: no HDLC 0x7E flag in decoded data");
         fx25_frame_free(&fx25);
         return FX25_HDLC_ERR_NO_FLAG;
     }
@@ -148,14 +158,18 @@ fx25_hdlc_err_t fx25_hdlc_decode(const uint8_t *rx_data, size_t rx_len, uint8_t 
 
     fx25_frame_free(&fx25);
 
-    if (hdlc_err != HDLC_OK)
+    if (hdlc_err != HDLC_OK) {
+        HAL_LOGE("fx25_hdlc_decode: HDLC decode failed (err=%d)", (int )hdlc_err);
         return FX25_HDLC_ERR_HDLC_DECODE;
+    }
 
     if (hdlc_len > 0) {
         memcpy(ax25_frame, hdlc_frame, hdlc_len);
         *ax25_len = (size_t) hdlc_len;
+        HAL_LOGD("fx25_hdlc_decode: OK, corrected=%u, ax25_len=%u", *corrected_errors, (unsigned)hdlc_len);
         return FX25_HDLC_OK;
     }
 
+    HAL_LOGE("fx25_hdlc_decode: empty frame after HDLC decode");
     return FX25_HDLC_ERR_EMPTY;
 }

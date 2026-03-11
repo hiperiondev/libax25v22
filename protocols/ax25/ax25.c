@@ -11,14 +11,13 @@
  * @see https://eindhoven.space/wp-content/uploads/2022/12/fx-25_01_06.pdf
  */
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
 
+#include "hal.h"
 #include "ax25.h"
 #include "common.h"
 
@@ -71,7 +70,7 @@ static int parse_ssid(const char *str, size_t max_len, uint8_t *err) {
 static uint8_t* uint_encode(uint32_t value, bool big_endian, size_t length, size_t *out_len, uint8_t *err) {
     *err = 0;
 
-    uint8_t *bytes = malloc(length);
+    uint8_t *bytes = (uint8_t*) hal_mem_alloc((uint16_t) (length));
     if (!bytes) {
         *err = 1;
         return NULL;
@@ -103,7 +102,7 @@ ax25_address_t* ax25_address_decode(const uint8_t *data, uint8_t *err) {
         *err = 2;
         return NULL;
     }
-    ax25_address_t *addr = malloc(sizeof(ax25_address_t));
+    ax25_address_t *addr = (ax25_address_t*) hal_mem_calloc((uint16_t) sizeof(ax25_address_t));
     if (!addr) {
         *err = 1;
         return NULL;
@@ -141,7 +140,7 @@ ax25_address_t* ax25_address_from_string(const char *str, uint8_t *err) {
         return NULL;
     }
 
-    ax25_address_t *addr = malloc(sizeof(ax25_address_t));
+    ax25_address_t *addr = (ax25_address_t*) hal_mem_calloc((uint16_t) sizeof(ax25_address_t));
     if (!addr) {
         *err = 1;
         return NULL;
@@ -248,7 +247,7 @@ ax25_address_t* ax25_address_from_string(const char *str, uint8_t *err) {
 
     cleanup:
     if (addr != NULL) {
-        free(addr);
+        hal_mem_free(addr);
         addr = NULL;
     }
 
@@ -261,7 +260,7 @@ uint8_t* ax25_address_encode(const ax25_address_t *addr, size_t *len, uint8_t *e
         *err = 2;
         return NULL;
     }
-    uint8_t *data = malloc(7);
+    uint8_t *data = (uint8_t*) hal_mem_alloc(7u);
     if (!data) {
         *err = 1;
         return NULL;
@@ -296,7 +295,7 @@ uint8_t* ax25_address_encode(const ax25_address_t *addr, size_t *len, uint8_t *e
 
 ax25_address_t* ax25_address_copy(const ax25_address_t *addr, uint8_t *err) {
     *err = 0;
-    ax25_address_t *copy = malloc(sizeof(ax25_address_t));
+    ax25_address_t *copy = (ax25_address_t*) hal_mem_calloc((uint16_t) sizeof(ax25_address_t));
 
     if (!copy) {
         *err = 1;
@@ -308,7 +307,7 @@ ax25_address_t* ax25_address_copy(const ax25_address_t *addr, uint8_t *err) {
 }
 
 void ax25_address_free(ax25_address_t *addr, uint8_t *err) {
-    free(addr);
+    hal_mem_free(addr);
 }
 
 ax25_path_t* ax25_path_new(ax25_address_t **repeaters, int num, uint8_t *err) {
@@ -329,7 +328,7 @@ ax25_path_t* ax25_path_new(ax25_address_t **repeaters, int num, uint8_t *err) {
     }
 
     // Allocate memory for the path
-    ax25_path_t *path = malloc(sizeof(ax25_path_t));
+    ax25_path_t *path = (ax25_path_t*) hal_mem_calloc((uint16_t) sizeof(ax25_path_t));
     if (!path) {
         *err = 1;  // Memory allocation failure
         return NULL;
@@ -346,18 +345,18 @@ ax25_path_t* ax25_path_new(ax25_address_t **repeaters, int num, uint8_t *err) {
             for (int j = 0; j < i; j++) {
                 ax25_address_free(&path->repeaters[j], err);
             }
-            free(path);
+            hal_mem_free(path);
             return NULL;
         }
         path->repeaters[i] = *copy;
-        free(copy);  // Free the temporary pointer after copying
+        hal_mem_free(copy);  // Free the temporary pointer after copying
     }
 
     return path;
 }
 
 void ax25_path_free(ax25_path_t *path, uint8_t *err) {
-    free(path);
+    hal_mem_free(path);
 }
 
 header_decode_result_t ax25_frame_header_decode(const uint8_t *data, size_t len, uint8_t *err) {
@@ -411,8 +410,8 @@ header_decode_result_t ax25_frame_header_decode(const uint8_t *data, size_t len,
         return result;
     }
 
-    // Allocate header - single malloc call only
-    ax25_frame_header_t *header = malloc(sizeof(ax25_frame_header_t));
+    // Allocate header
+    ax25_frame_header_t *header = (ax25_frame_header_t*) hal_mem_calloc((uint16_t) sizeof(ax25_frame_header_t));
     if (!header) {
         *err = 6;  // Memory allocation failure
         return result;
@@ -438,7 +437,7 @@ header_decode_result_t ax25_frame_header_decode(const uint8_t *data, size_t len,
 uint8_t* ax25_frame_header_encode(const ax25_frame_header_t *header, size_t *len, uint8_t *err) {
     *err = 0;
     size_t total_len = 7 * (2 + header->repeaters.num_repeaters);
-    uint8_t *bytes = malloc(total_len);
+    uint8_t *bytes = (uint8_t*) hal_mem_alloc((uint16_t) (total_len));
     if (!bytes) {
         *err = 1;
         return NULL;
@@ -476,13 +475,13 @@ uint8_t* ax25_frame_header_encode(const ax25_frame_header_t *header, size_t *len
     uint8_t *dest_bytes = ax25_address_encode(&dest, &dest_len, err);
     memcpy(bytes + offset, dest_bytes, dest_len);
     offset += dest_len;
-    free(dest_bytes);
+    hal_mem_free(dest_bytes);
 
     size_t src_len;
     uint8_t *src_bytes = ax25_address_encode(&src, &src_len, err);
     memcpy(bytes + offset, src_bytes, src_len);
     offset += src_len;
-    free(src_bytes);
+    hal_mem_free(src_bytes);
 
     for (int i = 0; i < header->repeaters.num_repeaters; i++) {
         ax25_address_t rpt = header->repeaters.repeaters[i];
@@ -491,7 +490,7 @@ uint8_t* ax25_frame_header_encode(const ax25_frame_header_t *header, size_t *len
         uint8_t *rpt_bytes = ax25_address_encode(&rpt, &rpt_len, err);
         memcpy(bytes + offset, rpt_bytes, rpt_len);
         offset += rpt_len;
-        free(rpt_bytes);
+        hal_mem_free(rpt_bytes);
     }
 
     *len = total_len;
@@ -499,7 +498,7 @@ uint8_t* ax25_frame_header_encode(const ax25_frame_header_t *header, size_t *len
 }
 
 void ax25_frame_header_free(ax25_frame_header_t *header, uint8_t *err) {
-    free(header);
+    hal_mem_free(header);
 }
 
 ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, uint8_t *err) {
@@ -549,7 +548,7 @@ ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, 
                 ax25_frame_header_free(hdr_result.header, err);
                 return NULL;
             }
-            ax25_raw_frame_t *raw = malloc(sizeof(ax25_raw_frame_t));
+            ax25_raw_frame_t *raw = hal_mem_alloc((uint16_t) (sizeof(ax25_raw_frame_t)));
             if (!raw) {
                 *err = 4;
                 ax25_frame_header_free(hdr_result.header, err);
@@ -559,10 +558,10 @@ ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, 
             raw->base.header = *hdr_result.header;
             raw->control = hdr_result.remaining[0];
             raw->payload_len = hdr_result.remaining_len - 1;
-            raw->payload = malloc(raw->payload_len);
+            raw->payload = hal_mem_alloc((uint16_t) (raw->payload_len));
             if (!raw->payload) {
                 *err = 5;
-                free(raw);
+                hal_mem_free(raw);
                 ax25_frame_header_free(hdr_result.header, err);
                 return NULL;
             }
@@ -606,7 +605,7 @@ ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, 
             }
             uint16_t full_control = control;
             if (is_16bit)
-                full_control |= (uint16_t)((uint16_t)hdr_result.remaining[1] << 8u);
+                full_control |= (uint16_t) ((uint16_t) hdr_result.remaining[1] << 8u);
 
             const uint8_t *data_start = hdr_result.remaining + control_size;
             size_t data_len = hdr_result.remaining_len - control_size;
@@ -693,29 +692,29 @@ uint8_t* ax25_frame_encode(const ax25_frame_t *frame, size_t *len, uint8_t *err)
         break;
         default:
             *err = 2;
-            free(header_bytes);
+            hal_mem_free(header_bytes);
             return NULL;
     }
 
     if (!payload_bytes) {
         *err = 3;
-        free(header_bytes);
+        hal_mem_free(header_bytes);
         return NULL;
     }
 
     *len = header_len + payload_len;
-    uint8_t *result = malloc(*len);
+    uint8_t *result = hal_mem_alloc((uint16_t) (*len));
     if (!result) {
         *err = 4;
-        free(header_bytes);
-        free(payload_bytes);
+        hal_mem_free(header_bytes);
+        hal_mem_free(payload_bytes);
         return NULL;
     }
 
     memcpy(result, header_bytes, header_len);
     memcpy(result + header_len, payload_bytes, payload_len);
-    free(header_bytes);
-    free(payload_bytes);
+    hal_mem_free(header_bytes);
+    hal_mem_free(payload_bytes);
 
     return result;
 }
@@ -738,12 +737,12 @@ void ax25_frame_free(ax25_frame_t *frame, uint8_t *err) {
 
     switch (frame->type) {
         case AX25_FRAME_RAW:
-            free(((ax25_raw_frame_t*) frame)->payload);
+            hal_mem_free(((ax25_raw_frame_t*) frame)->payload);
         break;
         case AX25_FRAME_UNNUMBERED_INFORMATION:
             p = ((ax25_unnumbered_information_frame_t*) frame)->payload;
             if (p)
-                free(p);
+                hal_mem_free(p);
         break;
         case AX25_FRAME_UNNUMBERED_XID: {
             ax25_exchange_identification_frame_t *xid = (ax25_exchange_identification_frame_t*) frame;
@@ -751,11 +750,11 @@ void ax25_frame_free(ax25_frame_t *frame, uint8_t *err) {
                 xid->parameters[i]->free(xid->parameters[i], err);
             }
             // free the parameters pointer array allocated by realloc in the decoder
-            free(xid->parameters);
+            hal_mem_free(xid->parameters);
             break;
         }
         case AX25_FRAME_UNNUMBERED_TEST:
-            // payload = pool buf->data; calling free() on it is undefined behaviour
+            // payload = pool buf->data; calling hal_mem_free() on it is undefined behaviour
             // because it points into the static ax25_pool array, not the heap.
             // Recover the owning ax25_buf_t* and release via ax25_buf_free instead.
             p = ((ax25_test_frame_t*) frame)->payload;
@@ -773,7 +772,7 @@ void ax25_frame_free(ax25_frame_t *frame, uint8_t *err) {
         break;
     }
 
-    free(frame);
+    hal_mem_free(frame);
 }
 
 ax25_frame_t* ax25_frame_create(ax25_frame_type_t type, const ax25_frame_header_t *header, uint8_t *err) {
@@ -789,7 +788,7 @@ ax25_frame_t* ax25_frame_create(ax25_frame_type_t type, const ax25_frame_header_
     switch (type) {
         case AX25_FRAME_INFORMATION_8BIT:
         case AX25_FRAME_INFORMATION_16BIT: {
-            ax25_information_frame_t *iframe = malloc(sizeof(ax25_information_frame_t));
+            ax25_information_frame_t *iframe = hal_mem_alloc((uint16_t) (sizeof(ax25_information_frame_t)));
             if (!iframe) {
                 *err = 2;
                 return NULL;
@@ -814,7 +813,7 @@ ax25_frame_t* ax25_frame_create(ax25_frame_type_t type, const ax25_frame_header_
         case AX25_FRAME_SUPERVISORY_RNR_16BIT:
         case AX25_FRAME_SUPERVISORY_REJ_16BIT:
         case AX25_FRAME_SUPERVISORY_SREJ_16BIT: {
-            ax25_supervisory_frame_t *sframe = malloc(sizeof(ax25_supervisory_frame_t));
+            ax25_supervisory_frame_t *sframe = hal_mem_alloc((uint16_t) (sizeof(ax25_supervisory_frame_t)));
             if (!sframe) {
                 *err = 2;
                 return NULL;
@@ -829,7 +828,7 @@ ax25_frame_t* ax25_frame_create(ax25_frame_type_t type, const ax25_frame_header_
         }
 
         case AX25_FRAME_UNNUMBERED_INFORMATION: {
-            ax25_unnumbered_information_frame_t *uiframe = malloc(sizeof(ax25_unnumbered_information_frame_t));
+            ax25_unnumbered_information_frame_t *uiframe = hal_mem_alloc((uint16_t) (sizeof(ax25_unnumbered_information_frame_t)));
             if (!uiframe) {
                 *err = 2;
                 return NULL;
@@ -846,7 +845,7 @@ ax25_frame_t* ax25_frame_create(ax25_frame_type_t type, const ax25_frame_header_
         }
 
         case AX25_FRAME_RAW: {
-            ax25_raw_frame_t *rframe = malloc(sizeof(ax25_raw_frame_t));
+            ax25_raw_frame_t *rframe = hal_mem_alloc((uint16_t) (sizeof(ax25_raw_frame_t)));
             if (!rframe) {
                 *err = 2;
                 return NULL;
@@ -871,7 +870,7 @@ ax25_frame_t* ax25_frame_create(ax25_frame_type_t type, const ax25_frame_header_
 uint8_t* ax25_raw_frame_encode(const ax25_raw_frame_t *frame, size_t *len, uint8_t *err) {
     *err = 0;
     *len = 1 + frame->payload_len;
-    uint8_t *bytes = malloc(*len);
+    uint8_t *bytes = hal_mem_alloc((uint16_t) (*len));
     if (!bytes) {
         *err = 1;
         return NULL;
@@ -995,7 +994,7 @@ ax25_unnumbered_frame_t* ax25_unnumbered_frame_decode(ax25_frame_header_t *heade
         case 0x43:  // DISC
         case 0x0F:  // DM
         case 0x63:  // UA
-            result = malloc(sizeof(ax25_unnumbered_frame_t));
+            result = hal_mem_alloc((uint16_t) (sizeof(ax25_unnumbered_frame_t)));
             if (!result) {
                 *err = 6;
                 return NULL;
@@ -1018,7 +1017,7 @@ uint8_t* ax25_unnumbered_frame_encode(const ax25_unnumbered_frame_t *frame, size
     *err = 0;
     uint8_t control = frame->modifier | (frame->pf ? POLL_FINAL_8BIT : 0);
     *len = 1;
-    uint8_t *bytes = malloc(1);
+    uint8_t *bytes = hal_mem_alloc((uint16_t) (1));
 
     if (!bytes) {
         *err = 1;
@@ -1037,7 +1036,8 @@ ax25_unnumbered_information_frame_t* ax25_unnumbered_information_frame_decode(ax
         return NULL;
     }
 
-    ax25_unnumbered_information_frame_t *ui_frame = malloc(sizeof(ax25_unnumbered_information_frame_t));
+    ax25_unnumbered_information_frame_t *ui_frame = hal_mem_alloc((uint16_t) (sizeof(ax25_unnumbered_information_frame_t)));
+
     if (!ui_frame) {
         *err = 1;
         return NULL;
@@ -1052,12 +1052,12 @@ ax25_unnumbered_information_frame_t* ax25_unnumbered_information_frame_decode(ax
     ui_frame->payload_len = len - 1;
     // UI frames are connectionless and may carry large datagrams (e.g. APRS, test payloads);
     // the pool is fixed at AX25_MAX_INFO bytes and cannot hold oversized payloads.
-    // Free path in ax25_frame_free (AX25_FRAME_UNNUMBERED_INFORMATION case) uses free() directly.
+    // Free path in ax25_frame_free (AX25_FRAME_UNNUMBERED_INFORMATION case) uses hal_mem_free() directly.
     if (ui_frame->payload_len > 0) {
-        ui_frame->payload = malloc(ui_frame->payload_len + 1u);
+        ui_frame->payload = hal_mem_alloc((uint16_t) (ui_frame->payload_len + 1u));
         if (!ui_frame->payload) {
             *err = 1;
-            free(ui_frame);
+            hal_mem_free(ui_frame);
             return NULL;
         }
         memcpy(ui_frame->payload, data + 1, ui_frame->payload_len);
@@ -1070,7 +1070,7 @@ ax25_unnumbered_information_frame_t* ax25_unnumbered_information_frame_decode(ax
     if (!ui_buf) {
         // Pool exhausted - treat as allocation failure
         *err = 1;
-        free(ui_frame);
+        hal_mem_free(ui_frame);
         return NULL;
     }
 
@@ -1081,7 +1081,7 @@ ax25_unnumbered_information_frame_t* ax25_unnumbered_information_frame_decode(ax
 uint8_t* ax25_unnumbered_information_frame_encode(const ax25_unnumbered_information_frame_t *frame, size_t *len, uint8_t *err) {
     *err = 0;
     *len = 1 + 1 + frame->payload_len;
-    uint8_t *bytes = malloc(*len);
+    uint8_t *bytes = hal_mem_alloc((uint16_t) (*len));
 
     if (!bytes) {
         *err = 1;
@@ -1115,7 +1115,7 @@ ax25_frame_reject_frame_t* ax25_frame_reject_frame_decode(ax25_frame_header_t *h
     }
 
     // Allocate frame structure
-    ax25_frame_reject_frame_t *frame = malloc(sizeof(ax25_frame_reject_frame_t));
+    ax25_frame_reject_frame_t *frame = hal_mem_alloc((uint16_t) (sizeof(ax25_frame_reject_frame_t)));
     if (!frame) {
         *err = 2;  // Memory allocation failed
         return NULL;
@@ -1133,7 +1133,7 @@ ax25_frame_reject_frame_t* ax25_frame_reject_frame_decode(ax25_frame_header_t *h
         // Byte 0: Control field low byte (bits 0-7 of 16-bit control)
         // Byte 1: Control field high byte (bits 8-15 of 16-bit control)
         // This is the control field of the frame that was rejected
-        frame->frmr_control = (uint16_t)((uint16_t)data[0] | ((uint16_t)data[1] << 8u));
+        frame->frmr_control = (uint16_t) ((uint16_t) data[0] | ((uint16_t) data[1] << 8u));
 
         // Byte 2: N(S) in bits 1-7 (7 bits), CR bit in bit 0
         // N(S) is the send sequence number of the rejected frame
@@ -1181,7 +1181,7 @@ uint8_t* ax25_frame_reject_frame_encode(const ax25_frame_reject_frame_t *frame, 
 
     // Total length: 1 control byte + data field (3 or 5 bytes)
     *len = is_modulo128 ? 6 : 4;
-    uint8_t *bytes = malloc(*len);
+    uint8_t *bytes = hal_mem_alloc((uint16_t) (*len));
     if (!bytes) {
         *err = 1;  // Memory allocation failed
         return NULL;
@@ -1210,7 +1210,7 @@ uint8_t* ax25_frame_reject_frame_encode(const ax25_frame_reject_frame_t *frame, 
 ax25_information_frame_t* ax25_information_frame_decode(ax25_frame_header_t *header, uint16_t control, const uint8_t *data, size_t len, bool is_16bit,
         uint8_t *err) {
     *err = 0;
-    ax25_information_frame_t *frame = malloc(sizeof(ax25_information_frame_t));
+    ax25_information_frame_t *frame = hal_mem_alloc((uint16_t) (sizeof(ax25_information_frame_t)));
     if (!frame) {
         *err = 1;
         return NULL;
@@ -1244,7 +1244,7 @@ ax25_information_frame_t* ax25_information_frame_decode(ax25_frame_header_t *hea
     } else {
         if (len < 1) {
             *err = 2;
-            free(frame);
+            hal_mem_free(frame);
             return NULL;
         }
         frame->pid = data[0];
@@ -1252,14 +1252,14 @@ ax25_information_frame_t* ax25_information_frame_decode(ax25_frame_header_t *hea
         if (frame->payload_len > AX25_MAX_INFO) {
             // Payload exceeds N1 maximum - reject per AX.25 v2.2 section 6.7.2.1
             *err = 3;
-            free(frame);
+            hal_mem_free(frame);
             return NULL;
         }
         if (frame->payload_len > 0) {
             ax25_buf_t *i_buf = ax25_buf_alloc();
             if (!i_buf) {
                 *err = 3;
-                free(frame);
+                hal_mem_free(frame);
                 return NULL;
             }
             i_buf->len = (uint16_t) frame->payload_len;
@@ -1277,7 +1277,7 @@ uint8_t* ax25_information_frame_encode(const ax25_information_frame_t *frame, si
     *err = 0;
     bool is_16bit = (frame->base.type == AX25_FRAME_INFORMATION_16BIT);
     *len = (is_16bit ? 2 : 1) + 1 + frame->payload_len;
-    uint8_t *bytes = malloc(*len);
+    uint8_t *bytes = hal_mem_alloc((uint16_t) (*len));
 
     if (!bytes) {
         *err = 1;
@@ -1303,7 +1303,7 @@ uint8_t* ax25_supervisory_frame_encode(const ax25_supervisory_frame_t *frame, si
     *err = 0;
     bool is_16bit = (frame->base.type >= AX25_FRAME_SUPERVISORY_RR_16BIT);
     *len = is_16bit ? 2 : 1;
-    uint8_t *bytes = malloc(*len);
+    uint8_t *bytes = hal_mem_alloc((uint16_t) (*len));
 
     if (!bytes) {
         *err = 1;
@@ -1373,7 +1373,7 @@ ax25_supervisory_frame_t* ax25_supervisory_frame_decode(ax25_frame_header_t *hea
         }
     }
 
-    ax25_supervisory_frame_t *frame = malloc(sizeof(ax25_supervisory_frame_t));
+    ax25_supervisory_frame_t *frame = hal_mem_alloc((uint16_t) (sizeof(ax25_supervisory_frame_t)));
     if (!frame) {
         *err = 2;
         return NULL;
@@ -1408,17 +1408,17 @@ ax25_xid_parameter_t* ax25_xid_raw_parameter_new(int pi, const uint8_t *pv, size
         *err = 1;
         return NULL;
     }
-    ax25_xid_parameter_t *param = malloc(sizeof(ax25_xid_parameter_t));
+    ax25_xid_parameter_t *param = hal_mem_alloc((uint16_t) (sizeof(ax25_xid_parameter_t)));
     if (!param) {
         *err = 2;
         return NULL;
     }
     ax25_raw_param_data_t *data = NULL;
     if (pv) {
-        data = malloc(sizeof(ax25_raw_param_data_t) + pv_len);
+        data = hal_mem_alloc((uint16_t) (sizeof(ax25_raw_param_data_t) + pv_len));
         if (!data) {
             *err = 3;
-            free(param);
+            hal_mem_free(param);
             return NULL;
         }
         data->pv_len = pv_len;
@@ -1438,7 +1438,7 @@ uint8_t* ax25_xid_raw_parameter_encode(const ax25_xid_parameter_t *param, size_t
     size_t pv_len = data ? data->pv_len : 0;
     uint8_t *pv = data ? data->pv : NULL;
     *len = 2 + pv_len;
-    uint8_t *bytes = malloc(*len);
+    uint8_t *bytes = hal_mem_alloc((uint16_t) (*len));
     if (!bytes) {
         *err = 1;
         return NULL;
@@ -1464,8 +1464,8 @@ void ax25_xid_raw_parameter_free(ax25_xid_parameter_t *param, uint8_t *err) {
         *err = 1;
         return;
     }
-    free(param->data);
-    free(param);
+    hal_mem_free(param->data);
+    hal_mem_free(param);
 }
 
 ax25_xid_parameter_t* ax25_xid_parameter_decode(const uint8_t *data, size_t len, size_t *consumed, uint8_t *err) {
@@ -1524,17 +1524,17 @@ ax25_exchange_identification_frame_t* ax25_exchange_identification_frame_decode(
             *err = 3;
             for (size_t i = 0; i < param_count; i++)
                 params[i]->free(params[i], err);
-            free(params);
+            hal_mem_free(params);
             return NULL;
         }
 
-        ax25_xid_parameter_t **new_params = realloc(params, (param_count + 1) * sizeof(ax25_xid_parameter_t*));
+        ax25_xid_parameter_t **new_params = (ax25_xid_parameter_t **)hal_mem_realloc(params, (uint16_t)((param_count + 1) * sizeof(ax25_xid_parameter_t*)));
         if (!new_params) {
             *err = 4;
             param->free(param, err);
             for (size_t i = 0; i < param_count; i++)
                 params[i]->free(params[i], err);
-            free(params);
+            hal_mem_free(params);
             return NULL;
         }
 
@@ -1544,12 +1544,12 @@ ax25_exchange_identification_frame_t* ax25_exchange_identification_frame_decode(
         remaining -= consumed;
     }
 
-    ax25_exchange_identification_frame_t *frame = malloc(sizeof(ax25_exchange_identification_frame_t));
+    ax25_exchange_identification_frame_t *frame = hal_mem_alloc((uint16_t) (sizeof(ax25_exchange_identification_frame_t)));
     if (!frame) {
         *err = 5;
         for (size_t i = 0; i < param_count; i++)
             params[i]->free(params[i], err);
-        free(params);
+        hal_mem_free(params);
         return NULL;
     }
 
@@ -1580,7 +1580,7 @@ uint8_t* ax25_exchange_identification_frame_encode(const ax25_exchange_identific
 
     // Single allocation for complete frame
     *len = 1 + 4 + params_len;  // control + fi + gi + gl (2 bytes) + parameters
-    uint8_t *bytes = malloc(*len);
+    uint8_t *bytes = hal_mem_alloc((uint16_t)(*len));
     if (!bytes) {
         *err = 1;
         return NULL;
@@ -1621,7 +1621,7 @@ uint8_t* ax25_exchange_identification_frame_encode(const ax25_exchange_identific
 ax25_test_frame_t* ax25_test_frame_decode(ax25_frame_header_t *header, bool pf, const uint8_t *data, size_t len, uint8_t *err) {
     *err = 0;
 
-    ax25_test_frame_t *frame = malloc(sizeof(ax25_test_frame_t));
+    ax25_test_frame_t *frame = hal_mem_alloc((uint16_t)(sizeof(ax25_test_frame_t)));
     if (!frame) {
         *err = 1;
         return NULL;
@@ -1635,13 +1635,13 @@ ax25_test_frame_t* ax25_test_frame_decode(ax25_frame_header_t *header, bool pf, 
     if (len > AX25_MAX_INFO) {
         // TEST frame payload exceeds N1 - reject per AX.25 v2.2 section 6.7.2.1
         *err = 2;
-        free(frame);
+        hal_mem_free(frame);
         return NULL;
     }
     ax25_buf_t *test_buf = ax25_buf_alloc();
     if (!test_buf) {
         *err = 2;
-        free(frame);
+        hal_mem_free(frame);
         return NULL;
     }
     test_buf->len = (uint16_t) len;
@@ -1655,7 +1655,7 @@ ax25_test_frame_t* ax25_test_frame_decode(ax25_frame_header_t *header, bool pf, 
 uint8_t* ax25_test_frame_encode(const ax25_test_frame_t *frame, size_t *len, uint8_t *err) {
     *err = 0;
     *len = 1 + frame->payload_len;
-    uint8_t *bytes = malloc(*len);
+    uint8_t *bytes = hal_mem_alloc((uint16_t)(*len));
 
     if (!bytes) {
         *err = 1;
@@ -1705,7 +1705,6 @@ ax25_xid_parameter_t* ax25_xid_big_endian_new(int pi, uint32_t value, size_t len
     }
 
     ax25_xid_parameter_t *param = ax25_xid_raw_parameter_new(pi, pv, len, err);
-    free(pv);
 
     return param;
 }
@@ -1742,8 +1741,8 @@ void ax25_xid_deinit_defaults(uint8_t *err) {
                     first_error = local_err; \
                 } \
             } else { \
-                free(param->data); \
-                free(param); \
+            	 hal_mem_free(param->data); \
+            	 hal_mem_free(param); \
             } \
             param = NULL; \
         } \
@@ -1846,7 +1845,7 @@ ax25_segmented_info_t* ax25_segment_info_fields(const uint8_t *payload, size_t p
             goto cleanup_segments;
         }
 
-        uint8_t *info_field = malloc(info_field_len);
+        uint8_t *info_field = hal_mem_alloc((uint16_t)(info_field_len));
         if (!info_field) {
             *err = 5;
             goto cleanup_segments;
@@ -1857,7 +1856,7 @@ ax25_segmented_info_t* ax25_segment_info_fields(const uint8_t *payload, size_t p
         // bounds checking for segment_number
         if (segment_number > 63) {
             *err = 7;
-            free(info_field);
+            hal_mem_free(info_field);
             goto cleanup_segments;
         }
 
@@ -1880,10 +1879,10 @@ ax25_segmented_info_t* ax25_segment_info_fields(const uint8_t *payload, size_t p
         }
         memcpy(info_field + pos, payload + offset, data_len);
 
-        ax25_segmented_info_t *new_segments = realloc(segments, (segment_number + 1) * sizeof(ax25_segmented_info_t));
+        ax25_segmented_info_t *new_segments = (ax25_segmented_info_t *)hal_mem_realloc(segments, (uint16_t)((segment_number + 1) * sizeof(ax25_segmented_info_t)));
         if (!new_segments) {
             *err = 6;
-            free(info_field);
+            hal_mem_free(info_field);
             goto cleanup_segments;
         }
         segments = new_segments;
@@ -1905,9 +1904,9 @@ ax25_segmented_info_t* ax25_segment_info_fields(const uint8_t *payload, size_t p
     cleanup_segments:
     if (segments) {
         for (size_t i = 0; i < segment_number; i++) {
-            free(segments[i].info_field);
+            hal_mem_free(segments[i].info_field);
         }
-        free(segments);
+        hal_mem_free(segments);
     }
     return NULL;
 }
@@ -1919,7 +1918,7 @@ uint8_t* ax25_reassemble_info_fields(ax25_segmented_info_t *info_fields, size_t 
         return NULL;
     }
 
-    ax25_reassembly_segment_t *segments = malloc(num_info_fields * sizeof(ax25_reassembly_segment_t));
+    ax25_reassembly_segment_t *segments = hal_mem_alloc((uint16_t)(num_info_fields * sizeof(ax25_reassembly_segment_t)));
     if (!segments) {
         *err = 1;
         return NULL;
@@ -1932,7 +1931,7 @@ uint8_t* ax25_reassemble_info_fields(ax25_segmented_info_t *info_fields, size_t 
         size_t len = info_fields[i].info_field_len;
         if (len < 2 || info[0] != 0x08) {
             *err = 2;
-            free(segments);
+            hal_mem_free(segments);
             return NULL;
         }
         uint8_t control = info[1];
@@ -1942,10 +1941,10 @@ uint8_t* ax25_reassemble_info_fields(ax25_segmented_info_t *info_fields, size_t 
         if (begin) {
             if (len < 4) {
                 *err = 3;
-                free(segments);
+                hal_mem_free(segments);
                 return NULL;
             }
-            total_length = (uint16_t)(((uint16_t)info[2] << 8u) | (uint16_t)info[3]);
+            total_length = (uint16_t) (((uint16_t) info[2] << 8u) | (uint16_t) info[3]);
             offset = 4;
         }
         size_t data_len = len - offset;
@@ -1960,7 +1959,7 @@ uint8_t* ax25_reassemble_info_fields(ax25_segmented_info_t *info_fields, size_t 
 
     if (!has_first) {
         *err = 4;
-        free(segments);
+        hal_mem_free(segments);
         return NULL;
     }
 
@@ -1982,7 +1981,7 @@ uint8_t* ax25_reassemble_info_fields(ax25_segmented_info_t *info_fields, size_t 
     for (size_t i = 0; i < num_info_fields; i++) {
         if (segments[i].segment_number != (int) i) {
             *err = 5;
-            free(segments);
+            hal_mem_free(segments);
             return NULL;
         }
         if ((segments[i].control & 0x40) != 0) {  // End flag
@@ -1991,15 +1990,15 @@ uint8_t* ax25_reassemble_info_fields(ax25_segmented_info_t *info_fields, size_t 
     }
     if (expected_segments == -1 || expected_segments != (int) num_info_fields) {
         *err = 6;
-        free(segments);
+        hal_mem_free(segments);
         return NULL;
     }
 
     // Reassemble
-    uint8_t *reassembled = malloc(total_length);
+    uint8_t *reassembled = hal_mem_alloc((uint16_t)(total_length));
     if (!reassembled) {
         *err = 7;
-        free(segments);
+        hal_mem_free(segments);
         return NULL;
     }
     size_t offset = 0;
@@ -2009,21 +2008,21 @@ uint8_t* ax25_reassemble_info_fields(ax25_segmented_info_t *info_fields, size_t 
     }
     if (offset != total_length) {
         *err = 8;
-        free(reassembled);
-        free(segments);
+        hal_mem_free(reassembled);
+        hal_mem_free(segments);
         return NULL;
     }
 
     *reassembled_len = total_length;
-    free(segments);
+    hal_mem_free(segments);
     return reassembled;
 }
 
 void ax25_free_segmented_info(ax25_segmented_info_t *segments, size_t num_segments) {
     for (size_t i = 0; i < num_segments; i++) {
-        free(segments[i].info_field);
+        hal_mem_free(segments[i].info_field);
     }
-    free(segments);
+    hal_mem_free(segments);
 }
 
 bool ax25_validate_frame_size(size_t frame_len) {
@@ -2190,7 +2189,7 @@ void ax25_digipeat_frame(uint8_t *frame_data, size_t len, const char *my_call, u
         if (new_frame) {
             // Retransmit the modified frame
             retransmit(new_frame, new_len);
-            free(new_frame);
+            hal_mem_free(new_frame);
         }
     }
 

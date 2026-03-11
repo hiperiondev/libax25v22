@@ -11,19 +11,17 @@
  * @see https://eindhoven.space/wp-content/uploads/2022/12/fx-25_01_06.pdf
  */
 
-#include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "hal.h"
 #include "hdlc.h"
-#include "common.h"
 
 void hdlc_frame_encode(unsigned char *frame, int frameLen, unsigned char *encodedFrame, int *encodedLen) {
     // Calculate CRC on original frame data (BEFORE bit reversal)
     // The FCS is calculated on all bits except the flags and the FCS itself
-    uint16_t crc = CRC(frame, frameLen);
+    uint16_t crc = hal_crc16_buf((const uint8_t *)frame, (uint16_t)frameLen);
 
     // AX.25 FCS transmission order: low byte first, then high byte
     // Each byte is transmitted LSB-first
@@ -193,7 +191,7 @@ hdlc_error_t hdlc_frame_decode(unsigned char *encodedFrame, int encodedLen, unsi
     uint16_t frameCRC = (decodedFrame[decodedIndex - 2]) | (decodedFrame[decodedIndex - 1] << 8);
     decodedIndex -= 2;
 
-    uint16_t crc = CRC(decodedFrame, decodedIndex);
+    uint16_t crc = hal_crc16_buf((const uint8_t *)decodedFrame, (uint16_t)decodedIndex);
     if (crc != frameCRC)
         return HDLC_ERR_CRC_FAIL;
 

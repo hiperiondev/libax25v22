@@ -15,9 +15,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
-#include <stdlib.h>
 
 #include "common.h"
+#include "hal.h"   // HAL CRC, memory allocation
 
 /**
  * AX.25 uses CRC-CCITT with:
@@ -33,33 +33,13 @@
 
 uint16_t CRC(unsigned char *frame, size_t len) {
     // Input validation
-    if (frame == NULL || len == 0) {
+    if (frame == NULL || len == 0)
         return 0xFFFF;
-    }
-
-    if (len > MAX_FRAME_SIZE) {
+    if (len > MAX_FRAME_SIZE)
         return 0xFFFF;
-    }
-
-    // AX.25 uses CRC-CCITT with polynomial 0x1021
-    // For LSB-first processing, we use the reversed polynomial 0x8408
-    // Initial value is 0xFFFF, final XOR is 0xFFFF (ones complement)
-    uint16_t crc = 0xFFFF;
-
-    for (size_t i = 0; i < len; i++) {
-        uint8_t data = frame[i];
-        // Process each bit LSB-first per AX.25 spec
-        for (int bit = 0; bit < 8; bit++) {
-            uint8_t bit_val = (data >> bit) & 0x01;
-            uint8_t crc_lsb = crc & 0x0001;
-            crc >>= 1;
-            if (bit_val ^ crc_lsb) {
-                crc ^= 0x8408;  // Reversed polynomial 0x1021
-            }
-        }
-    }
-
-    return (uint16_t) (~crc & 0xFFFF);
+    // hal_crc16_update: running CRC; hal_crc16_final: apply final 0xFFFF XOR
+    uint16_t crc = hal_crc16_update(HAL_CRC16_INIT, frame, (uint16_t)len);
+    return hal_crc16_final(crc);
 }
 
 #else
@@ -100,27 +80,12 @@ static const uint16_t crc_table[256] = {0x0000, 0x1189, 0x2312, 0x329B, 0x4624, 
  */
 uint16_t CRC(unsigned char *frame, size_t len) {
     // Input validation
-    if (frame == NULL || len == 0) {
+    if (frame == NULL || len == 0)
         return 0xFFFF;
-    }
-
-    if (len > MAX_FRAME_SIZE) {
+    if (len > MAX_FRAME_SIZE)
         return 0xFFFF;
-    }
-
-    uint16_t crc = 0xFFFF;  // Initial value
-
-    // Process each byte using lookup table
-    for (size_t i = 0; i < len; i++) {
-        // XOR input byte with low byte of CRC
-        uint8_t index = (uint8_t) ((crc ^ frame[i]) & 0xFF);
-
-        // Shift CRC right by 8 bits and XOR with table value
-        crc = (crc >> 8) ^ crc_table[index];
-    }
-
-    // Return ones-complement of CRC
-    return (uint16_t) (~crc & 0xFFFF);
+    // hal_crc16_buf: computes complete CRC in one call, hardware-accelerated on MCUs
+    return hal_crc16_buf(frame, (uint16_t)len);
 }
 
 #endif /* USE_CRC_TABLE */
@@ -139,12 +104,10 @@ uint16_t CRC(unsigned char *frame, size_t len) {
  * @return true if CRC is valid, false otherwise
  */
 bool CRC_verify(unsigned char *frame, size_t len) {
-    if (frame == NULL || len < 2) {
+    if (frame == NULL || len < 2)
         return false;
-    }
-
-    uint16_t result = CRC(frame, len);
-
+    // hal_crc16_buf over entire frame including FCS; valid AX.25 frame residual = 0x0F47
+    uint16_t result = hal_crc16_buf(frame, (uint16_t)len);
     return (result == 0x0F47);
 }
 
@@ -154,21 +117,15 @@ bool CRC_verify(unsigned char *frame, size_t len) {
  * @return Pointer to duplicated string or NULL on failure
  */
 char* my_strdup(const char *s) {
-    if (!s) {
+    if (!s)
         return NULL;
-    }
-
     size_t len = strlen(s);
-
     // Sanity check for microcontroller
-    if (len > 1024) {  // Reasonable limit
+    if (len > 1024)
         return NULL;
-    }
-
-    char *dup = malloc(len + 1);
-    if (dup) {
+    char *dup = (char *)hal_mem_alloc((uint16_t)(len + 1));
+    if (dup)
         memcpy(dup, s, len + 1);
-    }
     return dup;
 }
 
