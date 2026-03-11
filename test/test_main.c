@@ -42,6 +42,7 @@
 #include "test_ax25_kiss_smack.h"
 #include "test_il2p.h"
 #include "test_ax25_hdlc_advanced.h"
+#include "ax25_linux_test.h"
 
 int errors = 0;
 
@@ -71,4 +72,8 @@ int main() {
     printf("\n----------------------------------------------------------------------------------\n");
     printf("All tests Completed. %s\n", errors == 0 ? "All tests passed" : "Some tests failed");
     printf("----------------------------------------------------------------------------------\n\n");
+
+    printf("- START LINUX TEST -\n\n");
+    linux_test_main();
+    printf("- END LINUX TEST -\n\n");
 }
