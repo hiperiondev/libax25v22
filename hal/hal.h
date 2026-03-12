@@ -89,9 +89,7 @@
 #endif
 
 /** Enable debug/log output (define to 0 to strip all log calls). */
-#ifndef HAL_LOG_ENABLE
-#define HAL_LOG_ENABLE  1
-#endif
+//#define HAL_LOG_ENABLE  1
 
 /* =========================================================================
  * 1.  RETURN CODES

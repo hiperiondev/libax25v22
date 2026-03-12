@@ -111,6 +111,10 @@ ax25_address_t* ax25_address_decode(const uint8_t *data, uint8_t *err) {
         addr->callsign[i] = (data[i] >> 1) & 0x7F;
     }
     addr->callsign[6] = '\0';
+
+    // AX.25 address fields are padded to 6 bytes with spaces (0x20<<1=0x40).
+    trim_trailing_spaces(addr->callsign);
+
     addr->ssid = (data[6] & 0x1E) >> 1;
     addr->ch = (data[6] & 0x80) != 0;
     addr->res0 = (data[6] & 0x20) != 0;
@@ -226,7 +230,8 @@ ax25_address_t* ax25_address_from_string(const char *str, uint8_t *err) {
         }
 
         if (callsign_len > 6) {
-            callsign_len = 6;
+            *err = 4;
+            goto cleanup;
         }
         memcpy(callsign, str, callsign_len);
         callsign[callsign_len] = '\0';
@@ -376,6 +381,10 @@ header_decode_result_t ax25_frame_header_decode(const uint8_t *data, size_t len,
             addresses[addr_count].callsign[i] = (addr_data[i] >> 1) & 0x7F;
         }
         addresses[addr_count].callsign[6] = '\0';
+
+        // Trim spaces padded into the 6-byte AX.25 address field (e.g. "W1AW  ")
+        trim_trailing_spaces(addresses[addr_count].callsign);
+
         addresses[addr_count].ssid = (addr_data[6] & 0x1E) >> 1;
 
         // Validate SSID value per AX.25 v2.2 Section 3.12.2
@@ -1066,14 +1075,6 @@ ax25_unnumbered_information_frame_t* ax25_unnumbered_information_frame_decode(ax
         ui_frame->payload = NULL;
     }
 
-    ax25_buf_t *ui_buf = ax25_buf_alloc();
-    if (!ui_buf) {
-        // Pool exhausted - treat as allocation failure
-        *err = 1;
-        hal_mem_free(ui_frame);
-        return NULL;
-    }
-
     *err = 0;
     return ui_frame;
 }
@@ -1528,7 +1529,7 @@ ax25_exchange_identification_frame_t* ax25_exchange_identification_frame_decode(
             return NULL;
         }
 
-        ax25_xid_parameter_t **new_params = (ax25_xid_parameter_t **)hal_mem_realloc(params, (uint16_t)((param_count + 1) * sizeof(ax25_xid_parameter_t*)));
+        ax25_xid_parameter_t **new_params = (ax25_xid_parameter_t**) hal_mem_realloc(params, (uint16_t) ((param_count + 1) * sizeof(ax25_xid_parameter_t*)));
         if (!new_params) {
             *err = 4;
             param->free(param, err);
@@ -1580,7 +1581,7 @@ uint8_t* ax25_exchange_identification_frame_encode(const ax25_exchange_identific
 
     // Single allocation for complete frame
     *len = 1 + 4 + params_len;  // control + fi + gi + gl (2 bytes) + parameters
-    uint8_t *bytes = hal_mem_alloc((uint16_t)(*len));
+    uint8_t *bytes = hal_mem_alloc((uint16_t) (*len));
     if (!bytes) {
         *err = 1;
         return NULL;
@@ -1621,7 +1622,7 @@ uint8_t* ax25_exchange_identification_frame_encode(const ax25_exchange_identific
 ax25_test_frame_t* ax25_test_frame_decode(ax25_frame_header_t *header, bool pf, const uint8_t *data, size_t len, uint8_t *err) {
     *err = 0;
 
-    ax25_test_frame_t *frame = hal_mem_alloc((uint16_t)(sizeof(ax25_test_frame_t)));
+    ax25_test_frame_t *frame = hal_mem_alloc((uint16_t) (sizeof(ax25_test_frame_t)));
     if (!frame) {
         *err = 1;
         return NULL;
@@ -1655,7 +1656,7 @@ ax25_test_frame_t* ax25_test_frame_decode(ax25_frame_header_t *header, bool pf, 
 uint8_t* ax25_test_frame_encode(const ax25_test_frame_t *frame, size_t *len, uint8_t *err) {
     *err = 0;
     *len = 1 + frame->payload_len;
-    uint8_t *bytes = hal_mem_alloc((uint16_t)(*len));
+    uint8_t *bytes = hal_mem_alloc((uint16_t) (*len));
 
     if (!bytes) {
         *err = 1;
@@ -1846,7 +1847,7 @@ ax25_segmented_info_t* ax25_segment_info_fields(const uint8_t *payload, size_t p
             goto cleanup_segments;
         }
 
-        uint8_t *info_field = hal_mem_alloc((uint16_t)(info_field_len));
+        uint8_t *info_field = hal_mem_alloc((uint16_t) (info_field_len));
         if (!info_field) {
             *err = 5;
             goto cleanup_segments;
@@ -1880,7 +1881,7 @@ ax25_segmented_info_t* ax25_segment_info_fields(const uint8_t *payload, size_t p
         }
         memcpy(info_field + pos, payload + offset, data_len);
 
-        ax25_segmented_info_t *new_segments = (ax25_segmented_info_t *)hal_mem_realloc(segments, (uint16_t)((segment_number + 1) * sizeof(ax25_segmented_info_t)));
+        ax25_segmented_info_t *new_segments = (ax25_segmented_info_t*) hal_mem_realloc(segments, (segment_number + 1) * sizeof(ax25_segmented_info_t));
         if (!new_segments) {
             *err = 6;
             hal_mem_free(info_field);
@@ -1919,7 +1920,7 @@ uint8_t* ax25_reassemble_info_fields(ax25_segmented_info_t *info_fields, size_t 
         return NULL;
     }
 
-    ax25_reassembly_segment_t *segments = hal_mem_alloc((uint16_t)(num_info_fields * sizeof(ax25_reassembly_segment_t)));
+    ax25_reassembly_segment_t *segments = hal_mem_alloc((uint16_t) (num_info_fields * sizeof(ax25_reassembly_segment_t)));
     if (!segments) {
         *err = 1;
         return NULL;
@@ -1996,7 +1997,7 @@ uint8_t* ax25_reassemble_info_fields(ax25_segmented_info_t *info_fields, size_t 
     }
 
     // Reassemble
-    uint8_t *reassembled = hal_mem_alloc((uint16_t)(total_length));
+    uint8_t *reassembled = hal_mem_alloc((uint16_t) (total_length));
     if (!reassembled) {
         *err = 7;
         hal_mem_free(segments);

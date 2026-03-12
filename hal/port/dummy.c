@@ -519,8 +519,9 @@ uint16_t hal_crc16_buf(const uint8_t *buf, uint16_t len) {
 /* =========================================================================
  * SECTION 10 – LOGGING
  * ========================================================================= */
-
+#if HAL_LOG_ENABLE
 static const char *const g_level_str[4] = { "ERR", "WRN", "INF", "DBG" };
+#endif
 
 void hal_log(hal_log_level_t level, const char *fmt, ...) {
 #if HAL_LOG_ENABLE

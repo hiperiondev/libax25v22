@@ -47,6 +47,8 @@
 int errors = 0;
 
 int main() {
+    setvbuf(stderr, NULL, _IONBF, 0);
+
     errors += test_hdlc_main();
     errors += test_ax25_main();
     errors += test_ax25_mgmt_main();
@@ -69,11 +71,13 @@ int main() {
     errors += test_il2p_main();
     errors += test_ax25_hdlc_advanced_main();
 
-    printf("\n----------------------------------------------------------------------------------\n");
-    printf("All tests Completed. %s\n", errors == 0 ? "All tests passed" : "Some tests failed");
-    printf("----------------------------------------------------------------------------------\n\n");
+    fprintf(stderr, "- START LINUX TEST -\n\n");
+    errors += linux_test_main();
+    fprintf(stderr, "\n- END LINUX TEST -\n\n");
 
-    printf("- START LINUX TEST -\n\n");
-    linux_test_main();
-    printf("- END LINUX TEST -\n\n");
+    fprintf(stderr, "\n----------------------------------------------------------------------------------\n");
+    fprintf(stderr, "All tests Completed. %s\n", errors == 0 ? "All tests passed" : "Some tests failed");
+    fprintf(stderr, "----------------------------------------------------------------------------------\n\n");
+
+    printf("\n\n\n\n");
 }
