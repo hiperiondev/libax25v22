@@ -25,12 +25,11 @@
 #define TEST_ASSERT(condition, message, err) \
     do { \
         if (!(condition)) { \
-            fprintf(stderr, "[%04d] FAIL(%u): %s\n", \
+            printf("[%04d] FAIL(%u): %s\n", \
                     ++assert_count, (unsigned)(err), (message)); \
-            fflush(stderr); \
             return 1; \
         } else { \
-            fprintf(stderr, "[%04d]    PASS: %s\n", \
+            printf("[%04d]    PASS: %s\n", \
                     ++assert_count, (message)); \
         } \
     } while (0)
@@ -41,49 +40,49 @@
                           ((encoded_len) < (expected_len)) \
                               ? (size_t)(encoded_len) : (size_t)(expected_len)); \
         if (_cmp != 0 || (encoded_len) != (expected_len)) { \
-            fprintf(stderr, "[%04d] FAIL: %s\n", ++assert_count, (msg)); \
-            fprintf(stderr, "  Expected (%zu bytes): ", (size_t)(expected_len)); \
+            printf("[%04d] FAIL: %s\n", ++assert_count, (msg)); \
+            printf("  Expected (%zu bytes): ", (size_t)(expected_len)); \
             for (size_t _i = 0; _i < (size_t)(expected_len); _i++) \
-                fprintf(stderr, "%02X ", (expected)[_i]); \
-            fprintf(stderr, "\n  Got      (%zu bytes): ", (size_t)(encoded_len)); \
+                printf("%02X ", (expected)[_i]); \
+            printf("\n  Got      (%zu bytes): ", (size_t)(encoded_len)); \
             for (size_t _i = 0; _i < (size_t)(encoded_len); _i++) \
-                fprintf(stderr, "%02X ", (encoded)[_i]); \
-            fprintf(stderr, "\n"); \
+                printf("%02X ", (encoded)[_i]); \
+            printf("\n"); \
             TEST_ASSERT(0, (msg), _cmp); \
         } else { \
-            fprintf(stderr, "[%04d]    PASS: %s\n", ++assert_count, (msg)); \
+            printf("[%04d]    PASS: %s\n", ++assert_count, (msg)); \
         } \
     } while (0)
 
 #define TEST_SECTION(title) \
-    fprintf(stderr, "\n%s\n", (title))
+    printf("\n%s\n", (title))
 
 #ifdef DEBUG_ENABLE
 #define DEBUG_PRINT(fmt, ...) \
-    fprintf(stderr, "[DEBUG] " fmt "\n", ##__VA_ARGS__)
+    printf("[DEBUG] " fmt "\n", ##__VA_ARGS__)
 #define DEBUG_FRAME(label, data, len) \
     do { \
-        fprintf(stderr, "[DEBUG] %s (%zu bytes): ", (label), (size_t)(len)); \
+        printf("[DEBUG] %s (%zu bytes): ", (label), (size_t)(len)); \
         for (size_t _i = 0; _i < (size_t)(len); _i++) \
-            fprintf(stderr, "%02X ", ((const uint8_t*)(data))[_i]); \
-        fprintf(stderr, "\n"); \
+            printf("%02X ", ((const uint8_t*)(data))[_i]); \
+        printf("\n"); \
     } while (0)
 #define DEBUG_STATE(label, state) \
-    fprintf(stderr, "[DEBUG] %s: %d\n",  (label), (state))
+    printf("[DEBUG] %s: %d\n",  (label), (state))
 #define DEBUG_VAR(label, var) \
-    fprintf(stderr, "[DEBUG] %s: %u\n",  (label), (unsigned int)(var))
+    printf("[DEBUG] %s: %u\n",  (label), (unsigned int)(var))
 #define DEBUG_VAR64(label, var) \
-    fprintf(stderr, "[DEBUG] %s: %lu\n", (label), (unsigned long)(var))
+    printf("[DEBUG] %s: %lu\n", (label), (unsigned long)(var))
 #define DEBUG_BOOL(label, var) \
-    fprintf(stderr, "[DEBUG] %s: %s\n",  (label), (var) ? "true" : "false")
+    printf("[DEBUG] %s: %s\n",  (label), (var) ? "true" : "false")
 #define DEBUG_HEX(label, val) \
-    fprintf(stderr, "  [DBG] %-45s = 0x%02X\n", (label), (unsigned)(val))
+    printf("  [DBG] %-45s = 0x%02X\n", (label), (unsigned)(val))
 #define DEBUG_BUF(label, buf, len) \
     do { \
-        fprintf(stderr, "  [DBG] %-45s (%zu bytes): ", (label), (size_t)(len)); \
+        printf("  [DBG] %-45s (%zu bytes): ", (label), (size_t)(len)); \
         for (size_t _i = 0; _i < (size_t)(len); _i++) \
-            fprintf(stderr, "%02X ", ((const uint8_t*)(buf))[_i]); \
-        fprintf(stderr, "\n"); \
+            printf("%02X ", ((const uint8_t*)(buf))[_i]); \
+        printf("\n"); \
     } while (0)
 #else
 #define DEBUG_PRINT(fmt, ...)          ((void)0)
