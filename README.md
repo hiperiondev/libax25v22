@@ -594,8 +594,8 @@ This checklist documents the implementation status of all features defined in:
 ### 18.2 Hardware-Specific Features (Abstracted via Callbacks)
 - ⚪ Modem modulation/demodulation (AFSK, G3RUH, etc.) - Application responsibility
 - ⚪ Audio DSP processing - Application responsibility
-- ⚪ Radio PTT control circuits - Callback: `ptt_control(bool)`
-- ⚪ Carrier detect (DCD) processing - Callback: `carrier_detect()`
+- ⚪ Radio PTT control circuits
+- ⚪ Carrier detect (DCD) processing
 - ⚪ Audio tone generation/detection - Application responsibility
 
 ### 18.3 Network Layer (Layer 3)
