@@ -42,6 +42,7 @@
 #include "test_ax25_kiss_smack.h"
 #include "test_il2p.h"
 #include "test_ax25_hdlc_advanced.h"
+#include "test_linux_interop.h"
 
 int errors = 0;
 
@@ -69,6 +70,7 @@ int main() {
     errors += test_ax25_kiss_smack_main();
     errors += test_il2p_main();
     errors += test_ax25_hdlc_advanced_main();
+    errors += test_linux_interop_main();
 
     printf("\n----------------------------------------------------------------------------------\n");
     printf("All tests Completed. %s\n", errors == 0 ? "All tests passed" : "Some tests failed");
