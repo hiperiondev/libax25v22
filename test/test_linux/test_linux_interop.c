@@ -252,7 +252,6 @@ static int validate_ssid_byte_encoding(uint8_t ssid_byte, uint8_t *err) {
     return 0;
 }
 
-__attribute__((unused))
 static int bridge_linux_to_libax25v22(const ax25_address *linux_addr, ax25_address_t *v22_addr, uint8_t *err) {
     *err = 0;
     if (!linux_addr || !v22_addr) {
@@ -313,7 +312,6 @@ static int bridge_linux_to_libax25v22(const ax25_address *linux_addr, ax25_addre
     return 0;
 }
 
-__attribute__((unused))
 static int bridge_libax25v22_to_linux(const ax25_address_t *v22_addr, ax25_address *linux_addr, uint8_t *err) {
     *err = 0;
     if (!v22_addr || !linux_addr) {
@@ -359,6 +357,9 @@ static int bridge_libax25v22_to_linux(const ax25_address_t *v22_addr, ax25_addre
         ssid_byte |= 0x40;
     if (v22_addr->res0)
         ssid_byte |= 0x20;
+
+    if (v22_addr->extension)
+        ssid_byte |= 0x01;
 
     linux_addr->ax25_call[6] = (char) ssid_byte;
 
@@ -764,26 +765,6 @@ static int create_ax25_socket_with_tracking(const char *port_name, const char *l
     return sock;
 }
 
-__attribute__((unused))
-static int create_ax25_socket(const char *port_name, const char *local_call) {
-    socket_resource_t res;
-    int result = create_ax25_socket_with_tracking(port_name, local_call, &res);
-    return result;
-}
-
-// Frame lifecycle management with allocation tracking
-__attribute__((unused))
-static void frame_lifecycle_init_with_frame(frame_lifecycle_t *lifecycle, ax25_frame_t *frame, int is_malloc_frame) {
-    if (!lifecycle)
-        return;
-
-    memset(lifecycle, 0, sizeof(*lifecycle));
-    lifecycle->frame = frame;
-    lifecycle->is_malloc_frame = is_malloc_frame ? 1 : 0;
-    lifecycle->is_malloc_encoded = 1;
-    lifecycle->is_initialized = 1;
-}
-
 static void frame_lifecycle_init(frame_lifecycle_t *lifecycle) {
     if (!lifecycle)
         return;
@@ -791,33 +772,6 @@ static void frame_lifecycle_init(frame_lifecycle_t *lifecycle) {
     memset(lifecycle, 0, sizeof(*lifecycle));
     lifecycle->is_malloc_encoded = 1;
     lifecycle->is_initialized = 1;
-}
-
-__attribute__((unused))
-static void frame_lifecycle_set_encoded_data(frame_lifecycle_t *lifecycle, uint8_t *data, size_t len, int is_malloc) {
-    if (lifecycle) {
-        lifecycle->encoded_data = data;
-        lifecycle->encoded_len = len;
-        lifecycle->is_malloc_encoded = is_malloc ? 1 : 0;
-    }
-}
-
-__attribute__((unused))
-static void frame_lifecycle_mark_encode_failed(frame_lifecycle_t *lifecycle) {
-    if (lifecycle) {
-        lifecycle->encode_failed = 1;
-        lifecycle->encode_attempted = 1;
-    }
-}
-
-__attribute__((unused))
-static void frame_lifecycle_mark_encode_success(frame_lifecycle_t *lifecycle, uint8_t *encoded, size_t len) {
-    if (lifecycle) {
-        lifecycle->encoded_data = encoded;
-        lifecycle->encoded_len = len;
-        lifecycle->encode_attempted = 1;
-        lifecycle->encode_failed = 0;
-    }
 }
 
 static ax25_address_t* frame_lifecycle_create_address(frame_lifecycle_t *lifecycle, const char *callsign, int is_dest, uint8_t *err) {
@@ -886,6 +840,28 @@ static int validate_frame_structure_complete(const ax25_frame_t *frame, uint8_t 
         case AX25_FRAME_UNNUMBERED_DM:
         case AX25_FRAME_UNNUMBERED_FRMR:
         case AX25_FRAME_UNNUMBERED_XID:
+            // Accept SABME (extended connection setup for mod-128 operation).
+#ifdef AX25_FRAME_UNNUMBERED_SABME
+        case AX25_FRAME_UNNUMBERED_SABME:
+#endif
+            // Accept supervisory frames: RR, RNR, REJ, SREJ (mod-8 and mod-128 variants).
+            // These are guarded because the exact type names depend on the library version.
+#ifdef AX25_FRAME_SUPERVISORY_RR_8BIT
+        case AX25_FRAME_SUPERVISORY_RR_8BIT:
+        case AX25_FRAME_SUPERVISORY_RNR_8BIT:
+        case AX25_FRAME_SUPERVISORY_REJ_8BIT:
+#endif
+#ifdef AX25_FRAME_SUPERVISORY_SREJ_8BIT
+        case AX25_FRAME_SUPERVISORY_SREJ_8BIT:
+#endif
+#ifdef AX25_FRAME_SUPERVISORY_RR_16BIT
+        case AX25_FRAME_SUPERVISORY_RR_16BIT:
+        case AX25_FRAME_SUPERVISORY_RNR_16BIT:
+        case AX25_FRAME_SUPERVISORY_REJ_16BIT:
+#endif
+#ifdef AX25_FRAME_SUPERVISORY_SREJ_16BIT
+        case AX25_FRAME_SUPERVISORY_SREJ_16BIT:
+#endif
         break;
         default:
             *err = 2;
@@ -1049,10 +1025,10 @@ static int validate_hdlc_frame_format(const uint8_t *frame, unsigned int len, ui
     return 0;
 }
 
-static int validate_hdlc_decoded_frame(const uint8_t *decoded, unsigned int len, uint8_t *err) {
+static int validate_hdlc_decoded_frame(const uint8_t *decoded, int len, uint8_t *err) {
     *err = 0;
 
-    if (!decoded || len == 0) {
+    if (!decoded || len <= 0) {
         *err = 1;
         DEBUG_PRINT("Decoded frame is NULL or zero-length");
         return -1;
@@ -1060,28 +1036,8 @@ static int validate_hdlc_decoded_frame(const uint8_t *decoded, unsigned int len,
 
     if (len < 2) {
         *err = 2;
-        DEBUG_PRINT("Decoded frame too short: %u bytes (minimum 2)", len);
+        DEBUG_PRINT("Decoded frame too short: %d bytes (minimum 2)", len);
         return -1;
-    }
-
-    return 0;
-}
-
-// Enhanced CRC validation for AX.25 CCITT-16
-__attribute__((unused))
-static int validate_crc_state(void) {
-    uint16_t init_val = HAL_CRC16_INIT;
-
-    if (init_val != HAL_CRC16_CCITT_INIT) {
-        DEBUG_PRINT("WARNING: CRC16 init mismatch. Got 0x%04X, expected 0x%04X", init_val, HAL_CRC16_CCITT_INIT);
-        return -1;
-    }
-
-    uint16_t crc = init_val;
-    crc = hal_crc16_final(crc);
-
-    if (crc == 0) {
-        DEBUG_PRINT("WARNING: Empty CRC result is 0, verify algorithm");
     }
 
     return 0;
@@ -1141,57 +1097,13 @@ static int validate_connection_timers(const ax25_connection_t *conn, ax25_timer_
         DEBUG_PRINT("WARNING: N2=%d may be out of typical range (2-30 retries)", config->n2_retries);
     }
 
-    if (config->t1_ticks >= config->t3_ticks) {
+    // Guard T1 < T3 with T3 > 0 check.  When T3 = 0 keep-alive is disabled
+    // and the ordering constraint does not apply.  Without this guard,
+    // T3 = 0 always satisfies t1_ticks >= 0, causing -1 return and silently
+    // skipping every assertion in section E.
+    if (config->t3_ticks > 0 && config->t1_ticks >= config->t3_ticks) {
         *err = 2;
-        DEBUG_PRINT("ERROR: T1 (%d) must be less than T3 (%d)", config->t1_ticks, config->t3_ticks);
-        return -1;
-    }
-
-    return 0;
-}
-
-__attribute__((unused))
-static int validate_connection_initial_state(const ax25_connection_t *conn, uint8_t *err) {
-    *err = 0;
-
-    if (!conn) {
-        *err = 1;
-        return -1;
-    }
-
-    if (conn->state != AX25_STATE_DISCONNECTED) {
-        *err = 2;
-        DEBUG_PRINT("ERROR: Initial state should be DISCONNECTED, got %d", conn->state);
-        return -1;
-    }
-
-    if (conn->timers.t1 <= 0 || conn->timers.t2 <= 0 || conn->timers.t3 <= 0 || conn->timers.n2 <= 0) {
-        *err = 3;
-        DEBUG_PRINT("ERROR: Timer values must be positive");
-        return -1;
-    }
-
-    return 0;
-}
-
-// Enhanced buffer pool validation
-__attribute__((unused))
-static int get_buffer_pool_stats(buffer_pool_stats_t *stats, uint8_t *err) {
-    *err = 0;
-
-    if (!stats) {
-        *err = 1;
-        return -1;
-    }
-
-    memset(stats, 0, sizeof(*stats));
-    stats->free_buffers = ax25_buf_pool_free_count();
-    stats->total_buffers = 32;
-    stats->allocated_buffers = stats->total_buffers - stats->free_buffers;
-
-    if (stats->allocated_buffers < 0 || stats->allocated_buffers > stats->total_buffers) {
-        *err = 2;
-        DEBUG_PRINT("ERROR: Buffer count inconsistency - allocated=%d, total=%d", stats->allocated_buffers, stats->total_buffers);
+        DEBUG_PRINT("ERROR: T1 (%d) must be less than T3 (%d) when T3 is enabled", config->t1_ticks, config->t3_ticks);
         return -1;
     }
 
@@ -1219,7 +1131,6 @@ static int validate_allocated_buffer(const ax25_buf_t *buf, uint8_t *err) {
     return 0;
 }
 
-__attribute__((unused))
 static int test_buffer_pool_exhaustion(uint8_t *err) {
     *err = 0;
 
@@ -1969,7 +1880,13 @@ static int sec_d_hdlc_framing(void) {
         enc_len = 0;
         hdlc_frame_encode(raw, 14, encoded, &enc_len);
 
-        if (validate_hdlc_frame_format(encoded, enc_len, &err) == 0) {
+        // Assert encode produced bytes before entering the format check.
+        // If hdlc_frame_encode fails silently and enc_len stays 0, the
+        // validate_hdlc_frame_format call returns -1, the inner block is
+        // skipped, and D.1 would otherwise pass without firing any assertion.
+        TEST_ASSERT(enc_len > 0, "D.1 hdlc_frame_encode produced output", enc_len);
+
+        if (validate_hdlc_frame_format(encoded, (unsigned int) enc_len, &err) == 0) {
             TEST_ASSERT(enc_len > 14, "D.1 HDLC encode grows frame", 0);
             TEST_ASSERT(encoded[0] == HDLC_FLAG_BYTE, "D.1 Frame starts with HDLC flag 0x7E", 0);
             TEST_ASSERT(encoded[enc_len-1] == HDLC_FLAG_BYTE, "D.1 Frame ends with HDLC flag 0x7E", 0);
@@ -2265,6 +2182,34 @@ static int sec_h_address_bridge_roundtrip(void) {
 
         rc = bridge_libax25v22_to_linux(&v22_addr, NULL, &err);
         TEST_ASSERT(rc < 0 && err != 0, "H.6 NULL linux_result rejected", 0);
+    }
+
+    // H.7: Extension bit round-trip.
+    // Manually sets extension bit = 1 in a Linux address (simulating a real
+    // OTA last-address byte), converts Linux -> v22 -> Linux, and asserts
+    // ax25_cmp == 0.  This test catches the bug where bridge_libax25v22_to_linux
+    // failed to restore bit 0, breaking round-trip fidelity on real frames.
+    {
+        rc = ax25_aton_entry("W1AW-5", (char*) &linux_orig);
+        TEST_ASSERT(rc == 0, "H.7 ax25_aton_entry W1AW-5 for extension-bit test", rc);
+
+        // Force extension bit = 1 to match a real end-of-address-field byte.
+        linux_orig.ax25_call[6] |= 0x01;
+
+        memset(&v22_addr, 0, sizeof(v22_addr));
+        rc = bridge_linux_to_libax25v22(&linux_orig, &v22_addr, &err);
+        TEST_ASSERT(rc == 0 && err == 0, "H.7 Linux->v22 with extension bit set", err);
+        TEST_ASSERT(v22_addr.extension == 1, "H.7 Extension bit decoded as 1", (int )v22_addr.extension);
+        TEST_ASSERT(v22_addr.ssid == 5, "H.7 SSID=5 correct after extension-bit decode", v22_addr.ssid);
+
+        memset(&linux_result, 0, sizeof(linux_result));
+        rc = bridge_libax25v22_to_linux(&v22_addr, &linux_result, &err);
+        TEST_ASSERT(rc == 0 && err == 0, "H.7 v22->Linux with extension bit restored", err);
+
+        rc = ax25_cmp(&linux_orig, &linux_result);
+        TEST_ASSERT(rc == 0, "H.7 Extension bit preserved through full round-trip", rc);
+        DEBUG_PRINT("H.7 Extension-bit round-trip: orig[6]=0x%02X result[6]=0x%02X", (unsigned char) linux_orig.ax25_call[6],
+                (unsigned char) linux_result.ax25_call[6]);
     }
 
     return 0;
@@ -3079,6 +3024,542 @@ static int sec_p_full_sockaddr_digipeater(void) {
 }
 
 // Main test runner with auto-configuration and bind capability detection
+// -----------------------------------------------------------------------
+// Tests RR, RNR, REJ supervisory frame encode/decode (mod-8 and mod-128).
+// These frames implement flow control; the Linux kernel AX.25 stack sends
+// RR after every received I-frame and RNR when its receive buffer is full.
+// -----------------------------------------------------------------------
+static int sec_q_supervisory_frames(void) {
+    TEST_SECTION("=== SEC-Q: Supervisory Frames (RR / RNR / REJ) ===");
+
+    uint8_t err;
+    ax25_frame_header_t hdr;
+
+    ax25_address_t *dest = ax25_address_from_string("W1AW-0", &err);
+    ax25_address_t *src = ax25_address_from_string("N0CALL-0", &err);
+
+    if (!dest || !src) {
+        if (dest)
+            ax25_address_free(dest, &err);
+        if (src)
+            ax25_address_free(src, &err);
+        printf("SKIP: SEC-Q address creation failed\n");
+        return 0;
+    }
+
+    memset(&hdr, 0, sizeof(hdr));
+    hdr.destination = *dest;
+    hdr.source = *src;
+    hdr.cr = true;
+    hdr.repeaters.num_repeaters = 0;
+
+    ax25_address_free(dest, &err);
+    ax25_address_free(src, &err);
+
+#ifdef AX25_FRAME_SUPERVISORY_RR_8BIT
+    // Q.1: Encode and decode RR (Receive Ready) mod-8 — flow-control ACK.
+    // The kernel sends RR after each received I-frame when ready for more data.
+    // N(R) carries the next expected sequence number.
+    {
+        ax25_supervisory_frame_t rr;
+        memset(&rr, 0, sizeof(rr));
+        rr.base.type   = AX25_FRAME_SUPERVISORY_RR_8BIT;
+        rr.base.header = hdr;
+        rr.pf          = false;
+        rr.nr          = 3;
+
+        enc = ax25_frame_encode((ax25_frame_t*) &rr, &enc_len, &err);
+        TEST_ASSERT(enc != NULL && err == 0, "Q.1 Encode RR mod-8 N(R)=3", err);
+
+        if (enc) {
+            dec = ax25_frame_decode(enc, enc_len, MODULO128_FALSE, &err);
+            TEST_ASSERT(dec != NULL && err == 0, "Q.1 Decode RR mod-8 round-trip", err);
+            if (dec) {
+                TEST_ASSERT(dec->type == AX25_FRAME_SUPERVISORY_RR_8BIT,
+                            "Q.1 Decoded type == RR-8", 0);
+                ax25_supervisory_frame_t *drr = (ax25_supervisory_frame_t*) dec;
+                TEST_ASSERT(drr->nr == 3, "Q.1 RR N(R)=3 preserved", drr->nr);
+                DEBUG_PRINT("Q.1 RR mod-8 N(R)=%d", drr->nr);
+                ax25_frame_free(dec, &err);
+            }
+            free(enc);
+        }
+    }
+
+    // Q.2: Encode and decode RNR (Receive Not Ready) mod-8 — busy/flow-stop.
+    // Sent when the receiver buffer is full; remote must pause sending until
+    // the station issues RR to resume.
+    {
+        ax25_supervisory_frame_t rnr;
+        memset(&rnr, 0, sizeof(rnr));
+        rnr.base.type   = AX25_FRAME_SUPERVISORY_RNR_8BIT;
+        rnr.base.header = hdr;
+        rnr.pf          = true;
+        rnr.nr          = 0;
+
+        enc = ax25_frame_encode((ax25_frame_t*) &rnr, &enc_len, &err);
+        TEST_ASSERT(enc != NULL && err == 0, "Q.2 Encode RNR mod-8 P/F=1", err);
+
+        if (enc) {
+            dec = ax25_frame_decode(enc, enc_len, MODULO128_FALSE, &err);
+            TEST_ASSERT(dec != NULL && err == 0, "Q.2 Decode RNR mod-8 round-trip", err);
+            if (dec) {
+                TEST_ASSERT(dec->type == AX25_FRAME_SUPERVISORY_RNR_8BIT,
+                            "Q.2 Decoded type == RNR-8", 0);
+                ax25_frame_free(dec, &err);
+            }
+            free(enc);
+        }
+    }
+
+    // Q.3: Encode and decode REJ (Reject) mod-8 — requests retransmission from N(R).
+    // The Linux kernel AX.25 stack issues REJ when a sequence error is detected.
+    {
+        ax25_supervisory_frame_t rej;
+        memset(&rej, 0, sizeof(rej));
+        rej.base.type   = AX25_FRAME_SUPERVISORY_REJ_8BIT;
+        rej.base.header = hdr;
+        rej.pf          = false;
+        rej.nr          = 5;
+
+        enc = ax25_frame_encode((ax25_frame_t*) &rej, &enc_len, &err);
+        TEST_ASSERT(enc != NULL && err == 0, "Q.3 Encode REJ mod-8 N(R)=5", err);
+
+        if (enc) {
+            dec = ax25_frame_decode(enc, enc_len, MODULO128_FALSE, &err);
+            TEST_ASSERT(dec != NULL && err == 0, "Q.3 Decode REJ mod-8 round-trip", err);
+            if (dec) {
+                TEST_ASSERT(dec->type == AX25_FRAME_SUPERVISORY_REJ_8BIT,
+                            "Q.3 Decoded type == REJ-8", 0);
+                ax25_supervisory_frame_t *drej = (ax25_supervisory_frame_t*) dec;
+                TEST_ASSERT(drej->nr == 5, "Q.3 REJ N(R)=5 preserved", drej->nr);
+                ax25_frame_free(dec, &err);
+            }
+            free(enc);
+        }
+    }
+#else
+    printf("SKIP: Q.1-Q.3 (AX25_FRAME_SUPERVISORY_RR_8BIT not defined in this build)\n");
+#endif
+
+#ifdef AX25_FRAME_SUPERVISORY_RR_16BIT
+    // Q.4: Encode and decode RR mod-128 — extended sequencing flow-control ACK.
+    // When both stations have negotiated mod-128 via SABME/EXTSEQ, supervisory
+    // frames carry a 7-bit N(R) field instead of the 3-bit mod-8 field.
+    {
+        ax25_supervisory_frame_t rr16;
+        memset(&rr16, 0, sizeof(rr16));
+        rr16.base.type   = AX25_FRAME_SUPERVISORY_RR_16BIT;
+        rr16.base.header = hdr;
+        rr16.pf          = false;
+        rr16.nr          = 64;
+
+        enc = ax25_frame_encode((ax25_frame_t*) &rr16, &enc_len, &err);
+        TEST_ASSERT(enc != NULL && err == 0, "Q.4 Encode RR mod-128 N(R)=64", err);
+
+        if (enc) {
+            dec = ax25_frame_decode(enc, enc_len, MODULO128_TRUE, &err);
+            TEST_ASSERT(dec != NULL && err == 0, "Q.4 Decode RR mod-128 round-trip", err);
+            if (dec) {
+                TEST_ASSERT(dec->type == AX25_FRAME_SUPERVISORY_RR_16BIT,
+                            "Q.4 Decoded type == RR-16", 0);
+                ax25_supervisory_frame_t *drr16 = (ax25_supervisory_frame_t*) dec;
+                TEST_ASSERT(drr16->nr == 64, "Q.4 RR mod-128 N(R)=64 preserved", drr16->nr);
+                DEBUG_PRINT("Q.4 RR mod-128 N(R)=%d enc_len=%zu", drr16->nr, enc_len);
+                ax25_frame_free(dec, &err);
+            }
+            free(enc);
+        }
+    }
+#else
+    printf("SKIP: Q.4 (AX25_FRAME_SUPERVISORY_RR_16BIT not defined in this build)\n");
+#endif
+
+    return 0;
+}
+
+// -----------------------------------------------------------------------
+// Tests SABME (Set Asynchronous Balanced Mode Extended) — the unnumbered
+// frame that establishes a mod-128 connection under AX.25 v2.2.
+// SABME is sent instead of SABM when extended sequence numbers are desired.
+// The Linux kernel issues SABME when AX25_EXTSEQ socket option is set to 1.
+// -----------------------------------------------------------------------
+static int sec_r_sabme_frame(void) {
+    TEST_SECTION("=== SEC-R: SABME Frame (Mod-128 Connection Setup) ===");
+
+    uint8_t err;
+    ax25_frame_header_t hdr;
+
+    ax25_address_t *dest = ax25_address_from_string("W1AW-0", &err);
+    ax25_address_t *src = ax25_address_from_string("N0CALL-0", &err);
+
+    if (!dest || !src) {
+        if (dest)
+            ax25_address_free(dest, &err);
+        if (src)
+            ax25_address_free(src, &err);
+        printf("SKIP: SEC-R address creation failed\n");
+        return 0;
+    }
+
+    memset(&hdr, 0, sizeof(hdr));
+    hdr.destination = *dest;
+    hdr.source = *src;
+    hdr.cr = true;
+    hdr.repeaters.num_repeaters = 0;
+
+    ax25_address_free(dest, &err);
+    ax25_address_free(src, &err);
+
+#ifdef AX25_FRAME_UNNUMBERED_SABME
+    // R.1: Encode SABME (extended connection request).
+    // SABME and SABM are both unnumbered frames with no information field;
+    // they differ only in the control byte modifier (0x6F SABME vs 0x2F SABM).
+    {
+        ax25_unnumbered_frame_t sabme;
+        memset(&sabme, 0, sizeof(sabme));
+        sabme.base.type   = AX25_FRAME_UNNUMBERED_SABME;
+        sabme.base.header = hdr;
+        sabme.pf          = true;
+        sabme.modifier    = AX25_U_SABME;
+
+        enc = ax25_frame_encode((ax25_frame_t*) &sabme, &enc_len, &err);
+        TEST_ASSERT(enc != NULL && err == 0, "R.1 Encode SABME frame (extended connection request)", err);
+
+        if (enc) {
+            // R.2: SABME must be the same size as SABM; only the control byte differs.
+            {
+                ax25_unnumbered_frame_t sabm;
+                memset(&sabm, 0, sizeof(sabm));
+                sabm.base.type   = AX25_FRAME_UNNUMBERED_SABM;
+                sabm.base.header = hdr;
+                sabm.pf          = true;
+                sabm.modifier    = AX25_U_SABM;
+                size_t sabm_len  = 0;
+                uint8_t *enc_sabm = ax25_frame_encode((ax25_frame_t*) &sabm, &sabm_len, &err);
+                if (enc_sabm) {
+                    TEST_ASSERT(enc_len == sabm_len,
+                                "R.2 SABME same encoded size as SABM (both unnumbered)", 0);
+                    DEBUG_PRINT("R.2 SABME=%zu SABM=%zu bytes", enc_len, sabm_len);
+                    free(enc_sabm);
+                }
+            }
+
+            // R.3: Decode SABME round-trip — type field must survive encode/decode.
+            dec = ax25_frame_decode(enc, enc_len, MODULO128_TRUE, &err);
+            TEST_ASSERT(dec != NULL && err == 0, "R.3 Decode SABME round-trip", err);
+            if (dec) {
+                TEST_ASSERT(dec->type == AX25_FRAME_UNNUMBERED_SABME,
+                            "R.3 Decoded type == SABME", 0);
+                DEBUG_PRINT("R.3 SABME round-trip verified enc_len=%zu", enc_len);
+                ax25_frame_free(dec, &err);
+            }
+            free(enc);
+        }
+    }
+#else
+    printf("SKIP: SEC-R (AX25_FRAME_UNNUMBERED_SABME not defined in this build)\n");
+#endif
+
+    return 0;
+}
+
+// -----------------------------------------------------------------------
+// Tests XID (eXchange IDentification) frame encode/decode.
+// XID is the AX.25 v2.2 mechanism for parameter negotiation before
+// establishing a connection (window size, mod-128 capability, etc.).
+// The Linux kernel responds to received XID frames on AF_AX25 sockets.
+// -----------------------------------------------------------------------
+static int sec_s_xid_frame(void) {
+    TEST_SECTION("=== SEC-S: XID Frame (AX.25 v2.2 Capability Exchange) ===");
+
+    uint8_t err;
+    size_t enc_len;
+    uint8_t *enc;
+    ax25_frame_t *dec;
+    ax25_frame_header_t hdr;
+
+    ax25_address_t *dest = ax25_address_from_string("W1AW-0", &err);
+    ax25_address_t *src = ax25_address_from_string("N0CALL-0", &err);
+
+    if (!dest || !src) {
+        if (dest)
+            ax25_address_free(dest, &err);
+        if (src)
+            ax25_address_free(src, &err);
+        printf("SKIP: SEC-S address creation failed\n");
+        return 0;
+    }
+
+    memset(&hdr, 0, sizeof(hdr));
+    hdr.destination = *dest;
+    hdr.source = *src;
+    hdr.cr = true;
+    hdr.repeaters.num_repeaters = 0;
+
+    ax25_address_free(dest, &err);
+    ax25_address_free(src, &err);
+
+    // S.1: Encode XID frame.
+    // A minimal XID carries no parameters; used to probe the remote capabilities.
+    // XID uses modifier 0xAF (command) / 0xAC (response) per AX.25 v2.2 table 4.
+    // start modified part
+    // BUG FIX: XID encoding requires ax25_exchange_identification_frame_t, NOT
+    // ax25_unnumbered_frame_t.  ax25_frame_encode() dispatches on frame->type
+    // == AX25_FRAME_UNNUMBERED_XID to ax25_exchange_identification_frame_encode()
+    // which casts the pointer to ax25_exchange_identification_frame_t* and reads
+    // XID-specific fields that lie beyond the end of ax25_unnumbered_frame_t.
+    // Passing ax25_unnumbered_frame_t caused: (a) uninitialised-value reads from
+    // stack bytes past the struct, (b) those stack bytes held a freed pointer
+    // recycled from sec_r's ax25_address_from_string allocation, producing a
+    // use-after-free report, and (c) SIGSEGV when the encoder followed that
+    // garbage pointer into unmapped memory.
+    // end modified part
+    {
+        // start modified part
+        ax25_exchange_identification_frame_t xid;
+        memset(&xid, 0, sizeof(xid));
+        xid.base.base.type = AX25_FRAME_UNNUMBERED_XID;
+        xid.base.base.header = hdr;
+        xid.base.pf = true;
+        xid.base.modifier = AX25_U_XID;
+        // end modified part
+
+        enc = ax25_frame_encode((ax25_frame_t*) &xid, &enc_len, &err);
+        TEST_ASSERT(enc != NULL && err == 0, "S.1 Encode XID frame (parameter negotiation)", err);
+
+        if (enc) {
+            DEBUG_PRINT("S.1 XID encoded %zu bytes", enc_len);
+
+            // S.2: Decode XID round-trip.
+            dec = ax25_frame_decode(enc, enc_len, MODULO128_FALSE, &err);
+            TEST_ASSERT(dec != NULL && err == 0, "S.2 Decode XID round-trip", err);
+            if (dec) {
+                TEST_ASSERT(dec->type == AX25_FRAME_UNNUMBERED_XID, "S.2 Decoded type == XID", 0);
+                DEBUG_PRINT("S.2 XID round-trip verified");
+                ax25_frame_free(dec, &err);
+            }
+            free(enc);
+            enc = NULL;
+        }
+    }
+
+    // S.3: XID and SABM must produce different encoded bytes.
+    // They differ in the control byte (0xAF vs 0x2F) for the same address field.
+    {
+        // start modified part
+        // Use ax25_exchange_identification_frame_t for the XID variable so the
+        // encoder reads valid zeroed memory for all XID-specific fields.
+        ax25_exchange_identification_frame_t xid2;
+        // end modified part
+        ax25_unnumbered_frame_t sabm;
+        size_t xid_len = 0, sabm_len = 0;
+        uint8_t *enc_xid = NULL, *enc_sabm = NULL;
+
+        // start modified part
+        memset(&xid2, 0, sizeof(xid2));
+        xid2.base.base.type = AX25_FRAME_UNNUMBERED_XID;
+        xid2.base.base.header = hdr;
+        xid2.base.pf = true;
+        xid2.base.modifier = AX25_U_XID;
+        // end modified part
+
+        memset(&sabm, 0, sizeof(sabm));
+        sabm.base.type = AX25_FRAME_UNNUMBERED_SABM;
+        sabm.base.header = hdr;
+        sabm.pf = true;
+        sabm.modifier = AX25_U_SABM;
+
+        enc_xid = ax25_frame_encode((ax25_frame_t*) &xid2, &xid_len, &err);
+        enc_sabm = ax25_frame_encode((ax25_frame_t*) &sabm, &sabm_len, &err);
+
+        if (enc_xid && enc_sabm && xid_len > 0 && sabm_len > 0) {
+            size_t cmp_len = xid_len < sabm_len ? xid_len : sabm_len;
+            int bytes_differ = (memcmp(enc_xid, enc_sabm, cmp_len) != 0);
+            TEST_ASSERT(bytes_differ, "S.3 XID and SABM have different encoded bytes", 0);
+            DEBUG_PRINT("S.3 XID=%zu SABM=%zu bytes", xid_len, sabm_len);
+        }
+
+        if (enc_xid)
+            free(enc_xid);
+        if (enc_sabm)
+            free(enc_sabm);
+    }
+
+    return 0;
+}
+
+// -----------------------------------------------------------------------
+// Tests Protocol Identifier (PID) byte handling in UI frames.
+// The Linux AF_AX25 socket layer dispatches received UI frames to upper
+// protocol handlers based on the PID byte.  This section verifies that
+// libax25v22 preserves all commonly used PID values through encode/decode
+// and correctly rejects the reserved PID 0xFF.
+// -----------------------------------------------------------------------
+
+// Fallback PID constants — values are fixed by AX.25 v2.2 section 6.5.1.
+#ifndef PID_IP
+#define PID_IP     ((uint8_t)0xCC) // ARPA Internet Protocol (RFC 1144)
+#endif
+#ifndef PID_ARP
+#define PID_ARP    ((uint8_t)0xCD) // ARPA Address Resolution Protocol
+#endif
+#ifndef PID_NETROM
+#define PID_NETROM ((uint8_t)0xCF) // NET/ROM layer 3
+#endif
+
+static int sec_t_pid_values(void) {
+    TEST_SECTION("=== SEC-T: PID Values in UI Frames ===");
+
+    uint8_t err;
+    size_t enc_len;
+    uint8_t *enc;
+    ax25_frame_t *dec;
+    ax25_frame_header_t hdr;
+
+    ax25_address_t *dest = ax25_address_from_string("W1AW-0", &err);
+    ax25_address_t *src = ax25_address_from_string("N0CALL-0", &err);
+
+    if (!dest || !src) {
+        if (dest)
+            ax25_address_free(dest, &err);
+        if (src)
+            ax25_address_free(src, &err);
+        printf("SKIP: SEC-T address creation failed\n");
+        return 0;
+    }
+
+    memset(&hdr, 0, sizeof(hdr));
+    hdr.destination = *dest;
+    hdr.source = *src;
+    hdr.cr = false;
+    hdr.repeaters.num_repeaters = 0;
+
+    ax25_address_free(dest, &err);
+    ax25_address_free(src, &err);
+
+    uint8_t payload[] = "PID TEST";
+
+    // T.1: PID 0xF0 (PID_NO_L3) — most common PID; used in APRS, generic
+    // beacons, and all unconnected applications that do not use a network layer.
+    {
+        ax25_unnumbered_information_frame_t ui;
+        memset(&ui, 0, sizeof(ui));
+        ui.base.base.type = AX25_FRAME_UNNUMBERED_INFORMATION;
+        ui.base.base.header = hdr;
+        ui.base.pf = false;
+        ui.base.modifier = AX25_U_UI;
+        ui.pid = PID_NO_L3;
+        ui.payload = payload;
+        ui.payload_len = sizeof(payload) - 1;
+
+        enc = ax25_frame_encode((ax25_frame_t*) &ui, &enc_len, &err);
+        TEST_ASSERT(enc != NULL && err == 0, "T.1 Encode UI PID=0xF0 (no L3)", err);
+
+        if (enc) {
+            dec = ax25_frame_decode(enc, enc_len, MODULO128_FALSE, &err);
+            TEST_ASSERT(dec != NULL && err == 0, "T.1 Decode UI PID=0xF0 round-trip", err);
+            if (dec) {
+                ax25_unnumbered_information_frame_t *dui = (ax25_unnumbered_information_frame_t*) dec;
+                TEST_ASSERT(dui->pid == PID_NO_L3, "T.1 PID=0xF0 preserved", dui->pid);
+                DEBUG_PRINT("T.1 PID=0x%02X preserved", (unsigned) dui->pid);
+                ax25_frame_free(dec, &err);
+            }
+            free(enc);
+        }
+    }
+
+    // T.2: PID 0xCC (IP) — IP-over-AX.25 per RFC 1144.
+    // The Linux ax25 kernel handles this PID via the ax25_ip driver when enabled.
+    {
+        ax25_unnumbered_information_frame_t ui;
+        memset(&ui, 0, sizeof(ui));
+        ui.base.base.type = AX25_FRAME_UNNUMBERED_INFORMATION;
+        ui.base.base.header = hdr;
+        ui.base.pf = false;
+        ui.base.modifier = AX25_U_UI;
+        ui.pid = PID_IP;
+        ui.payload = payload;
+        ui.payload_len = sizeof(payload) - 1;
+
+        enc = ax25_frame_encode((ax25_frame_t*) &ui, &enc_len, &err);
+        TEST_ASSERT(enc != NULL && err == 0, "T.2 Encode UI PID=0xCC (IP)", err);
+
+        if (enc) {
+            dec = ax25_frame_decode(enc, enc_len, MODULO128_FALSE, &err);
+            TEST_ASSERT(dec != NULL && err == 0, "T.2 Decode UI PID=0xCC (IP) round-trip", err);
+            if (dec) {
+                ax25_unnumbered_information_frame_t *dui = (ax25_unnumbered_information_frame_t*) dec;
+                TEST_ASSERT(dui->pid == PID_IP, "T.2 PID=0xCC (IP) preserved", dui->pid);
+                DEBUG_PRINT("T.2 PID=0x%02X (IP) preserved", (unsigned) dui->pid);
+                ax25_frame_free(dec, &err);
+            }
+            free(enc);
+        }
+    }
+
+    // T.3: PID 0xCF (NET/ROM) — NET/ROM layer 3 frames.
+    // axport entries that connect to NET/ROM nodes produce frames with this PID.
+    {
+        ax25_unnumbered_information_frame_t ui;
+        memset(&ui, 0, sizeof(ui));
+        ui.base.base.type = AX25_FRAME_UNNUMBERED_INFORMATION;
+        ui.base.base.header = hdr;
+        ui.base.pf = false;
+        ui.base.modifier = AX25_U_UI;
+        ui.pid = PID_NETROM;
+        ui.payload = payload;
+        ui.payload_len = sizeof(payload) - 1;
+
+        enc = ax25_frame_encode((ax25_frame_t*) &ui, &enc_len, &err);
+        TEST_ASSERT(enc != NULL && err == 0, "T.3 Encode UI PID=0xCF (NET/ROM)", err);
+
+        if (enc) {
+            dec = ax25_frame_decode(enc, enc_len, MODULO128_FALSE, &err);
+            TEST_ASSERT(dec != NULL && err == 0, "T.3 Decode UI PID=0xCF (NET/ROM) round-trip", err);
+            if (dec) {
+                ax25_unnumbered_information_frame_t *dui = (ax25_unnumbered_information_frame_t*) dec;
+                TEST_ASSERT(dui->pid == PID_NETROM, "T.3 PID=0xCF (NET/ROM) preserved", dui->pid);
+                DEBUG_PRINT("T.3 PID=0x%02X (NET/ROM) preserved", (unsigned) dui->pid);
+                ax25_frame_free(dec, &err);
+            }
+            free(enc);
+        }
+    }
+
+    // T.4: PID 0xFF (reserved / two-byte escape) — must be rejected.
+    // AX.25 v2.2 section 6.5.1 reserves 0xFF as a two-byte PID prefix.
+    // validate_frame_for_encoding must block it before encode is attempted.
+    {
+        ax25_unnumbered_information_frame_t ui;
+        memset(&ui, 0, sizeof(ui));
+        ui.base.base.type = AX25_FRAME_UNNUMBERED_INFORMATION;
+        ui.base.base.header = hdr;
+        ui.base.pf = false;
+        ui.base.modifier = AX25_U_UI;
+        ui.pid = 0xFF;
+        ui.payload = payload;
+        ui.payload_len = sizeof(payload) - 1;
+
+        err = 0;
+        int val_rc = validate_frame_for_encoding((ax25_frame_t*) &ui, &err);
+        if (val_rc != 0) {
+            // Validator correctly rejected 0xFF before encode.
+            TEST_ASSERT(err != 0, "T.4 PID=0xFF (reserved) rejected by validator (err != 0)", err);
+            DEBUG_PRINT("T.4 PID=0xFF correctly rejected by validate (err=%d)", err);
+        } else {
+            // Validator passed it; check that the library encode refuses it.
+            enc = ax25_frame_encode((ax25_frame_t*) &ui, &enc_len, &err);
+            TEST_ASSERT(enc == NULL || err != 0, "T.4 PID=0xFF (reserved) rejected by encode", err);
+            DEBUG_PRINT("T.4 PID=0xFF encode result: enc=%p err=%d", (void*) enc, err);
+            if (enc)
+                free(enc);
+        }
+    }
+
+    return 0;
+}
+
 int test_linux_interop_main(void) {
     int failures = 0;
 
@@ -3108,6 +3589,12 @@ int test_linux_interop_main(void) {
     failures += run_test_section("=== SEC-N: SOCK_DGRAM UI Frames ===", sec_n_sock_dgram_ui_frames);
     failures += run_test_section("=== SEC-O: /proc/sys/net/ax25 Sysctl ===", sec_o_sysctl_ax25_params);
     failures += run_test_section("=== SEC-P: full_sockaddr_ax25 Digipeater ===", sec_p_full_sockaddr_digipeater);
+    // start modified part
+    failures += run_test_section("=== SEC-Q: Supervisory Frames (RR/RNR/REJ) ===", sec_q_supervisory_frames);
+    failures += run_test_section("=== SEC-R: SABME Frame (Mod-128 Connect) ===", sec_r_sabme_frame);
+    failures += run_test_section("=== SEC-S: XID Frame (Capability Exchange) ===", sec_s_xid_frame);
+    failures += run_test_section("=== SEC-T: PID Values in UI Frames ===", sec_t_pid_values);
+    // end modified part
 
     printf("\n");
     printf("=============================================================\n");
@@ -3116,9 +3603,9 @@ int test_linux_interop_main(void) {
     printf("Total Assertions: %u\n", assert_count);
 
     if (failures == 0) {
-        printf("✓✓✓ ALL TESTS PASSED ✓✓✓\n");
+        printf("\xE2\x9C\x93\xE2\x9C\x93\xE2\x9C\x93 ALL TESTS PASSED \xE2\x9C\x93\xE2\x9C\x93\xE2\x9C\x93\n");
     } else {
-        printf("✗✗✗ %d TEST SECTION(S) FAILED ✗✗✗\n", failures);
+        printf("\xE2\x9C\x97\xE2\x9C\x97\xE2\x9C\x97 %d TEST SECTION(S) FAILED \xE2\x9C\x97\xE2\x9C\x97\xE2\x9C\x97\n", failures);
     }
 
     printf("AF_AX25 Kernel Support: %s\n", g_test_ctx.kernel_ax25_available ? "YES" : "NO");
