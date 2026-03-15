@@ -989,7 +989,10 @@ static int validate_frame_structure_complete(const ax25_frame_t *frame, uint8_t 
 }
 
 static int validate_frame_for_encoding(const ax25_frame_t *frame, uint8_t *err) {
-    return validate_frame_structure_complete(frame, MODULO128_FALSE, err);
+    uint8_t mod128 = MODULO128_FALSE;
+    if (frame != NULL && frame->type == AX25_FRAME_INFORMATION_16BIT)
+        mod128 = MODULO128_TRUE;
+    return validate_frame_structure_complete(frame, mod128, err);
 }
 
 // Enhanced HDLC validation for bit-stuffing correctness
@@ -1323,7 +1326,6 @@ static int sec_a_libax25_address(void) {
         TEST_ASSERT(rc == 0, "A.10 6-char callsign VE3XYZ", rc);
     }
 
-    // start modified part
     // A.11: ax25_validate - verify a correctly-encoded address is accepted
     {
         rc = ax25_aton_entry("W1AW-3", (char*) &addr);
@@ -1575,6 +1577,80 @@ static int sec_b_af_ax25_sockets(void) {
                     rc = getsockopt(sock, SOL_AX25, AX25_PIDINCL, &readback, &optlen);
                     TEST_ASSERT(rc == 0 && readback == hdrincl, "B.11 getsockopt AX25_PIDINCL verified", readback);
                     DEBUG_PRINT("AX25_PIDINCL set and verified: %d", readback);
+                }
+            }
+            close(sock);
+        }
+    }
+
+    // B.12: AX25_IDLE - idle connection timeout (1/10th-sec units; 0 = disabled).
+    // The kernel closes a connected AX.25 socket that has been idle for longer
+    // than this value.  Used by ax25d and node servers to reclaim dead connections.
+    // Valid range: 0 (disabled) to 36000 (1 hour).  Linux default is 0 (disabled).
+    {
+        sock = socket(AF_AX25, SOCK_SEQPACKET, 0);
+        if (sock >= 0) {
+            int idle = 600;  // 60 seconds in 1/10th-second units
+            rc = setsockopt(sock, SOL_AX25, AX25_IDLE, &idle, sizeof(idle));
+            if (rc < 0 && (errno == EINVAL || errno == ENOPROTOOPT)) {
+                printf("SKIP: B.12 AX25_IDLE (not available on this kernel build)\n");
+            } else {
+                TEST_ASSERT(rc == 0, "B.12 setsockopt AX25_IDLE=600 (60s idle timeout)", rc);
+                if (rc == 0) {
+                    int readback = 0;
+                    socklen_t optlen = sizeof(readback);
+                    rc = getsockopt(sock, SOL_AX25, AX25_IDLE, &readback, &optlen);
+                    TEST_ASSERT(rc == 0 && readback == idle, "B.12 getsockopt AX25_IDLE verified", readback);
+                    DEBUG_PRINT("AX25_IDLE set and verified: %d (1/10ths sec)", readback);
+                }
+            }
+            close(sock);
+        }
+    }
+
+    // B.13: AX25_PACLEN - maximum packet payload length in bytes (range 1-512).
+    // Controls the maximum information field length the kernel accepts for TX.
+    // Must agree with the paclen in /etc/ax25/axports.  Default is 256 bytes.
+    {
+        sock = socket(AF_AX25, SOCK_SEQPACKET, 0);
+        if (sock >= 0) {
+            int paclen = 256;
+            rc = setsockopt(sock, SOL_AX25, AX25_PACLEN, &paclen, sizeof(paclen));
+            if (rc < 0 && (errno == EINVAL || errno == ENOPROTOOPT)) {
+                printf("SKIP: B.13 AX25_PACLEN (not available on this kernel build)\n");
+            } else {
+                TEST_ASSERT(rc == 0, "B.13 setsockopt AX25_PACLEN=256", rc);
+                if (rc == 0) {
+                    int readback = 0;
+                    socklen_t optlen = sizeof(readback);
+                    rc = getsockopt(sock, SOL_AX25, AX25_PACLEN, &readback, &optlen);
+                    TEST_ASSERT(rc == 0 && readback == paclen, "B.13 getsockopt AX25_PACLEN verified", readback);
+                    DEBUG_PRINT("AX25_PACLEN set and verified: %d bytes", readback);
+                }
+            }
+            close(sock);
+        }
+    }
+
+    // B.14: AX25_IAMDIGI - digipeater participation flag (1 = participate; 0 = normal).
+    // When set, the kernel routes received frames through the digipeater path.
+    // Required by ax25d when acting as a digipeater and by netrom/rose routing.
+    // Critical for testing libax25v22-to-kernel digipeater interoperability.
+    {
+        sock = socket(AF_AX25, SOCK_SEQPACKET, 0);
+        if (sock >= 0) {
+            int iamdigi = 1;
+            rc = setsockopt(sock, SOL_AX25, AX25_IAMDIGI, &iamdigi, sizeof(iamdigi));
+            if (rc < 0 && (errno == EINVAL || errno == ENOPROTOOPT)) {
+                printf("SKIP: B.14 AX25_IAMDIGI (not available on this kernel build)\n");
+            } else {
+                TEST_ASSERT(rc == 0, "B.14 setsockopt AX25_IAMDIGI=1 (digipeater mode)", rc);
+                if (rc == 0) {
+                    int readback = 0;
+                    socklen_t optlen = sizeof(readback);
+                    rc = getsockopt(sock, SOL_AX25, AX25_IAMDIGI, &readback, &optlen);
+                    TEST_ASSERT(rc == 0 && readback == iamdigi, "B.14 getsockopt AX25_IAMDIGI verified", readback);
+                    DEBUG_PRINT("AX25_IAMDIGI set and verified: %d", readback);
                 }
             }
             close(sock);
@@ -2009,7 +2085,6 @@ static int sec_e_connection_state_machine(void) {
 
             TEST_ASSERT(timer_cfg.t1_ms >= 500 && timer_cfg.t1_ms <= 60000, "E.5a T1 in plausible range (0.5-60s)", timer_cfg.t1_ms);
             TEST_ASSERT(timer_cfg.t3_ms > timer_cfg.t1_ms, "E.5b T3 > T1", 0);
-            // end modified part
 
             DEBUG_VAR("T1 timer (ticks)", timer_cfg.t1_ticks);
             DEBUG_VAR("T2 timer (ticks)", timer_cfg.t2_ticks);
@@ -2944,6 +3019,32 @@ static int sec_o_sysctl_ax25_params(void) {
         }
     }
 
+    // O.6: t2_timeout - delayed-ACK timer (1/10th-second units; valid range 1-20).
+    // T2 is the kernel delayed-ACK window: the stack waits up to T2 after
+    // receiving an I-frame before emitting a standalone RR, allowing the ACK
+    // to be piggybacked onto an outgoing I-frame.  A misconfigured T2 can
+    // cause ACK storms (T2 too small) or throughput collapse (T2 too large).
+    // Linux default is t2=3 (300 ms); valid kernel range is 1-20 (100ms-2s).
+    {
+        n = snprintf(path, sizeof(path), "/proc/sys/net/ax25/%s/t2_timeout", g_test_ctx.port_name);
+        if (n <= 0 || n >= (int) sizeof(path)) {
+            printf("SKIP: O.6 path too long\n");
+        } else {
+            fp = fopen(path, "r");
+            if (!fp) {
+                printf("SKIP: O.6 %s not readable (%s)\n", path, strerror(errno));
+            } else {
+                memset(buf, 0, sizeof(buf));
+                if (fgets(buf, sizeof(buf), fp) != NULL) {
+                    value = atoi(buf);
+                    TEST_ASSERT(value >= 1 && value <= 20, "O.6 t2_timeout (delayed-ACK) in range [1..20] (1/10th-sec units)", value);
+                    DEBUG_PRINT("O.6 t2_timeout=%d (%d ms)", value, value * 100);
+                }
+                fclose(fp);
+            }
+        }
+    }
+
     return 0;
 }
 
@@ -3034,6 +3135,12 @@ static int sec_q_supervisory_frames(void) {
 
     uint8_t err;
     ax25_frame_header_t hdr;
+    uint8_t *enc;
+    size_t enc_len;
+    ax25_frame_t *dec;
+    (void) enc;
+    (void) enc_len;
+    (void) dec;
 
     ax25_address_t *dest = ax25_address_from_string("W1AW-0", &err);
     ax25_address_t *src = ax25_address_from_string("N0CALL-0", &err);
@@ -3172,7 +3279,148 @@ static int sec_q_supervisory_frames(void) {
         }
     }
 #else
-    printf("SKIP: Q.4 (AX25_FRAME_SUPERVISORY_RR_16BIT not defined in this build)\n");
+    printf("SKIP: Q.4-Q.6 (AX25_FRAME_SUPERVISORY_RR_16BIT not defined in this build)\n");
+#endif
+
+    // Q.5 and Q.6 live inside the #ifdef above; they are split out here in a
+    // separate guarded block so they compile independently even when
+    // AX25_FRAME_SUPERVISORY_RR_16BIT exists but the RNR/REJ-16 constants do not.
+    // This mirrors the same guard pattern used for SREJ (Q.7-Q.8) below.
+#ifdef AX25_FRAME_SUPERVISORY_RNR_16BIT
+    // Q.5: Encode and decode RNR mod-128 - extended flow-stop.
+    // The Linux kernel sends mod-128 RNR when AX25_EXTSEQ is active and the
+    // receive buffer is full; the remote peer must halt I-frame transmission
+    // until a mod-128 RR acknowledging the same N(R) is received.
+    {
+        ax25_supervisory_frame_t rnr16;
+        memset(&rnr16, 0, sizeof(rnr16));
+        rnr16.base.type   = AX25_FRAME_SUPERVISORY_RNR_16BIT;
+        rnr16.base.header = hdr;
+        rnr16.pf          = true;
+        rnr16.nr          = 96;
+
+        enc = ax25_frame_encode((ax25_frame_t*) &rnr16, &enc_len, &err);
+        TEST_ASSERT(enc != NULL && err == 0, "Q.5 Encode RNR mod-128 P/F=1 N(R)=96", err);
+
+        if (enc) {
+            dec = ax25_frame_decode(enc, enc_len, MODULO128_TRUE, &err);
+            TEST_ASSERT(dec != NULL && err == 0, "Q.5 Decode RNR mod-128 round-trip", err);
+            if (dec) {
+                TEST_ASSERT(dec->type == AX25_FRAME_SUPERVISORY_RNR_16BIT,
+                            "Q.5 Decoded type == RNR-16", 0);
+                ax25_supervisory_frame_t *drnr16 = (ax25_supervisory_frame_t*) dec;
+                TEST_ASSERT(drnr16->nr == 96, "Q.5 RNR mod-128 N(R)=96 preserved", drnr16->nr);
+                DEBUG_PRINT("Q.5 RNR mod-128 N(R)=%d", drnr16->nr);
+                ax25_frame_free(dec, &err);
+            }
+            free(enc);
+        }
+    }
+#else
+    printf("SKIP: Q.5 (AX25_FRAME_SUPERVISORY_RNR_16BIT not defined in this build)\n");
+#endif
+
+#ifdef AX25_FRAME_SUPERVISORY_REJ_16BIT
+    // Q.6: Encode and decode REJ mod-128 - extended retransmission request.
+    // The Linux kernel issues mod-128 REJ when it detects a sequence gap in
+    // extended mode; the 7-bit N(R) names the first I-frame to retransmit.
+    // Boundary value N(R)=127 is used to test the upper limit of the 7-bit field.
+    {
+        ax25_supervisory_frame_t rej16;
+        memset(&rej16, 0, sizeof(rej16));
+        rej16.base.type   = AX25_FRAME_SUPERVISORY_REJ_16BIT;
+        rej16.base.header = hdr;
+        rej16.pf          = false;
+        rej16.nr          = 127;
+
+        enc = ax25_frame_encode((ax25_frame_t*) &rej16, &enc_len, &err);
+        TEST_ASSERT(enc != NULL && err == 0, "Q.6 Encode REJ mod-128 N(R)=127 (boundary)", err);
+
+        if (enc) {
+            dec = ax25_frame_decode(enc, enc_len, MODULO128_TRUE, &err);
+            TEST_ASSERT(dec != NULL && err == 0, "Q.6 Decode REJ mod-128 round-trip", err);
+            if (dec) {
+                TEST_ASSERT(dec->type == AX25_FRAME_SUPERVISORY_REJ_16BIT,
+                            "Q.6 Decoded type == REJ-16", 0);
+                ax25_supervisory_frame_t *drej16 = (ax25_supervisory_frame_t*) dec;
+                TEST_ASSERT(drej16->nr == 127, "Q.6 REJ mod-128 N(R)=127 preserved", drej16->nr);
+                DEBUG_PRINT("Q.6 REJ mod-128 N(R)=%d", drej16->nr);
+                ax25_frame_free(dec, &err);
+            }
+            free(enc);
+        }
+    }
+#else
+    printf("SKIP: Q.6 (AX25_FRAME_SUPERVISORY_REJ_16BIT not defined in this build)\n");
+#endif
+
+    // Q.7: Encode and decode SREJ (Selective Reject) mod-8.
+    // SREJ is the AX.25 v2.2 section 4.3.5 selective-retransmission frame.
+    // Unlike REJ which retransmits all frames from N(R), SREJ requests
+    // retransmission of only one specific frame identified by N(R).
+    // SREJ is a command-only frame per AX.25 v2.2 table 4.
+    // The Linux kernel accepts SREJ when window size > 1 is negotiated.
+#ifdef AX25_FRAME_SUPERVISORY_SREJ_8BIT
+    {
+        ax25_supervisory_frame_t srej;
+        memset(&srej, 0, sizeof(srej));
+        srej.base.type   = AX25_FRAME_SUPERVISORY_SREJ_8BIT;
+        srej.base.header = hdr;
+        srej.pf          = false;
+        srej.nr          = 2;
+
+        enc = ax25_frame_encode((ax25_frame_t*) &srej, &enc_len, &err);
+        TEST_ASSERT(enc != NULL && err == 0, "Q.7 Encode SREJ mod-8 N(R)=2", err);
+
+        if (enc) {
+            dec = ax25_frame_decode(enc, enc_len, MODULO128_FALSE, &err);
+            TEST_ASSERT(dec != NULL && err == 0, "Q.7 Decode SREJ mod-8 round-trip", err);
+            if (dec) {
+                TEST_ASSERT(dec->type == AX25_FRAME_SUPERVISORY_SREJ_8BIT,
+                            "Q.7 Decoded type == SREJ-8", 0);
+                ax25_supervisory_frame_t *dsrej = (ax25_supervisory_frame_t*) dec;
+                TEST_ASSERT(dsrej->nr == 2, "Q.7 SREJ mod-8 N(R)=2 preserved", dsrej->nr);
+                DEBUG_PRINT("Q.7 SREJ mod-8 N(R)=%d enc_len=%zu", dsrej->nr, enc_len);
+                ax25_frame_free(dec, &err);
+            }
+            free(enc);
+        }
+    }
+#else
+    printf("SKIP: Q.7 (AX25_FRAME_SUPERVISORY_SREJ_8BIT not defined in this build)\n");
+#endif
+
+    // Q.8: Encode and decode SREJ mod-128 with N(R)=0 (modulo-wrap boundary).
+    // Tests the encoder correctly handles the zero wrap-around value in a
+    // 7-bit N(R) field, which is the most common post-wrap sequence number.
+#ifdef AX25_FRAME_SUPERVISORY_SREJ_16BIT
+    {
+        ax25_supervisory_frame_t srej16;
+        memset(&srej16, 0, sizeof(srej16));
+        srej16.base.type   = AX25_FRAME_SUPERVISORY_SREJ_16BIT;
+        srej16.base.header = hdr;
+        srej16.pf          = false;
+        srej16.nr          = 0;
+
+        enc = ax25_frame_encode((ax25_frame_t*) &srej16, &enc_len, &err);
+        TEST_ASSERT(enc != NULL && err == 0, "Q.8 Encode SREJ mod-128 N(R)=0 (wrap boundary)", err);
+
+        if (enc) {
+            dec = ax25_frame_decode(enc, enc_len, MODULO128_TRUE, &err);
+            TEST_ASSERT(dec != NULL && err == 0, "Q.8 Decode SREJ mod-128 round-trip", err);
+            if (dec) {
+                TEST_ASSERT(dec->type == AX25_FRAME_SUPERVISORY_SREJ_16BIT,
+                            "Q.8 Decoded type == SREJ-16", 0);
+                ax25_supervisory_frame_t *dsrej16 = (ax25_supervisory_frame_t*) dec;
+                TEST_ASSERT(dsrej16->nr == 0, "Q.8 SREJ mod-128 N(R)=0 preserved", dsrej16->nr);
+                DEBUG_PRINT("Q.8 SREJ mod-128 N(R)=%d enc_len=%zu", dsrej16->nr, enc_len);
+                ax25_frame_free(dec, &err);
+            }
+            free(enc);
+        }
+    }
+#else
+    printf("SKIP: Q.8 (AX25_FRAME_SUPERVISORY_SREJ_16BIT not defined in this build)\n");
 #endif
 
     return 0;
@@ -3189,6 +3437,12 @@ static int sec_r_sabme_frame(void) {
 
     uint8_t err;
     ax25_frame_header_t hdr;
+    uint8_t *enc;
+    size_t enc_len;
+    ax25_frame_t *dec;
+    (void) enc;
+    (void) enc_len;
+    (void) dec;
 
     ax25_address_t *dest = ax25_address_from_string("W1AW-0", &err);
     ax25_address_t *src = ax25_address_from_string("N0CALL-0", &err);
@@ -3303,27 +3557,13 @@ static int sec_s_xid_frame(void) {
     // S.1: Encode XID frame.
     // A minimal XID carries no parameters; used to probe the remote capabilities.
     // XID uses modifier 0xAF (command) / 0xAC (response) per AX.25 v2.2 table 4.
-    // start modified part
-    // BUG FIX: XID encoding requires ax25_exchange_identification_frame_t, NOT
-    // ax25_unnumbered_frame_t.  ax25_frame_encode() dispatches on frame->type
-    // == AX25_FRAME_UNNUMBERED_XID to ax25_exchange_identification_frame_encode()
-    // which casts the pointer to ax25_exchange_identification_frame_t* and reads
-    // XID-specific fields that lie beyond the end of ax25_unnumbered_frame_t.
-    // Passing ax25_unnumbered_frame_t caused: (a) uninitialised-value reads from
-    // stack bytes past the struct, (b) those stack bytes held a freed pointer
-    // recycled from sec_r's ax25_address_from_string allocation, producing a
-    // use-after-free report, and (c) SIGSEGV when the encoder followed that
-    // garbage pointer into unmapped memory.
-    // end modified part
     {
-        // start modified part
         ax25_exchange_identification_frame_t xid;
         memset(&xid, 0, sizeof(xid));
         xid.base.base.type = AX25_FRAME_UNNUMBERED_XID;
         xid.base.base.header = hdr;
         xid.base.pf = true;
         xid.base.modifier = AX25_U_XID;
-        // end modified part
 
         enc = ax25_frame_encode((ax25_frame_t*) &xid, &enc_len, &err);
         TEST_ASSERT(enc != NULL && err == 0, "S.1 Encode XID frame (parameter negotiation)", err);
@@ -3347,22 +3587,18 @@ static int sec_s_xid_frame(void) {
     // S.3: XID and SABM must produce different encoded bytes.
     // They differ in the control byte (0xAF vs 0x2F) for the same address field.
     {
-        // start modified part
         // Use ax25_exchange_identification_frame_t for the XID variable so the
         // encoder reads valid zeroed memory for all XID-specific fields.
         ax25_exchange_identification_frame_t xid2;
-        // end modified part
         ax25_unnumbered_frame_t sabm;
         size_t xid_len = 0, sabm_len = 0;
         uint8_t *enc_xid = NULL, *enc_sabm = NULL;
 
-        // start modified part
         memset(&xid2, 0, sizeof(xid2));
         xid2.base.base.type = AX25_FRAME_UNNUMBERED_XID;
         xid2.base.base.header = hdr;
         xid2.base.pf = true;
         xid2.base.modifier = AX25_U_XID;
-        // end modified part
 
         memset(&sabm, 0, sizeof(sabm));
         sabm.base.type = AX25_FRAME_UNNUMBERED_SABM;
@@ -3560,6 +3796,112 @@ static int sec_t_pid_values(void) {
     return 0;
 }
 
+// SEC-U: FRMR (Frame Reject) encode/decode test.
+// The Linux kernel AX.25 state machine sends FRMR when it receives a frame
+// that is syntactically valid but logically illegal in the current state, e.g.
+// an I-frame received while the connection is not in the established state.
+// libax25v22 must produce a FRMR that the kernel can parse correctly.
+// AX.25 v2.2 section 4.3.7 specifies the FRMR modifier as 0x87.
+static int sec_u_frmr_frame(void) {
+    TEST_SECTION("=== SEC-U: FRMR Frame (Frame Reject) ===");
+
+    uint8_t err;
+    size_t enc_len;
+    uint8_t *enc;
+    ax25_frame_t *dec;
+    ax25_frame_header_t hdr;
+
+    ax25_address_t *dest = ax25_address_from_string("W1AW-0", &err);
+    ax25_address_t *src = ax25_address_from_string("N0CALL-0", &err);
+
+    if (!dest || !src) {
+        if (dest)
+            ax25_address_free(dest, &err);
+        if (src)
+            ax25_address_free(src, &err);
+        printf("SKIP: SEC-U address creation failed\n");
+        return 0;
+    }
+
+    memset(&hdr, 0, sizeof(hdr));
+    hdr.destination = *dest;
+    hdr.source = *src;
+    // FRMR is always sent as a response frame (C/R bit = 0 in the source field).
+    hdr.cr = false;
+    hdr.repeaters.num_repeaters = 0;
+
+    ax25_address_free(dest, &err);
+    ax25_address_free(src, &err);
+
+    // U.1: Encode FRMR frame.
+    {
+        ax25_frame_reject_frame_t frmr;
+        memset(&frmr, 0, sizeof(frmr));
+        frmr.base.base.type = AX25_FRAME_UNNUMBERED_FRMR;
+        frmr.base.base.header = hdr;
+        frmr.base.pf = false;
+        frmr.base.modifier = AX25_U_FRMR;
+
+        enc = ax25_frame_encode((ax25_frame_t*) &frmr, &enc_len, &err);
+        TEST_ASSERT(enc != NULL && err == 0, "U.1 Encode FRMR frame", err);
+
+        if (enc) {
+            DEBUG_PRINT("U.1 FRMR encoded %zu bytes", enc_len);
+
+            // U.2: Decode FRMR round-trip - frame type must survive encode/decode.
+            dec = ax25_frame_decode(enc, enc_len, MODULO128_FALSE, &err);
+            TEST_ASSERT(dec != NULL && err == 0, "U.2 Decode FRMR round-trip", err);
+            if (dec) {
+                TEST_ASSERT(dec->type == AX25_FRAME_UNNUMBERED_FRMR, "U.2 Decoded type == FRMR", 0);
+                DEBUG_PRINT("U.2 FRMR round-trip verified enc_len=%zu", enc_len);
+                ax25_frame_free(dec, &err);
+            }
+            free(enc);
+            enc = NULL;
+        }
+    }
+
+    // U.3: FRMR and UA must produce different encoded bytes.
+    // Both are response U-frames with the same address field but different
+    // control bytes: FRMR=0x87, UA=0x63.  This verifies the library maps
+    // the two frame types to distinct over-the-air control octet values.
+    {
+        ax25_unnumbered_frame_t ua;
+        ax25_frame_reject_frame_t frmr2;
+        size_t ua_len = 0, frmr_len = 0;
+        uint8_t *enc_ua = NULL, *enc_frmr = NULL;
+
+        memset(&ua, 0, sizeof(ua));
+        ua.base.type = AX25_FRAME_UNNUMBERED_UA;
+        ua.base.header = hdr;
+        ua.pf = false;
+        ua.modifier = AX25_U_UA;
+
+        memset(&frmr2, 0, sizeof(frmr2));
+        frmr2.base.base.type = AX25_FRAME_UNNUMBERED_FRMR;
+        frmr2.base.base.header = hdr;
+        frmr2.base.pf = false;
+        frmr2.base.modifier = AX25_U_FRMR;
+
+        enc_ua = ax25_frame_encode((ax25_frame_t*) &ua, &ua_len, &err);
+        enc_frmr = ax25_frame_encode((ax25_frame_t*) &frmr2, &frmr_len, &err);
+
+        if (enc_ua && enc_frmr && ua_len > 0 && frmr_len > 0) {
+            size_t cmp_len = ua_len < frmr_len ? ua_len : frmr_len;
+            int bytes_differ = (memcmp(enc_ua, enc_frmr, cmp_len) != 0);
+            TEST_ASSERT(bytes_differ, "U.3 FRMR and UA have different encoded bytes (0x87 vs 0x63)", 0);
+            DEBUG_PRINT("U.3 FRMR=%zu UA=%zu bytes; bytes_differ=%d", frmr_len, ua_len, bytes_differ);
+        }
+
+        if (enc_ua)
+            free(enc_ua);
+        if (enc_frmr)
+            free(enc_frmr);
+    }
+
+    return 0;
+}
+
 int test_linux_interop_main(void) {
     int failures = 0;
 
@@ -3589,12 +3931,11 @@ int test_linux_interop_main(void) {
     failures += run_test_section("=== SEC-N: SOCK_DGRAM UI Frames ===", sec_n_sock_dgram_ui_frames);
     failures += run_test_section("=== SEC-O: /proc/sys/net/ax25 Sysctl ===", sec_o_sysctl_ax25_params);
     failures += run_test_section("=== SEC-P: full_sockaddr_ax25 Digipeater ===", sec_p_full_sockaddr_digipeater);
-    // start modified part
     failures += run_test_section("=== SEC-Q: Supervisory Frames (RR/RNR/REJ) ===", sec_q_supervisory_frames);
     failures += run_test_section("=== SEC-R: SABME Frame (Mod-128 Connect) ===", sec_r_sabme_frame);
     failures += run_test_section("=== SEC-S: XID Frame (Capability Exchange) ===", sec_s_xid_frame);
     failures += run_test_section("=== SEC-T: PID Values in UI Frames ===", sec_t_pid_values);
-    // end modified part
+    failures += run_test_section("=== SEC-U: FRMR Frame (Frame Reject) ===", sec_u_frmr_frame);
 
     printf("\n");
     printf("=============================================================\n");
