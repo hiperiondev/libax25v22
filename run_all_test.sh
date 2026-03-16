@@ -391,11 +391,39 @@ else
 fi
 
 # Cleanup
-rm -f /tmp/socat_pty.txt
-if [ -f /tmp/socat_pid.txt ]; then
-    socat_pid=$(cat /tmp/socat_pid.txt 2>/dev/null)
-    if [ -n "$socat_pid" ]; then
-        kill $socat_pid 2>/dev/null || true
+echo ""
+print_header "Cleanup"
+
+# Kill kissattach processes
+if pgrep -f "kissattach" > /dev/null 2>&1; then
+    print_warning "Stopping kissattach processes..."
+    pkill -TERM -f "kissattach" 2>/dev/null || true
+    sleep 1
+    # Force kill if still running
+    if pgrep -f "kissattach" > /dev/null 2>&1; then
+        pkill -KILL -f "kissattach" 2>/dev/null || true
     fi
-    rm -f /tmp/socat_pid.txt
+    print_success "kissattach processes stopped"
+else
+    echo "No kissattach processes to clean up"
 fi
+
+# Kill socat PTY processes
+if pgrep -f "socat.*PTY" > /dev/null 2>&1; then
+    print_warning "Stopping socat PTY processes..."
+    pkill -TERM -f "socat.*PTY" 2>/dev/null || true
+    sleep 1
+    # Force kill if still running
+    if pgrep -f "socat.*PTY" > /dev/null 2>&1; then
+        pkill -KILL -f "socat.*PTY" 2>/dev/null || true
+    fi
+    print_success "socat processes stopped"
+else
+    echo "No socat PTY processes to clean up"
+fi
+
+# Remove temp files
+rm -f /tmp/socat_pty.txt
+rm -f /tmp/socat_pid.txt
+
+print_success "Cleanup complete"
