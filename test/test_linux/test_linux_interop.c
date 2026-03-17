@@ -1368,16 +1368,42 @@ static int sec_a_libax25_address(void) {
         TEST_ASSERT(rc == 0, "A.7 SSID 15 valid", rc);
     }
 
-    // A.8: SSID 16 invalid — detect silent clamping (fix 3.2)
+    // A.8: SSID 16 invalid — unconditional rejection with silent-truncation detection.
+    //
+    // Problem A-1 (audit): Some old libax25 versions (Debian Buster era) accept SSID-16
+    // with silent truncation to SSID-0 because (16 & 0x0F) << 1 == 0.  The previous test
+    // only printed a warning and asserted 0 only if rc==0, which is correct, but the
+    // assertion message was misleading.  The new logic is:
+    //   • If libax25 rejects  (rc != 0) → PASS.
+    //   • If libax25 accepts  (rc == 0):
+    //       – Extract the encoded SSID nibble.
+    //       – If nibble == 0 the library silently truncated 16 → 0: FAIL unconditionally
+    //         because callers relying on a 4-bit SSID field will silently corrupt SSID.
+    //       – If nibble != 0 (impossible by arithmetic but handled defensively): FAIL too,
+    //         because SSID-16 is outside the 0–15 range mandated by AX.25 v2.2 §3.12.1.
+    //
+    // Cross-stack relevance: Linux kernel ax25_setcall() rejects SSID > 15 with EINVAL.
+    // libax25v22 address encoder also enforces 0–15.  Both stacks agree: SSID-16 is invalid.
     {
-        rc = ax25_aton_entry("TEST-16", (char*) &addr);
-        if (rc == 0) {
-            uint8_t ssid_byte = (uint8_t) addr.ax25_call[6];
-            uint8_t encoded_ssid = (ssid_byte >> 1) & 0x0F;
-            DEBUG_PRINT("A.8 WARN: ax25_aton_entry accepted SSID-16 " "(encoded ssid=%d)", encoded_ssid);
-            TEST_ASSERT(0, "A.8 ax25_aton_entry must reject SSID 16", encoded_ssid);
+        ax25_address ssid16_addr;
+        memset(&ssid16_addr, 0, sizeof(ssid16_addr));
+        int rc16 = ax25_aton_entry("W1AW-16", (char*) &ssid16_addr);
+        if (rc16 == 0) {
+            /* libax25 accepted — inspect the encoded SSID nibble */
+            uint8_t ssid16_byte = (uint8_t) ssid16_addr.ax25_call[6];
+            uint8_t ssid16_nibble = (ssid16_byte >> 1) & 0x0F;
+            DEBUG_PRINT("A.8 WARN: ax25_aton_entry accepted SSID-16 " "(raw byte=0x%02X encoded_ssid=%u)", ssid16_byte, ssid16_nibble);
+            /* Nibble == 0 → silent truncation 16 → 0.  Nibble != 0 is impossible
+             * (16 mod 16 == 0) but we assert both paths to be defensive. */
+            TEST_ASSERT(ssid16_nibble != 0, "A.8 SSID-16 not silently truncated to SSID-0 by libax25 "
+                    "(truncation corrupts caller's address silently)", (int ) ssid16_nibble);
+            /* Even if nibble were non-zero, accepting SSID-16 is still wrong */
+            TEST_ASSERT(rc16 != 0, "A.8 ax25_aton_entry must reject out-of-range SSID 16 "
+                    "(AX.25 v2.2 §3.12.1: SSID range is 0–15)", rc16);
         } else {
-            TEST_ASSERT(rc != 0, "A.8 SSID 16 correctly rejected", 0);
+            /* Correct behaviour: rejection */
+            TEST_ASSERT(rc16 != 0, "A.8 ax25_aton_entry correctly rejects SSID 16", rc16);
+            DEBUG_PRINT("A.8 PASS: ax25_aton_entry rejected SSID-16 (rc=%d)", rc16);
         }
     }
 
@@ -1422,6 +1448,12 @@ static int sec_a_libax25_address(void) {
         /* ax25_aton() returns sizeof(full_sockaddr_ax25) on success (> 0),
          0 or negative on error — NOT the inet_aton() convention of 1/0. */
         TEST_ASSERT(rc_aton > 0, "A.13 ax25_aton W1AW-3 succeeds (rc > 0)", rc_aton);
+        /* Problem A-2: also verify the returned size equals sizeof(full_sockaddr_ax25).
+         * A truncated or partial structure would cause kernel bind() to EINVAL.
+         * ax25_aton() is documented to return exactly sizeof(struct full_sockaddr_ax25)
+         * on success; any other positive value is a length mismatch bug. */
+        TEST_ASSERT(rc_aton == (int ) sizeof(struct full_sockaddr_ax25), "A.13 ax25_aton return value equals sizeof(full_sockaddr_ax25) — "
+                "mismatch causes bind() EINVAL", rc_aton);
         DEBUG_PRINT("A.13 ax25_aton returned %d (sizeof full_sockaddr_ax25=%d)", rc_aton, (int)sizeof(struct full_sockaddr_ax25));
 
         memset(&entry_addr, 0, sizeof(entry_addr));
@@ -1463,6 +1495,64 @@ static int sec_a_libax25_address(void) {
         if (result) {
             DEBUG_PRINT("A.15 KD0ABC-7 ntoa='%s'", result);
             TEST_ASSERT(strncmp(result, "KD0ABC", 6) == 0, "A.15 KD0ABC-7 callsign part preserved", 0);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // A.16: ax25_ntoa SSID=0 hyphen-suffix omission.
+    //
+    // Problem A-3 (audit): Neither the existing tests nor the then-current code
+    // checked whether ax25_ntoa() emits "W1AW" vs "W1AW-0" when SSID is 0.
+    //
+    // AX.25 v2.2 §3.12.1 and the libax25 implementation both permit omitting
+    // the "-0" suffix for SSID=0 because it is the default.  However the form
+    // "W1AW-0" is also legal (some tools produce it when SSID=0 is explicit).
+    //
+    // This test:
+    //   (a) Encodes "W1AW-0" via ax25_aton_entry().
+    //   (b) Decodes via ax25_ntoa() and accepts EITHER "W1AW" or "W1AW-0".
+    //   (c) Verifies with ax25_cmp() that the binary round-trip is lossless
+    //       regardless of the string representation chosen by ntoa().
+    //
+    // Cross-stack relevance: if libax25v22 address-to-string conversion differs
+    // from libax25, monitoring tools calling both libraries may display different
+    // callsign strings for the identical binary address, causing operator confusion
+    // but no protocol failure (binary layer is unaffected).
+    // -----------------------------------------------------------------------
+    {
+        ax25_address ssid0_addr, ssid0_ref;
+        int rc16a, rc16b;
+        char ssid0_buf[MAX_CALLSIGN_LEN] = "";
+
+        memset(&ssid0_addr, 0, sizeof(ssid0_addr));
+        memset(&ssid0_ref, 0, sizeof(ssid0_ref));
+
+        rc16a = ax25_aton_entry("W1AW-0", (char*) &ssid0_addr);
+        TEST_ASSERT(rc16a == 0, "A.16 ax25_aton_entry W1AW-0 succeeds", rc16a);
+
+        if (rc16a == 0) {
+            const char *s0 = ax25_ntoa(&ssid0_addr);
+            TEST_ASSERT(s0 != NULL, "A.16 ax25_ntoa(SSID=0) returns non-NULL", 0);
+
+            if (s0) {
+                safe_strlcpy(ssid0_buf, s0, sizeof(ssid0_buf));
+                /* Accept either the canonical "W1AW" or the explicit "W1AW-0" */
+                int ok16 = (strcmp(ssid0_buf, "W1AW") == 0 || strcmp(ssid0_buf, "W1AW-0") == 0);
+                TEST_ASSERT(ok16, "A.16 ax25_ntoa(SSID=0): result is 'W1AW' or 'W1AW-0' "
+                        "(AX.25 v2.2 §3.12.1 allows either form)", 0);
+                DEBUG_PRINT("A.16 ax25_ntoa(W1AW-0) = '%s'", ssid0_buf);
+            }
+
+            /* Binary round-trip: re-encode the ntoa string and compare. */
+            if (ssid0_buf[0] != '\0') {
+                rc16b = ax25_aton_entry(ssid0_buf, (char*) &ssid0_ref);
+                if (rc16b == 0) {
+                    int cmp16 = ax25_cmp(&ssid0_addr, &ssid0_ref);
+                    TEST_ASSERT(cmp16 == 0, "A.16 ax25_ntoa(SSID=0) → ax25_aton_entry round-trip binary match", cmp16);
+                } else {
+                    printf("SKIP: A.16 ntoa-to-entry round-trip (ax25_aton_entry '%s' failed)\n", ssid0_buf);
+                }
+            }
         }
     }
 
@@ -1558,6 +1648,20 @@ static int sec_b_af_ax25_sockets(void) {
     TRY_SOCKOPT("B.5", AX25_N2, 10, "AX25_N2=10");
     TRY_SOCKOPT("B.6", AX25_T1, 30, "AX25_T1=30 (3s in 1/10th-sec)");
     TRY_SOCKOPT("B.7", AX25_T2, 30, "AX25_T2=30 (3s)");
+    // B.9: AX25_BACKOFF — Problem B-2 (audit): the old code used a raw unbound
+    // socket, so it always hit EINVAL on modern kernels and printed "SKIP" even
+    // when a configured port existed.  AX25_BACKOFF is stored in the per-socket
+    // ax25_cb struct; it is accepted only on a bound or at least device-attached
+    // socket.  Using TRY_SOCKOPT applies the same bound-first/unbound-fallback
+    // logic used by B.4-B.7, ensuring the option is actually exercised when a
+    // configured port is present.
+    //
+    // Cross-stack relevance: AX25_BACKOFF controls exponential vs. linear T1
+    // retransmission backoff.  Both libax25v22 and the kernel default to
+    // AX25_BACKOFF_LINEAR (0).  A mismatch causes one side to retransmit at
+    // double intervals while the other holds a fixed interval, leading to link
+    // tear-down under lossy conditions.
+    TRY_SOCKOPT("B.9", AX25_BACKOFF, 1, "AX25_BACKOFF=1 (exponential)");
     TRY_SOCKOPT("B.10", AX25_T3, 1800, "AX25_T3=1800 (180s)");
     TRY_SOCKOPT("B.13", AX25_PACLEN, 256, "AX25_PACLEN=256");
     TRY_SOCKOPT("B.14", AX25_IAMDIGI, 1, "AX25_IAMDIGI=1");
@@ -1565,6 +1669,33 @@ static int sec_b_af_ax25_sockets(void) {
 #undef TRY_SOCKOPT
 
     // B.8: AX25_EXTSEQ with 64-bit silent-failure detection (fix 4.1)
+    //
+    // Problem B-1 (audit): The previous code printed a WARN when the readback
+    // differed from the written value and then called TEST_ASSERT — which was
+    // the correct ultimate behaviour (a failing assertion).  However the comment
+    // "64-bit kernel silent-failure bug?" made it sound like the failure might
+    // be tolerated.  It must not be: a mismatched readback is a kernel defect
+    // that will break Modulo-128 (extended sequence) operation for libax25v22
+    // callers and must be escalated as a hard test failure.
+    //
+    // KERNEL BUG REFERENCE
+    // --------------------
+    // On 64-bit kernels whose net/ax25/ax25_subr.c pre-dates the fix for
+    // "ax25: fix AX25_EXTSEQ option handling", setsockopt(AX25_EXTSEQ, &v,
+    // sizeof(int)) writes only 4 bytes but the kernel reads sizeof(long) = 8
+    // bytes, leaving the upper 4 bytes as uninitialised stack data.  The option
+    // is therefore stored as a random non-zero value instead of the intended 1.
+    //
+    // FIX: upgrade the kernel or backport the patch.
+    // This test WILL FAIL on affected kernels — that failure is intentional and
+    // correct.  Do NOT weaken the assertion to make it pass on broken kernels.
+    //
+    // Cross-stack relevance: the Linux kernel uses AX25_EXTSEQ to switch the
+    // per-socket sequence-number space between modulo-8 and modulo-128.
+    // libax25v22 selects modulo-128 via MODULO128_TRUE at encode/decode time.
+    // If the kernel silently ignores the EXTSEQ flag, a libax25v22 modulo-128
+    // frame injected via AF_AX25 will be misinterpreted as modulo-8, causing
+    // N(S)/N(R) truncation from 7-bit to 3-bit and immediate link failure.
     {
         sock = socket(AF_AX25, SOCK_SEQPACKET, 0);
         if (sock >= 0) {
@@ -1581,24 +1712,20 @@ static int sec_b_af_ax25_sockets(void) {
                     TEST_ASSERT(rc == 0, "B.8 getsockopt AX25_EXTSEQ succeeds", rc);
                     if (rc == 0 && readback != extseq)
                         printf("WARN: B.8 AX25_EXTSEQ set=%d readback=%d "
-                                "(64-bit kernel silent-failure bug?)\n", extseq, readback);
-                    TEST_ASSERT(readback == extseq, "B.8 AX25_EXTSEQ value preserved (fail = 64-bit kernel bug)", readback);
+                                "— kernel 64-bit int/long alignment bug detected; "
+                                "upgrade kernel or backport the AX25_EXTSEQ fix\n", extseq, readback);
+                    /* KERNEL BUG: On 64-bit kernels with drivers/net/hamradio/
+                     * ax25/ax25_subr.c before the AX25_EXTSEQ alignment fix,
+                     * setsockopt(AX25_EXTSEQ, &v, sizeof(int)) writes only 4 bytes
+                     * but the kernel reads sizeof(long)=8 bytes, so the upper 4
+                     * bytes are stack garbage.  Fix: upgrade the kernel or backport
+                     * the patch.  This test WILL FAIL on affected kernels — that
+                     * failure is intentional and correct.                         */
+                    TEST_ASSERT(readback == extseq, "B.8 AX25_EXTSEQ value preserved "
+                            "(FAIL = kernel 64-bit int/long alignment bug; "
+                            "modulo-128 will not work — kernel patch required)", readback);
                 }
             }
-            close(sock);
-        }
-    }
-
-    // B.9: AX25_BACKOFF
-    {
-        sock = socket(AF_AX25, SOCK_SEQPACKET, 0);
-        if (sock >= 0) {
-            int backoff = 1;
-            rc = setsockopt(sock, SOL_AX25, AX25_BACKOFF, &backoff, sizeof(backoff));
-            if (rc < 0 && errno == EINVAL)
-                printf("SKIP: B.9 AX25_BACKOFF (needs bound socket)\n");
-            else
-                TEST_ASSERT(rc == 0, "B.9 setsockopt AX25_BACKOFF=1 (exponential)", rc);
             close(sock);
         }
     }
@@ -1663,6 +1790,72 @@ static int sec_b_af_ax25_sockets(void) {
             else
                 TEST_ASSERT(rc == 0, "B.15 setsockopt AX25_NOCONNECT=1 (raw monitoring)", rc);
             close(sock);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // B.16: SO_RCVBUF and SO_SNDBUF — socket buffer sizing
+    //
+    // Problem B-3 (audit): When libax25v22 frames are fed into the kernel via
+    // an AF_AX25 socket, oversized payloads (larger than the kernel default
+    // receive buffer of ~212 992 bytes on most 5.x kernels) are silently
+    // dropped.  SEC-N and SEC-Z2 send repeated frames in quick succession; if
+    // the receive buffer is too small, frames queue up and are discarded,
+    // causing sporadic poll() timeouts that look like interop failures.
+    //
+    // This test verifies that SO_RCVBUF and SO_SNDBUF can be raised and that
+    // the kernel actually honours at least the requested value.  Linux doubles
+    // the requested value internally (to account for bookkeeping overhead), so
+    // getsockopt() returns ≥ 2× the set value; the assertion accepts anything
+    // ≥ the originally requested value.
+    //
+    // Cross-stack relevance: the kernel minimum buffer size is
+    // SOCK_MIN_RCVBUF (256 bytes, net/core/sock.c), and the maximum is
+    // /proc/sys/net/core/rmem_max (default 212 992 bytes unless raised by the
+    // operator).  libax25v22 users that push large I-frame sequences should
+    // call setsockopt(SO_RCVBUF) after creating the socket to avoid silent loss.
+    //
+    // Note: SO_RCVBUF / SO_SNDBUF live at SOL_SOCKET level, not SOL_AX25.
+    // They work on any AF_AX25 socket regardless of bind state.
+    // -----------------------------------------------------------------------
+    {
+        int b16_sock = socket(AF_AX25, SOCK_SEQPACKET, 0);
+        if (b16_sock < 0) {
+            printf("SKIP: B.16 SO_RCVBUF/SO_SNDBUF (socket creation failed: %s)\n", strerror(errno));
+        } else {
+            // --- SO_RCVBUF ---
+            {
+                int rcvbuf_req = 65536;
+                int rc_sb = setsockopt(b16_sock, SOL_SOCKET, SO_RCVBUF, &rcvbuf_req, sizeof(rcvbuf_req));
+                TEST_ASSERT(rc_sb == 0, "B.16 setsockopt SO_RCVBUF=65536 accepted (SOL_SOCKET level)", rc_sb);
+                if (rc_sb == 0) {
+                    int actual_rcv = 0;
+                    socklen_t ol_rcv = sizeof(actual_rcv);
+                    int rc_gr = getsockopt(b16_sock, SOL_SOCKET, SO_RCVBUF, &actual_rcv, &ol_rcv);
+                    TEST_ASSERT(rc_gr == 0, "B.16 getsockopt SO_RCVBUF succeeds", rc_gr);
+                    /* Linux stores 2× the requested value internally */
+                    TEST_ASSERT(actual_rcv >= rcvbuf_req, "B.16 SO_RCVBUF getsockopt returns >= requested value "
+                            "(Linux doubles internally; min acceptable = requested)", actual_rcv);
+                    DEBUG_PRINT("B.16 SO_RCVBUF: set=%d kernel_actual=%d " "(doubled=%s)", rcvbuf_req, actual_rcv, actual_rcv >= rcvbuf_req * 2 ? "yes" : "no");
+                }
+            }
+
+            // --- SO_SNDBUF ---
+            {
+                int sndbuf_req = 65536;
+                int rc_sb2 = setsockopt(b16_sock, SOL_SOCKET, SO_SNDBUF, &sndbuf_req, sizeof(sndbuf_req));
+                TEST_ASSERT(rc_sb2 == 0, "B.16 setsockopt SO_SNDBUF=65536 accepted (SOL_SOCKET level)", rc_sb2);
+                if (rc_sb2 == 0) {
+                    int actual_snd = 0;
+                    socklen_t ol_snd = sizeof(actual_snd);
+                    int rc_gs = getsockopt(b16_sock, SOL_SOCKET, SO_SNDBUF, &actual_snd, &ol_snd);
+                    TEST_ASSERT(rc_gs == 0, "B.16 getsockopt SO_SNDBUF succeeds", rc_gs);
+                    TEST_ASSERT(actual_snd >= sndbuf_req, "B.16 SO_SNDBUF getsockopt returns >= requested value", actual_snd);
+                    DEBUG_PRINT("B.16 SO_SNDBUF: set=%d kernel_actual=%d", sndbuf_req, actual_snd);
+                }
+            }
+
+            close(b16_sock);
         }
     }
 
