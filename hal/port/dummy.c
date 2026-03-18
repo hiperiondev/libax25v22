@@ -535,7 +535,8 @@ void hal_log(hal_log_level_t level, const char *fmt, ...) {
     vfprintf(stderr, fmt, ap);
     va_end(ap);
 #else
-    (void)level; (void)fmt;
+    (void) level;
+    (void) fmt;
 #endif
 }
 

@@ -245,7 +245,8 @@ static size_t build_smack_frame(uint8_t type_smack, const uint8_t *payload, size
     uint8_t crc_lo = (uint8_t) (crc & 0x00FFu);
     uint8_t crc_hi = (uint8_t) ((crc >> 8u) & 0x00FFu);
 
-    DEBUG_VAR("build_smack_frame: type_smack", type_smack); DEBUG_VAR("build_smack_frame: payload_len", (unsigned)payload_len);
+    DEBUG_VAR("build_smack_frame: type_smack", type_smack);
+    DEBUG_VAR("build_smack_frame: payload_len", (unsigned)payload_len);
     DEBUG_HEX("build_smack_frame: crc_lo", crc_lo);
     DEBUG_HEX("build_smack_frame: crc_hi", crc_hi);
 
@@ -461,7 +462,8 @@ static int test_smack_tx_crc_trailer_correct(void) {
     uint8_t decoded[KISS_MAX_FRAME_SIZE + 4u];  // +4 for CRC bytes
     size_t dec_len = slip_decode_payload(buf, blen, 1u, decoded, sizeof(decoded));
 
-    DEBUG_BUF("SLIP-decoded content (payload + CRC)", decoded, dec_len); DEBUG_VAR("SLIP-decoded length (expect payload_len + 2 CRC bytes)", (unsigned)dec_len);
+    DEBUG_BUF("SLIP-decoded content (payload + CRC)", decoded, dec_len);
+    DEBUG_VAR("SLIP-decoded length (expect payload_len + 2 CRC bytes)", (unsigned)dec_len);
 
     // Decoded must be: payload + crc_lo + crc_hi = 3 + 2 = 5 bytes
     TEST_ASSERT(dec_len == sizeof(payload) + KISS_SMACK_CRC_SIZE, "SMACK decoded content = payload + 2 CRC bytes", (unsigned )dec_len);
@@ -697,7 +699,8 @@ static int test_smack_rx_valid_frame(void) {
     DEBUG_BUF("Injecting valid SMACK frame", frame_buf, frame_len);
     sh_inject(&ctx, frame_buf, frame_len);
 
-    DEBUG_VAR("rx_count (expect 1)", h.rx_count); DEBUG_VAR("crc_err_count (expect 0)", h.crc_err_count);
+    DEBUG_VAR("rx_count (expect 1)", h.rx_count);
+    DEBUG_VAR("crc_err_count (expect 0)", h.crc_err_count);
 
     TEST_ASSERT(h.rx_count == 1u, "on_frame fires once for valid SMACK frame", h.rx_count);
     TEST_ASSERT(h.crc_err_count == 0u, "on_crc_error not fired for valid SMACK frame", h.crc_err_count);
@@ -747,7 +750,8 @@ static int test_smack_rx_bad_crc(void) {
     DEBUG_BUF("Injecting SMACK frame with corrupted CRC", frame_buf, frame_len);
     sh_inject(&ctx, frame_buf, frame_len);
 
-    DEBUG_VAR("rx_count (expect 0)", h.rx_count); DEBUG_VAR("crc_err_count (expect 1)", h.crc_err_count);
+    DEBUG_VAR("rx_count (expect 0)", h.rx_count);
+    DEBUG_VAR("crc_err_count (expect 1)", h.crc_err_count);
 
     TEST_ASSERT(h.rx_count == 0u, "on_frame NOT fired for SMACK frame with bad CRC", h.rx_count);
     TEST_ASSERT(h.crc_err_count == 1u, "on_crc_error fired once for bad SMACK CRC", h.crc_err_count);
@@ -780,7 +784,10 @@ static int test_smack_rx_bad_crc_stats(void) {
 
     ax25_kiss_stats_t stats;
     uint8_t rc = ax25_kiss_get_stats(&ctx, &stats);
-    DEBUG_VAR("get_stats return code (expect 0)", rc); DEBUG_VAR("rx_bad_checksum (expect 1)", stats.rx_bad_checksum); DEBUG_VAR("rx_dropped (expect 1)", stats.rx_dropped); DEBUG_VAR("rx_frames (expect 0)", stats.rx_frames);
+    DEBUG_VAR("get_stats return code (expect 0)", rc);
+    DEBUG_VAR("rx_bad_checksum (expect 1)", stats.rx_bad_checksum);
+    DEBUG_VAR("rx_dropped (expect 1)", stats.rx_dropped);
+    DEBUG_VAR("rx_frames (expect 0)", stats.rx_frames);
 
     TEST_ASSERT(rc == KISS_OK, "ax25_kiss_get_stats returns KISS_OK", rc);
     TEST_ASSERT(stats.rx_bad_checksum == 1u, "rx_bad_checksum = 1 after SMACK CRC failure", stats.rx_bad_checksum);
@@ -807,7 +814,8 @@ static int test_smack_rx_too_short_for_crc(void) {
     DEBUG_BUF("Injecting 1-byte SMACK frame (too short for 2-byte CRC)", raw_short, sizeof(raw_short));
     sh_inject(&ctx, raw_short, sizeof(raw_short));
 
-    DEBUG_VAR("rx_count (expect 0)", h.rx_count); DEBUG_VAR("crc_err_count (expect 1)", h.crc_err_count);
+    DEBUG_VAR("rx_count (expect 0)", h.rx_count);
+    DEBUG_VAR("crc_err_count (expect 1)", h.crc_err_count);
 
     TEST_ASSERT(h.rx_count == 0u, "on_frame not fired for SMACK frame < 2 CRC bytes", h.rx_count);
     TEST_ASSERT(h.crc_err_count == 1u, "on_crc_error fired for SMACK frame < 2 CRC bytes", h.crc_err_count);
@@ -818,7 +826,8 @@ static int test_smack_rx_too_short_for_crc(void) {
     DEBUG_BUF("Injecting 0-byte SMACK frame (zero payload)", raw_zero, sizeof(raw_zero));
     sh_inject(&ctx, raw_zero, sizeof(raw_zero));
 
-    DEBUG_VAR("rx_count for 0-byte SMACK (expect 0)", h.rx_count); DEBUG_VAR("crc_err_count for 0-byte SMACK (expect 1)", h.crc_err_count);
+    DEBUG_VAR("rx_count for 0-byte SMACK (expect 0)", h.rx_count);
+    DEBUG_VAR("crc_err_count for 0-byte SMACK (expect 1)", h.crc_err_count);
 
     TEST_ASSERT(h.rx_count == 0u, "on_frame not fired for 0-byte SMACK frame", h.rx_count);
     TEST_ASSERT(h.crc_err_count == 1u, "on_crc_error fired for 0-byte SMACK frame", h.crc_err_count);
@@ -879,12 +888,14 @@ static int test_smack_rx_escaped_crc_bytes(void) {
             has_fesc = true;
             break;
         }
-    } DEBUG_BOOL("FESC present in encoded frame (expect true)", has_fesc);
+    }
+    DEBUG_BOOL("FESC present in encoded frame (expect true)", has_fesc);
     TEST_ASSERT(has_fesc, "TX frame contains FESC escape for FEND/FESC CRC byte", 0);
 
     sh_inject(&ctx, frame_buf, frame_len);
 
-    DEBUG_VAR("rx_count (expect 1)", h.rx_count); DEBUG_VAR("crc_err_count (expect 0)", h.crc_err_count);
+    DEBUG_VAR("rx_count (expect 1)", h.rx_count);
+    DEBUG_VAR("crc_err_count (expect 0)", h.crc_err_count);
 
     TEST_ASSERT(h.rx_count == 1u, "on_frame fires for SMACK frame with escaped CRC bytes", h.rx_count);
     TEST_ASSERT(h.crc_err_count == 0u, "No CRC error for frame with correctly-escaped CRC bytes", h.crc_err_count);
@@ -935,7 +946,8 @@ static int test_smack_round_trip(void) {
 
     sh_inject(&ctx, tx_copy, tx_len);
 
-    DEBUG_VAR("rx_count after round-trip (expect 1)", h.rx_count); DEBUG_VAR("crc_err_count after round-trip (expect 0)", h.crc_err_count);
+    DEBUG_VAR("rx_count after round-trip (expect 1)", h.rx_count);
+    DEBUG_VAR("crc_err_count after round-trip (expect 0)", h.crc_err_count);
 
     TEST_ASSERT(h.rx_count == 1u, "SMACK round-trip: on_frame fires once", h.rx_count);
     TEST_ASSERT(h.crc_err_count == 0u, "SMACK round-trip: no CRC error", h.crc_err_count);
@@ -1047,7 +1059,8 @@ static int test_smack_rx_standard_mode_no_false_detect(void) {
     DEBUG_BUF("Injecting port-8 DATA frame (type=0x80) in STANDARD mode", raw, 5u);
     sh_inject(&ctx, raw, 5u);
 
-    DEBUG_VAR("rx_count (expect 1)", h.rx_count); DEBUG_VAR("crc_err_count (expect 0)", h.crc_err_count);
+    DEBUG_VAR("rx_count (expect 1)", h.rx_count);
+    DEBUG_VAR("crc_err_count (expect 0)", h.crc_err_count);
 
     TEST_ASSERT(h.rx_count == 1u, "Port-8 DATA frame (0x80 type) dispatched in STANDARD mode", h.rx_count);
     TEST_ASSERT(h.crc_err_count == 0u, "No CRC error in STANDARD mode for 0x80 type byte", h.crc_err_count);
@@ -1198,7 +1211,8 @@ static int test_smack_auto_mode_upgrade(void) {
     ax25_kiss_variant_t vr;
     ax25_kiss_smack_is_active(&ctx, &active);
     ax25_kiss_get_variant(&ctx, &vr);
-    DEBUG_BOOL("smack_active before first SMACK frame (expect false)", active); DEBUG_VAR("get_variant before first SMACK frame (expect 0=STANDARD)", vr);
+    DEBUG_BOOL("smack_active before first SMACK frame (expect false)", active);
+    DEBUG_VAR("get_variant before first SMACK frame (expect 0=STANDARD)", vr);
     TEST_ASSERT(active == false, "AUTO mode: smack_active=false before first SMACK frame", 0);
     TEST_ASSERT(vr == KISS_VARIANT_STANDARD, "AUTO mode: get_variant=STANDARD before upgrade", vr);
 
@@ -1220,7 +1234,8 @@ static int test_smack_auto_mode_upgrade(void) {
 
     ax25_kiss_smack_is_active(&ctx, &active);
     ax25_kiss_get_variant(&ctx, &vr);
-    DEBUG_BOOL("smack_active after first SMACK frame (expect true)", active); DEBUG_VAR("get_variant after first SMACK frame (expect 1=SMACK)", vr);
+    DEBUG_BOOL("smack_active after first SMACK frame (expect true)", active);
+    DEBUG_VAR("get_variant after first SMACK frame (expect 1=SMACK)", vr);
 
     TEST_ASSERT(active == true, "AUTO mode: smack_active=true after first SMACK frame received", 0);
     TEST_ASSERT(vr == KISS_VARIANT_SMACK, "AUTO mode: get_variant=SMACK after upgrade", vr);
@@ -1397,7 +1412,10 @@ static int test_smack_reset_rx(void) {
 
     // Reset RX
     uint8_t rc = ax25_kiss_reset_rx(&ctx);
-    DEBUG_VAR("reset_rx return code (expect 0)", rc); DEBUG_VAR("rx_state after reset_rx (expect 0=IDLE)", ctx.rx_state); DEBUG_VAR("rx_len after reset_rx (expect 0)", (unsigned)ctx.rx_len); DEBUG_BOOL("rx_got_type after reset_rx (expect false)", ctx.rx_got_type);
+    DEBUG_VAR("reset_rx return code (expect 0)", rc);
+    DEBUG_VAR("rx_state after reset_rx (expect 0=IDLE)", ctx.rx_state);
+    DEBUG_VAR("rx_len after reset_rx (expect 0)", (unsigned)ctx.rx_len);
+    DEBUG_BOOL("rx_got_type after reset_rx (expect false)", ctx.rx_got_type);
 
     TEST_ASSERT(rc == KISS_OK, "ax25_kiss_reset_rx returns KISS_OK", rc);
     TEST_ASSERT(ctx.rx_state == KISS_RX_IDLE, "rx_state = IDLE after reset_rx", ctx.rx_state);
@@ -1451,7 +1469,10 @@ static int test_smack_stats_reset_get(void) {
     // Check stats snapshot
     ax25_kiss_stats_t stats;
     uint8_t rc = ax25_kiss_get_stats(&ctx, &stats);
-    DEBUG_VAR("get_stats return code (expect 0)", rc); DEBUG_VAR("rx_frames (expect 1)", stats.rx_frames); DEBUG_VAR("rx_bad_checksum (expect 1)", stats.rx_bad_checksum); DEBUG_VAR("rx_dropped (expect 1)", stats.rx_dropped);
+    DEBUG_VAR("get_stats return code (expect 0)", rc);
+    DEBUG_VAR("rx_frames (expect 1)", stats.rx_frames);
+    DEBUG_VAR("rx_bad_checksum (expect 1)", stats.rx_bad_checksum);
+    DEBUG_VAR("rx_dropped (expect 1)", stats.rx_dropped);
 
     TEST_ASSERT(rc == KISS_OK, "ax25_kiss_get_stats returns KISS_OK", rc);
     TEST_ASSERT(stats.rx_frames == 1u, "rx_frames = 1 after one valid frame", stats.rx_frames);
@@ -1505,14 +1526,19 @@ static int test_smack_reset_port_params(void) {
     ctx.ports[5].txtail = 10u;
     ctx.ports[5].full_duplex = true;
 
-    DEBUG_PRINT("Port 5 modified to non-default values"); DEBUG_VAR("Port 5 txdelay before reset", ctx.ports[5].txdelay);
+    DEBUG_PRINT("Port 5 modified to non-default values");
+    DEBUG_VAR("Port 5 txdelay before reset", ctx.ports[5].txdelay);
 
     uint8_t rc = ax25_kiss_reset_port_params(&ctx, 5u);
     DEBUG_VAR("reset_port_params(5) return code (expect 0)", rc);
     TEST_ASSERT(rc == KISS_OK, "ax25_kiss_reset_port_params returns KISS_OK", rc);
 
     // Verify defaults restored
-    DEBUG_VAR("Port 5 txdelay after reset (expect 50)", ctx.ports[5].txdelay); DEBUG_VAR("Port 5 persistence after reset (expect 63)", ctx.ports[5].persistence); DEBUG_VAR("Port 5 slottime after reset (expect 10)", ctx.ports[5].slottime); DEBUG_VAR("Port 5 txtail after reset (expect 0)", ctx.ports[5].txtail); DEBUG_BOOL("Port 5 full_duplex after reset (expect false)", ctx.ports[5].full_duplex);
+    DEBUG_VAR("Port 5 txdelay after reset (expect 50)", ctx.ports[5].txdelay);
+    DEBUG_VAR("Port 5 persistence after reset (expect 63)", ctx.ports[5].persistence);
+    DEBUG_VAR("Port 5 slottime after reset (expect 10)", ctx.ports[5].slottime);
+    DEBUG_VAR("Port 5 txtail after reset (expect 0)", ctx.ports[5].txtail);
+    DEBUG_BOOL("Port 5 full_duplex after reset (expect false)", ctx.ports[5].full_duplex);
 
     TEST_ASSERT(ctx.ports[5].txdelay == KISS_DEFAULT_TXDELAY, "Port 5 txdelay reset to default", ctx.ports[5].txdelay);
     TEST_ASSERT(ctx.ports[5].persistence == KISS_DEFAULT_PERSISTENCE, "Port 5 persistence reset to default", ctx.ports[5].persistence);
@@ -1561,7 +1587,8 @@ static int test_smack_reset_all_ports(void) {
         ctx.ports[p].full_duplex = true;
     }
 
-    DEBUG_PRINT("All 15 ports modified to non-default values"); DEBUG_VAR("Port 0 txdelay before reset_all", ctx.ports[0].txdelay);
+    DEBUG_PRINT("All 15 ports modified to non-default values");
+    DEBUG_VAR("Port 0 txdelay before reset_all", ctx.ports[0].txdelay);
 
     uint8_t rc = ax25_kiss_reset_all_ports(&ctx);
     DEBUG_VAR("reset_all_ports return code (expect 0)", rc);
@@ -1603,20 +1630,24 @@ static int test_smack_set_poll_mode(void) {
     ax25_kiss_init(&ctx);
 
     // Defaults: poll_mode=false, poll_interval=0
-    DEBUG_BOOL("poll_mode after init (expect false)", ctx.poll_mode); DEBUG_VAR("poll_interval after init (expect 0)", ctx.poll_interval);
+    DEBUG_BOOL("poll_mode after init (expect false)", ctx.poll_mode);
+    DEBUG_VAR("poll_interval after init (expect 0)", ctx.poll_interval);
     TEST_ASSERT(ctx.poll_mode == false, "poll_mode = false after init", 0);
     TEST_ASSERT(ctx.poll_interval == 0u, "poll_interval = 0 after init", ctx.poll_interval);
 
     // Enable polling with 50 * 100ms = 5s interval
     uint8_t rc = ax25_kiss_set_poll_mode(&ctx, true, 50u);
-    DEBUG_VAR("set_poll_mode(true,50) return code (expect 0)", rc); DEBUG_BOOL("poll_mode after enable (expect true)", ctx.poll_mode); DEBUG_VAR("poll_interval after enable (expect 50)", ctx.poll_interval);
+    DEBUG_VAR("set_poll_mode(true,50) return code (expect 0)", rc);
+    DEBUG_BOOL("poll_mode after enable (expect true)", ctx.poll_mode);
+    DEBUG_VAR("poll_interval after enable (expect 50)", ctx.poll_interval);
     TEST_ASSERT(rc == KISS_OK, "ax25_kiss_set_poll_mode returns KISS_OK", rc);
     TEST_ASSERT(ctx.poll_mode == true, "poll_mode = true after enable", 0);
     TEST_ASSERT(ctx.poll_interval == 50u, "poll_interval = 50 after enable", ctx.poll_interval);
 
     // Disable polling (interval arg ignored when enable=false)
     rc = ax25_kiss_set_poll_mode(&ctx, false, 100u);
-    DEBUG_BOOL("poll_mode after disable (expect false)", ctx.poll_mode); DEBUG_VAR("poll_interval after disable (expect 0)", ctx.poll_interval);
+    DEBUG_BOOL("poll_mode after disable (expect false)", ctx.poll_mode);
+    DEBUG_VAR("poll_interval after disable (expect 0)", ctx.poll_interval);
     TEST_ASSERT(ctx.poll_mode == false, "poll_mode = false after disable", 0);
     TEST_ASSERT(ctx.poll_interval == 0u, "poll_interval = 0 after disable (cleared)", ctx.poll_interval);
 
@@ -1705,7 +1736,8 @@ static int test_smack_payload_special_bytes(void) {
     h.rx_count = 0u;
     h.crc_err_count = 0u;
     sh_inject(&ctx, tx_copy, tx_len);
-    DEBUG_VAR("rx_count (expect 1)", h.rx_count); DEBUG_VAR("crc_err_count (expect 0)", h.crc_err_count);
+    DEBUG_VAR("rx_count (expect 1)", h.rx_count);
+    DEBUG_VAR("crc_err_count (expect 0)", h.crc_err_count);
 
     TEST_ASSERT(h.rx_count == 1u, "SMACK round-trip fires on_frame for all-special payload", h.rx_count);
     TEST_ASSERT(h.crc_err_count == 0u, "No CRC error in SMACK round-trip with all-special payload", h.crc_err_count);
@@ -1793,7 +1825,9 @@ static int test_smack_mixed_valid_bad_stats(void) {
     ax25_kiss_stats_t stats;
     ax25_kiss_get_stats(&ctx, &stats);
 
-    DEBUG_VAR("rx_frames (expect 2)", stats.rx_frames); DEBUG_VAR("rx_bad_checksum (expect 3)", stats.rx_bad_checksum); DEBUG_VAR("rx_dropped (expect 3)", stats.rx_dropped);
+    DEBUG_VAR("rx_frames (expect 2)", stats.rx_frames);
+    DEBUG_VAR("rx_bad_checksum (expect 3)", stats.rx_bad_checksum);
+    DEBUG_VAR("rx_dropped (expect 3)", stats.rx_dropped);
 
     TEST_ASSERT(stats.rx_frames == 2u, "rx_frames = 2 after 2 valid + 3 bad frames", stats.rx_frames);
     TEST_ASSERT(stats.rx_bad_checksum == 3u, "rx_bad_checksum = 3 after 3 bad frames", stats.rx_bad_checksum);
@@ -1840,7 +1874,8 @@ static int test_smack_explicit_vs_auto_tx(void) {
     if (h1.tx_count == 1u && h2.tx_count == 1u) {
         size_t len1 = h1.tx[0].len;
         size_t len2 = h2.tx[0].len;
-        DEBUG_VAR("Explicit SMACK TX length", (unsigned)len1); DEBUG_VAR("AUTO latched TX length", (unsigned)len2);
+        DEBUG_VAR("Explicit SMACK TX length", (unsigned)len1);
+        DEBUG_VAR("AUTO latched TX length", (unsigned)len2);
         DEBUG_BUF("Explicit SMACK TX", h1.tx[0].data, len1);
         DEBUG_BUF("AUTO latched TX", h2.tx[0].data, len2);
 

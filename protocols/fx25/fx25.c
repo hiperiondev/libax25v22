@@ -238,4 +238,3 @@ uint8_t fx25_decode(const uint8_t *rx_data, size_t rx_len, fx25_frame_t *fx25_fr
 
     return 0;
 }
-

@@ -268,16 +268,16 @@ static inline uint8_t gf_mul(uint8_t a, uint8_t b) {
  */
 static inline uint8_t gf_div(uint8_t a, uint8_t b) {
     if (a == 0)
-        return 0;  /* Zero divided by anything is zero (valid in GF) */
+        return 0; /* Zero divided by anything is zero (valid in GF) */
 
     if (b == 0) {
         /* Division by zero is undefined - indicates algorithm error or corrupted data */
         GF_SET_ERROR();
-        return 0xFF;  /* Return invalid field element to make error visible */
+        return 0xFF; /* Return invalid field element to make error visible */
     }
 
     /* Signed intermediate for handling negative values */
-    int16_t log_diff = (int16_t)gf_log[a] - (int16_t)gf_log[b];
+    int16_t log_diff = (int16_t) gf_log[a] - (int16_t) gf_log[b];
 
     /* Modulo 255 for negative values */
     if (log_diff < 0) {

@@ -436,7 +436,10 @@ static int test_srej_bitmap_set_by_state_machine(void) {
     ax25_process_frame(&conn, f1, 1);
     adv_free_iframe(f1);
 
-    DEBUG_BOOL("srej_exception after gap at 0", conn.srej_exception);DEBUG_VAR("srej_bitmap[0] (should have bit 0 set)", conn.srej_bitmap[0]);DEBUG_VAR("srej_count", conn.srej_count);DEBUG_VAR("V(R) (should be 0 - blocked)", conn.vars.vr);
+    DEBUG_BOOL("srej_exception after gap at 0", conn.srej_exception);
+    DEBUG_VAR("srej_bitmap[0] (should have bit 0 set)", conn.srej_bitmap[0]);
+    DEBUG_VAR("srej_count", conn.srej_count);
+    DEBUG_VAR("V(R) (should be 0 - blocked)", conn.vars.vr);
 
     TEST_ASSERT(conn.srej_exception == true, "A2: srej_exception set on gap at N(S)=0", 0);
     // Bitmap byte 0 bit 0 must be set for N(S)=0 (the missing frame)
@@ -447,7 +450,8 @@ static int test_srej_bitmap_set_by_state_machine(void) {
     // Verify SREJ(0) was sent with N(R)=0
     uint8_t srej8_cnt = adv_count_frames_of_type(&h, AX25_FRAME_SUPERVISORY_SREJ_8BIT);
     uint8_t srej16_cnt = adv_count_frames_of_type(&h, AX25_FRAME_SUPERVISORY_SREJ_16BIT);
-    DEBUG_VAR("SREJ 8-bit count", srej8_cnt);DEBUG_VAR("SREJ 16-bit count", srej16_cnt);
+    DEBUG_VAR("SREJ 8-bit count", srej8_cnt);
+    DEBUG_VAR("SREJ 16-bit count", srej16_cnt);
     TEST_ASSERT(srej8_cnt + srej16_cnt >= 1, "A2: at least one SREJ sent", 0);
 
     int srej_nr = adv_get_last_sframe_nr(&h, AX25_FRAME_SUPERVISORY_SREJ_16BIT);
@@ -496,7 +500,9 @@ static int test_srej_bitmap_cleared_on_delivery(void) {
     ax25_process_frame(&conn, f2, 1);
     adv_free_iframe(f2);
 
-    DEBUG_BOOL("srej_exception after N(S)=2", conn.srej_exception);DEBUG_VAR("bitmap[0] (bit 1 should be set for N(S)=1 missing)", conn.srej_bitmap[0]);DEBUG_VAR("V(R) (still 1)", conn.vars.vr);
+    DEBUG_BOOL("srej_exception after N(S)=2", conn.srej_exception);
+    DEBUG_VAR("bitmap[0] (bit 1 should be set for N(S)=1 missing)", conn.srej_bitmap[0]);
+    DEBUG_VAR("V(R) (still 1)", conn.vars.vr);
     TEST_ASSERT(conn.srej_exception == true, "A3: srej_exception set after gap at N(S)=1", 0);
     TEST_ASSERT((conn.srej_bitmap[0] & 0x02u) != 0, "A3: bitmap[0] bit 1 set for missing N(S)=1", 0);
     TEST_ASSERT(conn.vars.vr == 1, "A3: V(R) still 1 (blocked by N(S)=1)", 0);
@@ -507,7 +513,10 @@ static int test_srej_bitmap_cleared_on_delivery(void) {
     ax25_process_frame(&conn, f1, 1);
     adv_free_iframe(f1);
 
-    DEBUG_BOOL("srej_exception after retransmit (should be false)", conn.srej_exception);DEBUG_VAR("bitmap[0] after delivery (should be 0)", conn.srej_bitmap[0]);DEBUG_VAR("V(R) after recovery (should be 3)", conn.vars.vr);DEBUG_VAR("rx_data_count (should be 3: frames 0,1,2)", h.rx_data_count);
+    DEBUG_BOOL("srej_exception after retransmit (should be false)", conn.srej_exception);
+    DEBUG_VAR("bitmap[0] after delivery (should be 0)", conn.srej_bitmap[0]);
+    DEBUG_VAR("V(R) after recovery (should be 3)", conn.vars.vr);
+    DEBUG_VAR("rx_data_count (should be 3: frames 0,1,2)", h.rx_data_count);
     TEST_ASSERT(conn.srej_exception == false, "A3: srej_exception cleared after N(S)=1 retransmit", 0);
     TEST_ASSERT(conn.srej_bitmap[0] == 0, "A3: bitmap[0] fully cleared after SREJ recovery", 0);
     TEST_ASSERT(conn.vars.vr == 3, "A3: V(R)=3 after SREJ recovery (all three frames)", 0);
@@ -551,7 +560,8 @@ static int test_srej_bitmap_cleared_on_rej_fallback(void) {
     ax25_process_frame(&conn, f2, 1);
     adv_free_iframe(f2);
 
-    DEBUG_BOOL("srej_exception after first gap", conn.srej_exception);DEBUG_VAR("bitmap[0] after first gap (bit 1 set)", conn.srej_bitmap[0]);
+    DEBUG_BOOL("srej_exception after first gap", conn.srej_exception);
+    DEBUG_VAR("bitmap[0] after first gap (bit 1 set)", conn.srej_bitmap[0]);
     TEST_ASSERT(conn.srej_exception == true, "A4: srej_exception set on first gap", 0);
     TEST_ASSERT((conn.srej_bitmap[0] & 0x02u) != 0, "A4: bitmap bit 1 set (missing N(S)=1)", 0);
 
@@ -563,7 +573,8 @@ static int test_srej_bitmap_cleared_on_rej_fallback(void) {
     ax25_process_frame(&conn, f4, 1);
     adv_free_iframe(f4);
 
-    DEBUG_BOOL("srej_exception after REJ fallback (should be false)", conn.srej_exception);DEBUG_BOOL("rej_exception after REJ fallback (should be true)", conn.rej_exception);
+    DEBUG_BOOL("srej_exception after REJ fallback (should be false)", conn.srej_exception);
+    DEBUG_BOOL("rej_exception after REJ fallback (should be true)", conn.rej_exception);
     // srej_bitmap must be fully zeroed after clear_srej_state()
     uint8_t bm_sum = 0;
     for (int bi = 0; bi < 16; bi++)
@@ -628,7 +639,11 @@ static int test_srej_bitmap_cleared_on_sabm_reset(void) {
 
     ax25_process_frame(&conn, (ax25_frame_t*) &sabm_f, 10);
 
-    DEBUG_BOOL("srej_exception after SABM (should be false)", conn.srej_exception);DEBUG_BOOL("rej_exception after SABM (should be false)", conn.rej_exception);DEBUG_VAR("V(S) after SABM reset (should be 0)", conn.vars.vs);DEBUG_VAR("V(R) after SABM reset (should be 0)", conn.vars.vr);DEBUG_VAR("V(A) after SABM reset (should be 0)", conn.vars.va);
+    DEBUG_BOOL("srej_exception after SABM (should be false)", conn.srej_exception);
+    DEBUG_BOOL("rej_exception after SABM (should be false)", conn.rej_exception);
+    DEBUG_VAR("V(S) after SABM reset (should be 0)", conn.vars.vs);
+    DEBUG_VAR("V(R) after SABM reset (should be 0)", conn.vars.vr);
+    DEBUG_VAR("V(A) after SABM reset (should be 0)", conn.vars.va);
 
     uint8_t bm_sum = 0;
     for (int bi = 0; bi < 16; bi++)
@@ -670,7 +685,8 @@ static int test_srej_bitmap_mod8_wraparound(void) {
         ax25_frame_t *f = adv_make_iframe(i, 0, false, pl, 1, 8);
         ax25_process_frame(&conn, f, (uint32_t) (i + 1));
         adv_free_iframe(f);
-    }DEBUG_VAR("V(R) after delivering frames 0-6 (should be 7)", conn.vars.vr);
+    }
+    DEBUG_VAR("V(R) after delivering frames 0-6 (should be 7)", conn.vars.vr);
     TEST_ASSERT(conn.vars.vr == 7, "A6: V(R)=7 after 7 in-order frames", 0);
 
     // Reset harness counters for cleaner observation
@@ -689,7 +705,9 @@ static int test_srej_bitmap_mod8_wraparound(void) {
     ax25_process_frame(&conn, f_skip, 10);
     adv_free_iframe(f_skip);
 
-    DEBUG_BOOL("srej_exception after wrap-around gap", conn.srej_exception);DEBUG_VAR("srej_bitmap[0] after wrap gap (bit 7 should be set for N(S)=7)", conn.srej_bitmap[0]);DEBUG_VAR("V(R) (should still be 7 - blocked)", conn.vars.vr);
+    DEBUG_BOOL("srej_exception after wrap-around gap", conn.srej_exception);
+    DEBUG_VAR("srej_bitmap[0] after wrap gap (bit 7 should be set for N(S)=7)", conn.srej_bitmap[0]);
+    DEBUG_VAR("V(R) (should still be 7 - blocked)", conn.vars.vr);
 
     // With V(R)=7, receiving N(S)=0 (gap at 7): SREJ(7) sent, bitmap[0] bit 7 = 1
     TEST_ASSERT(conn.srej_exception == true, "A6: srej_exception set at mod-8 wrap", 0);
@@ -702,7 +720,9 @@ static int test_srej_bitmap_mod8_wraparound(void) {
     ax25_process_frame(&conn, f7, 11);
     adv_free_iframe(f7);
 
-    DEBUG_VAR("V(R) after wrap recovery (should be 2: 7->0->1->2 delivered)", conn.vars.vr);DEBUG_BOOL("srej_exception after recovery (should be false)", conn.srej_exception);DEBUG_VAR("bitmap[0] after recovery (should be 0)", conn.srej_bitmap[0]);
+    DEBUG_VAR("V(R) after wrap recovery (should be 2: 7->0->1->2 delivered)", conn.vars.vr);
+    DEBUG_BOOL("srej_exception after recovery (should be false)", conn.srej_exception);
+    DEBUG_VAR("bitmap[0] after recovery (should be 0)", conn.srej_bitmap[0]);
 
     TEST_ASSERT(conn.srej_exception == false, "A6: srej_exception cleared after wrap recovery", 0);
     TEST_ASSERT(conn.srej_bitmap[0] == 0, "A6: bitmap cleared after mod-8 wrap recovery", 0);
@@ -754,7 +774,10 @@ static int test_srej_bitmap_persists_across_window_slide(void) {
     ax25_process_frame(&conn, f4, 4);
     adv_free_iframe(f4);
 
-    DEBUG_BOOL("srej_exception still true after buffering frames 3,4", conn.srej_exception);DEBUG_VAR("bitmap[0] (bit 1 must still be set)", conn.srej_bitmap[0]);DEBUG_VAR("srej_buffer_count (should be 3: frames 2,3,4)", conn.srej_buffer_count);DEBUG_VAR("V(R) (should still be 1 - blocked by N(S)=1 missing)", conn.vars.vr);
+    DEBUG_BOOL("srej_exception still true after buffering frames 3,4", conn.srej_exception);
+    DEBUG_VAR("bitmap[0] (bit 1 must still be set)", conn.srej_bitmap[0]);
+    DEBUG_VAR("srej_buffer_count (should be 3: frames 2,3,4)", conn.srej_buffer_count);
+    DEBUG_VAR("V(R) (should still be 1 - blocked by N(S)=1 missing)", conn.vars.vr);
 
     // Bitmap bit for N(S)=1 must still be set (missing frame not yet retransmitted)
     TEST_ASSERT(conn.srej_exception == true, "A7: srej_exception persists after buffering 3,4", 0);
@@ -768,7 +791,9 @@ static int test_srej_bitmap_persists_across_window_slide(void) {
     ax25_process_frame(&conn, f1, 5);
     adv_free_iframe(f1);
 
-    DEBUG_VAR("V(R) after full recovery (should be 5)", conn.vars.vr);DEBUG_BOOL("srej_exception cleared (should be false)", conn.srej_exception);DEBUG_VAR("bitmap[0] cleared (should be 0)", conn.srej_bitmap[0]);
+    DEBUG_VAR("V(R) after full recovery (should be 5)", conn.vars.vr);
+    DEBUG_BOOL("srej_exception cleared (should be false)", conn.srej_exception);
+    DEBUG_VAR("bitmap[0] cleared (should be 0)", conn.srej_bitmap[0]);
 
     TEST_ASSERT(conn.srej_exception == false, "A7: srej_exception cleared after N(S)=1 delivery", 0);
     TEST_ASSERT(conn.srej_bitmap[0] == 0, "A7: bitmap[0] zeroed after full recovery", 0);
@@ -810,7 +835,9 @@ static int test_srej_bitmap_multi_frame_mod128(void) {
     ax25_process_frame(&conn, f, 2);
     adv_free_iframe(f);
 
-    DEBUG_BOOL("srej_exception after first gap", conn.srej_exception);DEBUG_VAR("srej_count after first gap (should be 1)", conn.srej_count);DEBUG_VAR("bitmap[0] after first gap (bit 1 set)", conn.srej_bitmap[0]);
+    DEBUG_BOOL("srej_exception after first gap", conn.srej_exception);
+    DEBUG_VAR("srej_count after first gap (should be 1)", conn.srej_count);
+    DEBUG_VAR("bitmap[0] after first gap (bit 1 set)", conn.srej_bitmap[0]);
     TEST_ASSERT(conn.srej_exception == true, "A8: srej_exception after gap 1", 0);
     TEST_ASSERT((conn.srej_bitmap[0] & 0x02u) != 0, "A8: bitmap bit 1 (N(S)=1 missing)", 0);
 
@@ -820,7 +847,8 @@ static int test_srej_bitmap_multi_frame_mod128(void) {
     ax25_process_frame(&conn, f, 3);
     adv_free_iframe(f);
 
-    DEBUG_VAR("srej_count after second gap (should be 2)", conn.srej_count);DEBUG_VAR("bitmap[0] after second gap (bits 1 and 3 set)", conn.srej_bitmap[0]);
+    DEBUG_VAR("srej_count after second gap (should be 2)", conn.srej_count);
+    DEBUG_VAR("bitmap[0] after second gap (bits 1 and 3 set)", conn.srej_bitmap[0]);
     // bit 1 for N(S)=1, bit 3 for N(S)=3
     TEST_ASSERT(conn.srej_count >= 1, "A8: srej_count >= 1 after second gap", 0);
     // If implementation sent second SREJ, bit 3 will also be set
@@ -836,7 +864,8 @@ static int test_srej_bitmap_multi_frame_mod128(void) {
     ax25_process_frame(&conn, f, 4);
     adv_free_iframe(f);
 
-    DEBUG_VAR("V(R) after N(S)=1 retransmit", conn.vars.vr);DEBUG_VAR("rx_data_count after N(S)=1 retransmit", h.rx_data_count);
+    DEBUG_VAR("V(R) after N(S)=1 retransmit", conn.vars.vr);
+    DEBUG_VAR("rx_data_count after N(S)=1 retransmit", h.rx_data_count);
     // After N(S)=1 arrives, frame 0(delivered), 1(just delivered), 2(buffered) -> V(R)>=3
     TEST_ASSERT(conn.vars.vr >= 3, "A8: V(R) advanced past N(S)=1 recovery", 0);
 
@@ -878,7 +907,11 @@ static int test_window_full_blocks_send(void) {
         last_rc = rc;
     }
 
-    DEBUG_VAR("V(S) after filling window (should be 7)", conn.vars.vs);DEBUG_VAR("V(A) (should be 0)", conn.vars.va);DEBUG_VAR("tx_queue.count (should be 7)", conn.tx_queue.count);DEBUG_VAR("sent count (should be 7)", sent);DEBUG_VAR("Outstanding = V(S)-V(A) (should be 7)", (uint8_t)(conn.vars.vs - conn.vars.va));
+    DEBUG_VAR("V(S) after filling window (should be 7)", conn.vars.vs);
+    DEBUG_VAR("V(A) (should be 0)", conn.vars.va);
+    DEBUG_VAR("tx_queue.count (should be 7)", conn.tx_queue.count);
+    DEBUG_VAR("sent count (should be 7)", sent);
+    DEBUG_VAR("Outstanding = V(S)-V(A) (should be 7)", (uint8_t)(conn.vars.vs - conn.vars.va));
 
     TEST_ASSERT(sent == 7, "B1: 7 frames sent successfully (window not yet full)", 0);
     TEST_ASSERT(conn.vars.vs == 7, "B1: V(S)=7 after 7 sends", 0);
@@ -896,7 +929,8 @@ static int test_window_full_blocks_send(void) {
     ax25_process_frame(&conn, rr, 100);
     adv_free_sframe(rr);
 
-    DEBUG_VAR("V(A) after RR(7) (should be 7)", conn.vars.va);DEBUG_VAR("tx_queue.count after RR (should be 0)", conn.tx_queue.count);
+    DEBUG_VAR("V(A) after RR(7) (should be 7)", conn.vars.va);
+    DEBUG_VAR("tx_queue.count after RR (should be 0)", conn.tx_queue.count);
     TEST_ASSERT(conn.vars.va == 7, "B1: V(A)=7 after RR(7)", 0);
     TEST_ASSERT(conn.tx_queue.count == 0, "B1: tx_queue empty after full ACK", 0);
 
@@ -932,7 +966,8 @@ static int test_window_seq_wrap_mod128(void) {
     conn.vars.va = 125;
     conn.vars.vr = 0;
 
-    DEBUG_VAR("Starting V(S) (should be 125)", conn.vars.vs);DEBUG_VAR("Starting V(A) (should be 125)", conn.vars.va);
+    DEBUG_VAR("Starting V(S) (should be 125)", conn.vars.vs);
+    DEBUG_VAR("Starting V(A) (should be 125)", conn.vars.va);
 
     // Send 3 frames: N(S) should be 125, 126, 127
     uint8_t payload[] = { 0xA1 };
@@ -952,7 +987,9 @@ static int test_window_seq_wrap_mod128(void) {
     int ns1 = adv_get_iframe_ns(&h, (int) (tx_start + 1));
     int ns2 = adv_get_iframe_ns(&h, (int) (tx_start + 2));
 
-    DEBUG_VAR("Frame[-3] N(S) (should be 125)", (unsigned)ns0);DEBUG_VAR("Frame[-2] N(S) (should be 126)", (unsigned)ns1);DEBUG_VAR("Frame[-1] N(S) (should be 127)", (unsigned)ns2);
+    DEBUG_VAR("Frame[-3] N(S) (should be 125)", (unsigned)ns0);
+    DEBUG_VAR("Frame[-2] N(S) (should be 126)", (unsigned)ns1);
+    DEBUG_VAR("Frame[-1] N(S) (should be 127)", (unsigned)ns2);
     TEST_ASSERT(ns0 == 125, "B2: first frame N(S)=125", 0);
     TEST_ASSERT(ns1 == 126, "B2: second frame N(S)=126", 0);
     TEST_ASSERT(ns2 == 127, "B2: third frame N(S)=127", 0);
@@ -1004,7 +1041,8 @@ static int test_window_rnr_blocks_then_rr_reopens(void) {
     ax25_process_frame(&conn, rnr, 10);
     adv_free_sframe(rnr);
 
-    DEBUG_BOOL("peer_busy after RNR (should be true)", conn.peer_busy);DEBUG_BOOL("h.peer_busy (callback received)", h.peer_busy);
+    DEBUG_BOOL("peer_busy after RNR (should be true)", conn.peer_busy);
+    DEBUG_BOOL("h.peer_busy (callback received)", h.peer_busy);
     TEST_ASSERT(conn.peer_busy == true, "B3: peer_busy=true after RNR", 0);
     TEST_ASSERT(h.peer_busy == true, "B3: on_busy(true) callback fired", 0);
     TEST_ASSERT(conn.vars.va == 1, "B3: V(A)=1 (frame 0 acknowledged by RNR)", 0);
@@ -1058,7 +1096,9 @@ static int test_window_cumulative_ack(void) {
         TEST_ASSERT(rc == 0, "B4: frame i sent OK", 0);
     }
 
-    DEBUG_VAR("V(S) after 5 sends (should be 5)", conn.vars.vs);DEBUG_VAR("V(A) before ACK (should be 0)", conn.vars.va);DEBUG_VAR("tx_queue.count (should be 5)", conn.tx_queue.count);
+    DEBUG_VAR("V(S) after 5 sends (should be 5)", conn.vars.vs);
+    DEBUG_VAR("V(A) before ACK (should be 0)", conn.vars.va);
+    DEBUG_VAR("tx_queue.count (should be 5)", conn.tx_queue.count);
     TEST_ASSERT(conn.vars.vs == 5, "B4: V(S)=5 after 5 sends", 0);
     TEST_ASSERT(conn.vars.va == 0, "B4: V(A)=0 before ACK", 0);
     TEST_ASSERT(conn.tx_queue.count == 5, "B4: 5 frames in queue", 0);
@@ -1068,7 +1108,8 @@ static int test_window_cumulative_ack(void) {
     ax25_process_frame(&conn, rr3, 10);
     adv_free_sframe(rr3);
 
-    DEBUG_VAR("V(A) after RR(3) (should be 3)", conn.vars.va);DEBUG_VAR("tx_queue.count after RR(3) (should be 2)", conn.tx_queue.count);
+    DEBUG_VAR("V(A) after RR(3) (should be 3)", conn.vars.va);
+    DEBUG_VAR("tx_queue.count after RR(3) (should be 2)", conn.tx_queue.count);
     TEST_ASSERT(conn.vars.va == 3, "B4: V(A)=3 after RR(3)", 0);
     TEST_ASSERT(conn.tx_queue.count == 2, "B4: 2 frames remain (N(S)=3 and 4)", 0);
 
@@ -1077,7 +1118,8 @@ static int test_window_cumulative_ack(void) {
     ax25_process_frame(&conn, rr5, 20);
     adv_free_sframe(rr5);
 
-    DEBUG_VAR("V(A) after RR(5) (should be 5)", conn.vars.va);DEBUG_VAR("tx_queue.count after full ACK (should be 0)", conn.tx_queue.count);
+    DEBUG_VAR("V(A) after RR(5) (should be 5)", conn.vars.va);
+    DEBUG_VAR("tx_queue.count after full ACK (should be 0)", conn.tx_queue.count);
     TEST_ASSERT(conn.vars.va == 5, "B4: V(A)=5 after RR(5) full ACK", 0);
     TEST_ASSERT(conn.tx_queue.count == 0, "B4: queue empty after full ACK", 0);
 
@@ -1110,14 +1152,16 @@ static int test_window_vs_rollback_on_rej(void) {
     for (uint8_t i = 0; i < 4; i++) {
         pl[0] = i;
         ax25_send_data(&conn, pl, 1, PID_NO_L3);
-    }DEBUG_VAR("V(S) after 4 sends (should be 4)", conn.vars.vs);
+    }
+    DEBUG_VAR("V(S) after 4 sends (should be 4)", conn.vars.vs);
     TEST_ASSERT(conn.vars.vs == 4, "B5: V(S)=4 after 4 sends", 0);
 
     // Partial ACK: RR(N(R)=2) acknowledges frames 0,1 -> V(A)=2
     ax25_frame_t *rr2 = adv_make_sframe(AX25_FRAME_SUPERVISORY_RR_8BIT, 2, false, 0);
     ax25_process_frame(&conn, rr2, 5);
     adv_free_sframe(rr2);
-    TEST_ASSERT(conn.vars.va == 2, "B5: V(A)=2 after partial ACK", 0);DEBUG_VAR("V(A) after partial ACK (should be 2)", conn.vars.va);
+    TEST_ASSERT(conn.vars.va == 2, "B5: V(A)=2 after partial ACK", 0);
+    DEBUG_VAR("V(A) after partial ACK (should be 2)", conn.vars.va);
 
     // Capture current tx_count to measure retransmits
     uint8_t tx_before = h.tx_count;
@@ -1127,7 +1171,9 @@ static int test_window_vs_rollback_on_rej(void) {
     ax25_process_frame(&conn, rej, 10);
     adv_free_sframe(rej);
 
-    DEBUG_VAR("V(S) after REJ(2) (should be 2 = V(A))", conn.vars.vs);DEBUG_VAR("V(A) after REJ(2) (should be 2)", conn.vars.va);DEBUG_VAR("tx_count increase (should be 2 retransmits: N(S)=2,3)", (uint8_t)(h.tx_count - tx_before));
+    DEBUG_VAR("V(S) after REJ(2) (should be 2 = V(A))", conn.vars.vs);
+    DEBUG_VAR("V(A) after REJ(2) (should be 2)", conn.vars.va);
+    DEBUG_VAR("tx_count increase (should be 2 retransmits: N(S)=2,3)", (uint8_t)(h.tx_count - tx_before));
 
     TEST_ASSERT(conn.vars.vs == 2, "B5: V(S) rolled back to V(A)=2 on REJ(2)", 0);
     TEST_ASSERT(conn.vars.va == 2, "B5: V(A) unchanged at 2 after REJ", 0);
@@ -1166,7 +1212,8 @@ static int test_window_queue_size_limit(void) {
             sent++;
     }
 
-    DEBUG_VAR("Frames sent (should be AX25_MAX_QUEUE_SIZE)", sent);DEBUG_VAR("tx_queue.count (should be AX25_MAX_QUEUE_SIZE)", conn.tx_queue.count);
+    DEBUG_VAR("Frames sent (should be AX25_MAX_QUEUE_SIZE)", sent);
+    DEBUG_VAR("tx_queue.count (should be AX25_MAX_QUEUE_SIZE)", conn.tx_queue.count);
     TEST_ASSERT(sent == AX25_MAX_QUEUE_SIZE, "B6: AX25_MAX_QUEUE_SIZE frames sent before limit hit", 0);
     TEST_ASSERT(conn.tx_queue.count == AX25_MAX_QUEUE_SIZE, "B6: tx_queue.count == AX25_MAX_QUEUE_SIZE", 0);
 
@@ -1216,7 +1263,9 @@ static int test_fd_simultaneous_send_receive(void) {
     ax25_process_frame(&conn, f_in, 10);
     adv_free_iframe(f_in);
 
-    DEBUG_VAR("V(R) after receiving N(S)=0 (should be 1)", conn.vars.vr);DEBUG_VAR("V(S) after receiving (should still be 1)", conn.vars.vs);DEBUG_VAR("rx_data_count (should be 1)", h.rx_data_count);
+    DEBUG_VAR("V(R) after receiving N(S)=0 (should be 1)", conn.vars.vr);
+    DEBUG_VAR("V(S) after receiving (should still be 1)", conn.vars.vs);
+    DEBUG_VAR("rx_data_count (should be 1)", h.rx_data_count);
     // V(A) should have advanced to 1 if peer's N(R)=1 acknowledges our N(S)=0
     DEBUG_VAR("V(A) after piggybacked N(R)=1 (should be 1)", conn.vars.va);
 
@@ -1274,7 +1323,8 @@ static int test_fd_piggybacked_nr_reflects_vr(void) {
                 i_frame_nr = test_nr;
                 break;
             }
-        }DEBUG_VAR("First outgoing I-frame N(R) (should be 3)", (unsigned)i_frame_nr);
+        }
+        DEBUG_VAR("First outgoing I-frame N(R) (should be 3)", (unsigned)i_frame_nr);
         TEST_ASSERT(i_frame_nr == 3, "C2: outgoing I-frame N(R)=3 = V(R)", 0);
     } else {
         TEST_ASSERT(false, "C2: outgoing I-frame was not transmitted", 0);
@@ -1324,7 +1374,11 @@ static int test_fd_rej_triggers_abort_and_retransmit(void) {
     adv_free_sframe(rej);
 
     uint8_t retransmits = (uint8_t) (h.tx_count - tx_before_rej);
-    DEBUG_BOOL("abort_tx called on full-duplex REJ (should be true)", h.abort_tx_called);DEBUG_VAR("abort_tx call count (should be 1)", h.abort_tx_call_count);DEBUG_VAR("retransmitted frames after REJ (should be 2: N(S)=2,3)", retransmits);DEBUG_VAR("V(S) after REJ rollback (should be 2 = V(A))", conn.vars.vs);DEBUG_VAR("conn.stats.iframe_retransmitted (should be >= 2)", conn.stats.iframe_retransmitted);
+    DEBUG_BOOL("abort_tx called on full-duplex REJ (should be true)", h.abort_tx_called);
+    DEBUG_VAR("abort_tx call count (should be 1)", h.abort_tx_call_count);
+    DEBUG_VAR("retransmitted frames after REJ (should be 2: N(S)=2,3)", retransmits);
+    DEBUG_VAR("V(S) after REJ rollback (should be 2 = V(A))", conn.vars.vs);
+    DEBUG_VAR("conn.stats.iframe_retransmitted (should be >= 2)", conn.stats.iframe_retransmitted);
 
     TEST_ASSERT(h.abort_tx_called == true, "C3: abort_tx called on full-duplex REJ", 0);
     TEST_ASSERT(h.abort_tx_call_count == 1, "C3: abort_tx called exactly once", 0);
@@ -1369,7 +1423,9 @@ static int test_fd_srej_sets_t1_pending(void) {
     ax25_process_frame(&conn, srej, 10);
     adv_free_sframe(srej);
 
-    DEBUG_VAR("t1.running before SREJ", t1_before);DEBUG_VAR("t1.running after SREJ (should be 1=running)", conn.t1.running);DEBUG_VAR("conn.stats.iframe_retransmitted (should be 1)", conn.stats.iframe_retransmitted);
+    DEBUG_VAR("t1.running before SREJ", t1_before);
+    DEBUG_VAR("t1.running after SREJ (should be 1=running)", conn.t1.running);
+    DEBUG_VAR("conn.stats.iframe_retransmitted (should be 1)", conn.stats.iframe_retransmitted);
 
     // Sentinel removed; check running flag instead.
     TEST_ASSERT(conn.t1.running != 0, "C4: T1 running after full-duplex SREJ", 0);
@@ -1384,7 +1440,8 @@ static int test_fd_srej_sets_t1_pending(void) {
             found_retransmit = true;
             break;
         }
-    }DEBUG_BOOL("N(S)=1 retransmitted (found in tx_frames)", found_retransmit);
+    }
+    DEBUG_BOOL("N(S)=1 retransmitted (found in tx_frames)", found_retransmit);
     TEST_ASSERT(found_retransmit, "C4: N(S)=1 I-frame retransmitted in response to SREJ(1)", 0);
 
     DEBUG_PRINT("C4 passed: full-duplex SREJ sets T1_PENDING and retransmits correct frame");
@@ -1439,8 +1496,7 @@ static int test_fd_rr_sent_immediately_no_t2(void) {
         ax25_process_frame(&conn_hd, f, 1);
         adv_free_iframe(f);
 
-        DEBUG_VAR("Half-duplex tx_count delta after I-frame (usually 0 - T2 pending)",
-                (uint8_t)(h_hd.tx_count - tx_count_before));
+        DEBUG_VAR("Half-duplex tx_count delta after I-frame (usually 0 - T2 pending)", (uint8_t)(h_hd.tx_count - tx_count_before));
 
         DEBUG_BOOL("t2.running in half-duplex (should be true when no P/F)", conn_hd.t2.running);
         // In half-duplex, no immediate RR unless P bit was set; T2 delays it
@@ -1487,7 +1543,10 @@ static int test_fd_crossed_iframes_state_sync(void) {
     ax25_process_frame(&conn, f_b, 10);
     adv_free_iframe(f_b);
 
-    DEBUG_VAR("V(R) after B's frame (should be 1)", conn.vars.vr);DEBUG_VAR("V(A) after B's N(R)=1 (should be 1 - A's frame acknowledged)", conn.vars.va);DEBUG_VAR("V(S) unchanged (should be 1)", conn.vars.vs);DEBUG_VAR("rx_data_count (should be 1 - B's frame delivered)", h.rx_data_count);
+    DEBUG_VAR("V(R) after B's frame (should be 1)", conn.vars.vr);
+    DEBUG_VAR("V(A) after B's N(R)=1 (should be 1 - A's frame acknowledged)", conn.vars.va);
+    DEBUG_VAR("V(S) unchanged (should be 1)", conn.vars.vs);
+    DEBUG_VAR("rx_data_count (should be 1 - B's frame delivered)", h.rx_data_count);
 
     TEST_ASSERT(conn.vars.vr == 1, "C6: V(R)=1 after receiving B's N(S)=0", 0);
     TEST_ASSERT(conn.vars.va == 1, "C6: V(A)=1 after B's piggybacked N(R)=1 acks A's frame", 0);
@@ -1571,7 +1630,8 @@ static int test_fd_rnr_rr_busy_transitions(void) {
     ax25_process_frame(&conn, rnr, 10);
     adv_free_sframe(rnr);
 
-    DEBUG_BOOL("peer_busy after RNR (should be true)", conn.peer_busy);DEBUG_BOOL("h.peer_busy after RNR (should be true)", h.peer_busy);
+    DEBUG_BOOL("peer_busy after RNR (should be true)", conn.peer_busy);
+    DEBUG_BOOL("h.peer_busy after RNR (should be true)", h.peer_busy);
     TEST_ASSERT(conn.peer_busy == true, "C8: peer_busy set after RNR", 0);
     TEST_ASSERT(h.peer_busy == true, "C8: on_busy(true) callback fired for RNR", 0);
 
@@ -1580,7 +1640,8 @@ static int test_fd_rnr_rr_busy_transitions(void) {
     ax25_process_frame(&conn, rr, 20);
     adv_free_sframe(rr);
 
-    DEBUG_BOOL("peer_busy after RR (should be false)", conn.peer_busy);DEBUG_BOOL("h.peer_busy after RR (should be false)", h.peer_busy);
+    DEBUG_BOOL("peer_busy after RR (should be false)", conn.peer_busy);
+    DEBUG_BOOL("h.peer_busy after RR (should be false)", h.peer_busy);
     TEST_ASSERT(conn.peer_busy == false, "C8: peer_busy cleared after RR", 0);
     TEST_ASSERT(h.peer_busy == false, "C8: on_busy(false) callback fired for RR", 0);
 
@@ -1672,7 +1733,10 @@ static int test_fd_continuous_bidirectional_exchange(void) {
 #ifdef DEBUG_ENABLE
         uint8_t cycle_vs_start = conn.vars.vs;
 #endif
-        DEBUG_VAR("Cycle", cycle);DEBUG_VAR("V(S) at cycle start", cycle_vs_start);DEBUG_VAR("V(R) at cycle start", conn.vars.vr);DEBUG_VAR("V(A) at cycle start", conn.vars.va);
+        DEBUG_VAR("Cycle", cycle);
+        DEBUG_VAR("V(S) at cycle start", cycle_vs_start);
+        DEBUG_VAR("V(R) at cycle start", conn.vars.vr);
+        DEBUG_VAR("V(A) at cycle start", conn.vars.va);
 
         // Send k=7 outgoing frames
         uint8_t pl[] = { 0 };
@@ -1701,13 +1765,20 @@ static int test_fd_continuous_bidirectional_exchange(void) {
         ax25_process_frame(&conn, rr, tick++);
         adv_free_sframe(rr);
 
-        DEBUG_VAR("V(S) at cycle end", conn.vars.vs);DEBUG_VAR("V(R) at cycle end", conn.vars.vr);DEBUG_VAR("V(A) at cycle end", conn.vars.va);DEBUG_VAR("tx_queue.count at cycle end (should be 0)", conn.tx_queue.count);
+        DEBUG_VAR("V(S) at cycle end", conn.vars.vs);
+        DEBUG_VAR("V(R) at cycle end", conn.vars.vr);
+        DEBUG_VAR("V(A) at cycle end", conn.vars.va);
+        DEBUG_VAR("tx_queue.count at cycle end (should be 0)", conn.tx_queue.count);
 
         TEST_ASSERT(conn.tx_queue.count == 0, "C10: tx_queue empty after each cycle's ACK", 0);
         TEST_ASSERT(conn.state == AX25_STATE_CONNECTED, "C10: state remains CONNECTED throughout", 0);
     }
 
-    DEBUG_VAR("Total sent (should be 21 = 3 cycles x 7)", total_sent);DEBUG_VAR("Total recv (should be 21 = 3 cycles x 7)", total_recv);DEBUG_VAR("Final V(S) (mod-8 of 21 = 5)", conn.vars.vs);DEBUG_VAR("Final V(R) (mod-8 of 21 = 5)", conn.vars.vr);DEBUG_VAR("Final V(A) should equal V(S)", conn.vars.va);
+    DEBUG_VAR("Total sent (should be 21 = 3 cycles x 7)", total_sent);
+    DEBUG_VAR("Total recv (should be 21 = 3 cycles x 7)", total_recv);
+    DEBUG_VAR("Final V(S) (mod-8 of 21 = 5)", conn.vars.vs);
+    DEBUG_VAR("Final V(R) (mod-8 of 21 = 5)", conn.vars.vr);
+    DEBUG_VAR("Final V(A) should equal V(S)", conn.vars.va);
 
     TEST_ASSERT(total_sent == 21, "C10: 21 frames sent over 3 cycles", 0);
     TEST_ASSERT(total_recv == 21, "C10: 21 frames received over 3 cycles", 0);

@@ -1915,7 +1915,7 @@ int test_sabme_ua_negotiation() {
     ua_response->base.header.src_cr = true;
     ua_response->pf = false;
     ua_response->modifier = 0x63;
-    bool mod128_ua = is_modulo128_used((ax25_frame_t*)sabme_frame, (ax25_frame_t*)ua_response);
+    bool mod128_ua = is_modulo128_used((ax25_frame_t*) sabme_frame, (ax25_frame_t*) ua_response);
     DEBUG_BOOL("is_modulo128_used with UA (expected true)", mod128_ua);
     TEST_ASSERT(mod128_ua == true, "UA response should indicate modulo-128", err);
 
@@ -1930,7 +1930,7 @@ int test_sabme_ua_negotiation() {
     dm_response->base.header.src_cr = true;
     dm_response->pf = false;
     dm_response->modifier = 0x0F;
-    bool mod128_dm = is_modulo128_used((ax25_frame_t*)sabme_frame, (ax25_frame_t*)dm_response);
+    bool mod128_dm = is_modulo128_used((ax25_frame_t*) sabme_frame, (ax25_frame_t*) dm_response);
     DEBUG_BOOL("is_modulo128_used with DM (expected false)", mod128_dm);
     TEST_ASSERT(mod128_dm == false, "DM response should indicate modulo-8", err);
 
@@ -1954,7 +1954,7 @@ int test_sabme_ua_negotiation() {
     frmr_response->x = false;
     frmr_response->y = false;
     frmr_response->z = false;
-    bool mod128_frmr = is_modulo128_used((ax25_frame_t*)sabme_frame, (ax25_frame_t*)frmr_response);
+    bool mod128_frmr = is_modulo128_used((ax25_frame_t*) sabme_frame, (ax25_frame_t*) frmr_response);
     DEBUG_BOOL("is_modulo128_used with FRMR (expected false)", mod128_frmr);
     TEST_ASSERT(mod128_frmr == false, "FRMR response should indicate modulo-8", err);
 

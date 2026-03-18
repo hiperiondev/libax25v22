@@ -41,9 +41,7 @@
  * @param out_len     Output: actual bytes written.
  * @return            true on success.
  */
-bool il2p_encode(const ax25_frame_t *frame,
-                 const uint8_t *raw_ax25, size_t raw_len,
-                 uint8_t *out, size_t out_max, size_t *out_len);
+bool il2p_encode(const ax25_frame_t *frame, const uint8_t *raw_ax25, size_t raw_len, uint8_t *out, size_t out_max, size_t *out_len);
 
 /**
  * @brief Attempt to decode one IL2P frame from a byte buffer.
@@ -57,7 +55,6 @@ bool il2p_encode(const ax25_frame_t *frame,
  * @param ax25_len     Output: length of decoded AX.25 frame.
  * @return             true if a valid frame was decoded.
  */
-bool il2p_decode(const uint8_t *in, size_t in_len,
-                 uint8_t *ax25_out, size_t ax25_max, size_t *ax25_len);
+bool il2p_decode(const uint8_t *in, size_t in_len, uint8_t *ax25_out, size_t ax25_max, size_t *ax25_len);
 
 #endif /* IL2P_H */

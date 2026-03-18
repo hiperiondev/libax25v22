@@ -379,7 +379,8 @@ static int test_mux_slot_exhaustion(void) {
     ax25_address_t la_extra = { "XTRA  ", 0, false, false };
     ax25_address_t pa_extra = { "W1AW  ", 0, false, false };
     uint8_t rc = ax25_mux_register_link(&mux, &conns[AX25_MUX_MAX_LINKS], &la_extra, &pa_extra, &ids[AX25_MUX_MAX_LINKS]);
-    TEST_ASSERT(rc == 2, "9th registration returns 2 (no free slots)", rc);DEBUG_PRINT("Slot exhaustion: 9th register returned rc=%u (expected 2)", rc);
+    TEST_ASSERT(rc == 2, "9th registration returns 2 (no free slots)", rc);
+    DEBUG_PRINT("Slot exhaustion: 9th register returned rc=%u (expected 2)", rc);
 
     for (int i = 0; i <= AX25_MUX_MAX_LINKS; i++) {
         ax25_connection_cleanup(&conns[i]);
@@ -414,7 +415,8 @@ static int test_mux_classify_priority(void) {
     /* --- I-frame: control bit 0 = 0 (e.g. 0x00, 0x02, 0x04 ...) --- */
     build_raw_frame(frame, &flen, 0x00); /* I-frame N(S)=0, N(R)=0, P/F=0 */
     pri = ax25_mux_classify_priority(frame, flen);
-    TEST_ASSERT(pri == AX25_MUX_PRI_DATA, "I-frame ctrl=0x00 -> PRI_DATA (100)", pri);DEBUG_VAR("I-frame pri", pri);
+    TEST_ASSERT(pri == AX25_MUX_PRI_DATA, "I-frame ctrl=0x00 -> PRI_DATA (100)", pri);
+    DEBUG_VAR("I-frame pri", pri);
 
     build_raw_frame(frame, &flen, 0x04); /* I-frame N(S)=2 */
     pri = ax25_mux_classify_priority(frame, flen);
@@ -435,7 +437,8 @@ static int test_mux_classify_priority(void) {
     /* --- U-frame UI (0x03): expect PRI_UI --- */
     build_raw_frame(frame, &flen, 0x03);
     pri = ax25_mux_classify_priority(frame, flen);
-    TEST_ASSERT(pri == AX25_MUX_PRI_UI, "U-frame UI ctrl=0x03 -> PRI_UI (0)", pri);DEBUG_VAR("UI frame pri", pri);
+    TEST_ASSERT(pri == AX25_MUX_PRI_UI, "U-frame UI ctrl=0x03 -> PRI_UI (0)", pri);
+    DEBUG_VAR("UI frame pri", pri);
 
     /* UI with P bit (0x13) */
     build_raw_frame(frame, &flen, 0x13);
@@ -526,7 +529,8 @@ static int test_mux_lm_seize_tick(void) {
 
     ax25_mux_tick(&mux, 1);
 
-    DEBUG_VAR("seized_link after tick (should be link_id)", mux.seized_link);DEBUG_VAR("seize_confirm_count after tick", h0.seize_confirm_count);
+    DEBUG_VAR("seized_link after tick (should be link_id)", mux.seized_link);
+    DEBUG_VAR("seize_confirm_count after tick", h0.seize_confirm_count);
 
     TEST_ASSERT(mux.seized_link == link_id, "Link seized by tick", 0);
     TEST_ASSERT(h0.seize_confirm_count == 1, "LM-SEIZE-CONFIRM called once", 0);
@@ -541,8 +545,7 @@ static int test_mux_lm_seize_tick(void) {
     TEST_ASSERT(mux.seized_link == AX25_MUX_NO_SEIZED, "seized_link reset after release", 0);
     TEST_ASSERT(!mux.links[link_id].seize_pending, "seize_pending cleared after release", 0);
 
-    DEBUG_PRINT("After release: seized=%u, pending=%d",
-            mux.seized_link, mux.links[link_id].seize_pending);
+    DEBUG_PRINT("After release: seized=%u, pending=%d", mux.seized_link, mux.links[link_id].seize_pending);
 
     ax25_mux_unregister_link(&mux, link_id);
     ax25_connection_cleanup(&conn0);
@@ -598,7 +601,8 @@ static int test_mux_priority_ordering(void) {
 
     ax25_mux_tick(&mux, 1);
 
-    DEBUG_VAR("seized_link after tick (should be id2=URGENT)", mux.seized_link);DEBUG_VAR("h2.seize_confirm_count (should be 1)", h2.seize_confirm_count);
+    DEBUG_VAR("seized_link after tick (should be id2=URGENT)", mux.seized_link);
+    DEBUG_VAR("h2.seize_confirm_count (should be 1)", h2.seize_confirm_count);
 
     TEST_ASSERT(mux.seized_link == id2, "URGENT link (id2) seized first", 0);
     TEST_ASSERT(h2.seize_confirm_count == 1, "id2 (URGENT) got seize-confirm", 0);
@@ -608,7 +612,8 @@ static int test_mux_priority_ordering(void) {
     /* Release URGENT, next should be ACK/DATA (id1) */
     ax25_mux_lm_release(&mux, id2);
 
-    DEBUG_VAR("seized_link after id2 release (should be id1)", mux.seized_link);DEBUG_VAR("h1.seize_confirm_count (should be 1)", h1.seize_confirm_count);
+    DEBUG_VAR("seized_link after id2 release (should be id1)", mux.seized_link);
+    DEBUG_VAR("h1.seize_confirm_count (should be 1)", h1.seize_confirm_count);
 
     TEST_ASSERT(mux.seized_link == id1, "DATA link (id1) seized after URGENT released", 0);
     TEST_ASSERT(h1.seize_confirm_count == 1, "id1 (DATA) got seize-confirm on burst", 0);
@@ -667,7 +672,8 @@ static int test_mux_round_robin(void) {
         ax25_mux_lm_seize_request(&mux, ids[i], frame, flen, AX25_MUX_PRI_DATA);
     }
 
-    DEBUG_PRINT("Three equal-priority seize requests pending");DEBUG_VAR("last_served before first tick", mux.last_served);
+    DEBUG_PRINT("Three equal-priority seize requests pending");
+    DEBUG_VAR("last_served before first tick", mux.last_served);
 
     /* Round 1: id0 should go first (last_served=0, start search at 1, wrap) */
     ax25_mux_tick(&mux, 1);
@@ -868,7 +874,8 @@ static int test_mux_burst_on_release(void) {
     /* Release id0 -> should immediately seize id1 (burst) */
     ax25_mux_lm_release(&mux, id0);
 
-    DEBUG_VAR("seized_link after id0 release (should be id1)", mux.seized_link);DEBUG_VAR("h1.seize_confirm_count (should be 1)", h1.seize_confirm_count);
+    DEBUG_VAR("seized_link after id0 release (should be id1)", mux.seized_link);
+    DEBUG_VAR("h1.seize_confirm_count (should be 1)", h1.seize_confirm_count);
 
     TEST_ASSERT(mux.seized_link == id1, "id1 auto-seized immediately on id0 release (burst)", 0);
     TEST_ASSERT(h1.seize_confirm_count == 1, "id1 got seize-confirm via burst", 0);
@@ -912,8 +919,7 @@ static int test_mux_receive_point_to_point(void) {
     ax25_mux_register_link(&mux, &connA, &laA, &pa, &idA);
     ax25_mux_register_link(&mux, &connB, &laB, &pa, &idB);
 
-    DEBUG_PRINT("Registered: Link A (id=%u) N0AAA<->W1AW, Link B (id=%u) N0BBB<->W1AW",
-            idA, idB);
+    DEBUG_PRINT("Registered: Link A (id=%u) N0AAA<->W1AW, Link B (id=%u) N0BBB<->W1AW", idA, idB);
 
     /* Build a UI frame from W1AW to N0AAA (should hit link A only) */
     uint8_t raw[64];
@@ -935,7 +941,8 @@ static int test_mux_receive_point_to_point(void) {
         /* Deliver via mux */
         ax25_mux_receive_frame(&mux, decoded, 1);
 
-        DEBUG_VAR("hA.rx_count after frame to N0AAA (should be >= 0, state machine driven)", hA.rx_count);DEBUG_VAR("hB.rx_count (should be 0 - wrong dest)", hB.rx_count);
+        DEBUG_VAR("hA.rx_count after frame to N0AAA (should be >= 0, state machine driven)", hA.rx_count);
+        DEBUG_VAR("hB.rx_count (should be 0 - wrong dest)", hB.rx_count);
 
         /* Link B must NOT receive the frame addressed to link A's local addr */
         TEST_ASSERT(hB.rx_count == 0, "Link B (N0BBB) does NOT receive frame for N0AAA", 0);
@@ -1294,7 +1301,9 @@ static int test_mux_full_integration(void) {
     ax25_mux_transmit_adapter(&ctxB, ui_frame, ui_len);
     ax25_mux_transmit_adapter(&ctxA, sabm_frame, sabm_len);
 
-    DEBUG_PRINT("Both adapters queued: B=UI(pri=0), A=SABM(pri=255)");DEBUG_VAR("B seize_priority (should be 0)", mux.links[idB].seize_priority);DEBUG_VAR("A seize_priority (should be 255)", mux.links[idA].seize_priority);
+    DEBUG_PRINT("Both adapters queued: B=UI(pri=0), A=SABM(pri=255)");
+    DEBUG_VAR("B seize_priority (should be 0)", mux.links[idB].seize_priority);
+    DEBUG_VAR("A seize_priority (should be 255)", mux.links[idA].seize_priority);
 
     TEST_ASSERT(mux.links[idA].seize_priority == AX25_MUX_PRI_URGENT, "Link A priority set to URGENT (255) for SABM", 0);
     TEST_ASSERT(mux.links[idB].seize_priority == AX25_MUX_PRI_UI, "Link B priority set to UI (0) for UI frame", 0);
@@ -1310,8 +1319,7 @@ static int test_mux_full_integration(void) {
     /* Verify the correct frame bytes were delivered in confirm */
     TEST_ASSERT(hA.seize_confirmed[0].len == sabm_len, "Confirmed frame length matches SABM frame", 0);
 
-    DEBUG_FRAME("Link A confirmed frame", hA.seize_confirmed[0].data,
-            hA.seize_confirmed[0].len);
+    DEBUG_FRAME("Link A confirmed frame", hA.seize_confirmed[0].data, hA.seize_confirmed[0].len);
 
     /* Release A: B should be served immediately (burst) */
     ax25_mux_lm_release(&mux, idA);
@@ -1320,8 +1328,7 @@ static int test_mux_full_integration(void) {
     TEST_ASSERT(hB.seize_confirm_count == 1, "Link B got seize-confirm after A released", 0);
     TEST_ASSERT(hB.seize_confirmed[0].len == ui_len, "Confirmed frame length matches UI frame", 0);
 
-    DEBUG_FRAME("Link B confirmed frame", hB.seize_confirmed[0].data,
-            hB.seize_confirmed[0].len);
+    DEBUG_FRAME("Link B confirmed frame", hB.seize_confirmed[0].data, hB.seize_confirmed[0].len);
 
     ax25_mux_lm_release(&mux, idB);
     TEST_ASSERT(mux.seized_link == AX25_MUX_NO_SEIZED, "All links released, channel free", 0);
@@ -1406,7 +1413,8 @@ static int test_mux_no_confirm_without_frame(void) {
 
     ax25_mux_tick(&mux, 1);
 
-    DEBUG_VAR("seized_link after tick (should be link_id)", mux.seized_link);DEBUG_VAR("seize_confirm_count (should be 0 - no frame)", h.seize_confirm_count);
+    DEBUG_VAR("seized_link after tick (should be link_id)", mux.seized_link);
+    DEBUG_VAR("seize_confirm_count (should be 0 - no frame)", h.seize_confirm_count);
 
     TEST_ASSERT(mux.seized_link == link_id, "Link seized even when pending_len=0 (seize still granted)", 0);
     TEST_ASSERT(h.seize_confirm_count == 0, "Seize-confirm NOT called when pending_len=0 (no frame to confirm)", 0);

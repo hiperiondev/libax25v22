@@ -22,6 +22,7 @@
 // Covers:
 //   Section 3 + Appendix C2  : HDLC physical layer state machine - C2b (FD) path
 //   Section 6.7.2            : Link-layer full-duplex operation and XID negotiation
+
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -197,18 +198,27 @@ static int test_fd_phys_set_duplex_clears_timers(void) {
     phys.persist = 63;
     phys.slottime_10ms = 10;
     phys.axdelay_10ms = 60;
-    DEBUG_VAR("dwait before set_duplex", phys.dwait_10ms);DEBUG_VAR("axhang before set_duplex", phys.axhang_10ms);DEBUG_VAR("anti_hog before set_duplex",
-            phys.anti_hog_10ms);DEBUG_VAR("remote_sync before set_duplex", phys.remote_sync_10ms);DEBUG_VAR("rx_startup before set_duplex",
-            phys.rx_startup_10ms);DEBUG_VAR("persist before set_duplex", phys.persist);DEBUG_VAR("slottime before set_duplex", phys.slottime_10ms);DEBUG_VAR(
-            "axdelay before set_duplex", phys.axdelay_10ms);
+    DEBUG_VAR("dwait before set_duplex", phys.dwait_10ms);
+    DEBUG_VAR("axhang before set_duplex", phys.axhang_10ms);
+    DEBUG_VAR("anti_hog before set_duplex", phys.anti_hog_10ms);
+    DEBUG_VAR("remote_sync before set_duplex", phys.remote_sync_10ms);
+    DEBUG_VAR("rx_startup before set_duplex", phys.rx_startup_10ms);
+    DEBUG_VAR("persist before set_duplex", phys.persist);
+    DEBUG_VAR("slottime before set_duplex", phys.slottime_10ms);
+    DEBUG_VAR("axdelay before set_duplex", phys.axdelay_10ms);
 
     ax25_physical_set_duplex(&phys, true);
     DEBUG_PRINT("ax25_physical_set_duplex(true) called");
 
-    DEBUG_VAR("dwait after set_duplex", phys.dwait_10ms);DEBUG_VAR("axhang after set_duplex", phys.axhang_10ms);DEBUG_VAR("anti_hog after set_duplex",
-            phys.anti_hog_10ms);DEBUG_VAR("remote_sync after set_duplex", phys.remote_sync_10ms);DEBUG_VAR("rx_startup after set_duplex", phys.rx_startup_10ms);DEBUG_VAR(
-            "persist after set_duplex", phys.persist);DEBUG_VAR("slottime after set_duplex", phys.slottime_10ms);DEBUG_VAR("axdelay after set_duplex",
-            phys.axdelay_10ms);DEBUG_BOOL("full_duplex flag set", phys.full_duplex);
+    DEBUG_VAR("dwait after set_duplex", phys.dwait_10ms);
+    DEBUG_VAR("axhang after set_duplex", phys.axhang_10ms);
+    DEBUG_VAR("anti_hog after set_duplex", phys.anti_hog_10ms);
+    DEBUG_VAR("remote_sync after set_duplex", phys.remote_sync_10ms);
+    DEBUG_VAR("rx_startup after set_duplex", phys.rx_startup_10ms);
+    DEBUG_VAR("persist after set_duplex", phys.persist);
+    DEBUG_VAR("slottime after set_duplex", phys.slottime_10ms);
+    DEBUG_VAR("axdelay after set_duplex", phys.axdelay_10ms);
+    DEBUG_BOOL("full_duplex flag set", phys.full_duplex);
 
     TEST_ASSERT(phys.full_duplex == true, "full_duplex flag set", 0);
     TEST_ASSERT(phys.dwait_10ms == 0, "DWAIT cleared by set_duplex", phys.dwait_10ms);
@@ -251,21 +261,25 @@ static int test_fd_phys_csma_bypassed_with_carrier(void) {
     // Queue one frame
     uint8_t frame[20] = { 0x7E, 0x01, 0x02, 0x03, 0x7E };
     bool queued = ax25_physical_queue_frame(&phys, frame, sizeof(frame), false);
-    TEST_ASSERT(queued, "Frame queued successfully", !queued);DEBUG_FRAME("Frame queued", frame, sizeof(frame));
+    TEST_ASSERT(queued, "Frame queued successfully", !queued);
+    DEBUG_FRAME("Frame queued", frame, sizeof(frame));
 
     // Run ticks - in HD mode with carrier=true the state machine would park in
     // PHYS_CSMA_WAIT indefinitely.  In FD it must raise PTT immediately.
     uint32_t ptt_on_tick = 0;
     for (uint32_t tick = 0; tick < 10; tick++) {
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_BOOL("PTT state", fd_ptt_state);DEBUG_STATE("Physical state", phys.state);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_BOOL("PTT state", fd_ptt_state);
+        DEBUG_STATE("Physical state", phys.state);
         if (fd_ptt_state && ptt_on_tick == 0) {
             ptt_on_tick = tick + 1;  // 1-based for easy zero-check
             DEBUG_VAR("PTT raised at tick", tick);
         }
     }
 
-    DEBUG_VAR("PTT on tick (1-based)", ptt_on_tick);DEBUG_BOOL("PTT raised despite busy channel", ptt_on_tick > 0);
+    DEBUG_VAR("PTT on tick (1-based)", ptt_on_tick);
+    DEBUG_BOOL("PTT raised despite busy channel", ptt_on_tick > 0);
     TEST_ASSERT(ptt_on_tick > 0, "PTT raised despite busy channel in FD mode", 0);
     TEST_ASSERT(fd_ptt_on_count >= 1, "PTT on count >= 1", fd_ptt_on_count);
 
@@ -290,7 +304,8 @@ static int test_fd_phys_carrier_detect_not_called(void) {
     ax25_physical_set_duplex(&phys, true);
     fd_simulated_carrier = true;  // Would permanently block HD transmission
     fd_carrier_detect_call_count = 0;
-    DEBUG_BOOL("Carrier simulated as busy", fd_simulated_carrier);DEBUG_VAR("Initial carrier_detect call count", fd_carrier_detect_call_count);
+    DEBUG_BOOL("Carrier simulated as busy", fd_simulated_carrier);
+    DEBUG_VAR("Initial carrier_detect call count", fd_carrier_detect_call_count);
 
     uint8_t frame[20] = { 0x7E, 0x01, 0x02, 0x03, 0x7E };
     ax25_physical_queue_frame(&phys, frame, sizeof(frame), false);
@@ -299,10 +314,12 @@ static int test_fd_phys_carrier_detect_not_called(void) {
     // Run enough ticks to complete the full transmission cycle
     for (uint32_t tick = 0; tick < 20; tick++) {
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_STATE("Physical state", phys.state);DEBUG_VAR("carrier_detect calls so far", fd_carrier_detect_call_count);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_STATE("Physical state", phys.state);DEBUG_VAR("carrier_detect calls so far", fd_carrier_detect_call_count);
     }
 
-    DEBUG_VAR("Total carrier_detect calls", fd_carrier_detect_call_count);DEBUG_BOOL("carrier_detect never called", fd_carrier_detect_call_count == 0);
+    DEBUG_VAR("Total carrier_detect calls", fd_carrier_detect_call_count);
+    DEBUG_BOOL("carrier_detect never called", fd_carrier_detect_call_count == 0);
     TEST_ASSERT(fd_carrier_detect_call_count == 0, "carrier_detect never called in FD mode", fd_carrier_detect_call_count);
 
     DEBUG_PRINT("test_fd_phys_carrier_detect_not_called PASSED");
@@ -335,7 +352,8 @@ static int test_fd_phys_no_csma_wait_state(void) {
     bool csma_wait_entered = false;
     for (uint32_t tick = 0; tick < 20; tick++) {
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_STATE("Physical state", phys.state);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_STATE("Physical state", phys.state);
         if (phys.state == PHYS_CSMA_WAIT) {
             csma_wait_entered = true;
             DEBUG_PRINT("ERROR: PHYS_CSMA_WAIT entered in FD mode!");
@@ -369,8 +387,9 @@ static int test_fd_phys_no_remote_sync_state(void) {
     ax25_physical_set_duplex(&phys, true);
     phys.remote_sync_10ms = 20;
     phys.txdely_10ms = 10;  // Ensure KEY_DELAY state is entered first
-    DEBUG_VAR("remote_sync_10ms (overridden after set_duplex)", phys.remote_sync_10ms);DEBUG_VAR("txdely_10ms", phys.txdely_10ms);DEBUG_BOOL("full_duplex flag",
-            phys.full_duplex);
+    DEBUG_VAR("remote_sync_10ms (overridden after set_duplex)", phys.remote_sync_10ms);
+    DEBUG_VAR("txdely_10ms", phys.txdely_10ms);
+    DEBUG_BOOL("full_duplex flag", phys.full_duplex);
 
     uint8_t frame[20] = { 0x7E, 0x01, 0x02, 0x03, 0x7E };
     ax25_physical_queue_frame(&phys, frame, sizeof(frame), false);
@@ -380,7 +399,8 @@ static int test_fd_phys_no_remote_sync_state(void) {
     bool key_delay_entered = false;
     for (uint32_t tick = 0; tick < 50; tick++) {
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_STATE("Physical state", phys.state);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_STATE("Physical state", phys.state);
         if (phys.state == PHYS_KEY_DELAY) {
             key_delay_entered = true;
         }
@@ -391,7 +411,8 @@ static int test_fd_phys_no_remote_sync_state(void) {
         }
     }
 
-    DEBUG_BOOL("KEY_DELAY was entered (confirming test reach)", key_delay_entered);DEBUG_BOOL("PHYS_REMOTE_SYNC never entered", !remote_sync_entered);
+    DEBUG_BOOL("KEY_DELAY was entered (confirming test reach)", key_delay_entered);
+    DEBUG_BOOL("PHYS_REMOTE_SYNC never entered", !remote_sync_entered);
     TEST_ASSERT(key_delay_entered, "KEY_DELAY entered (confirms guard was exercised)", !key_delay_entered);
     TEST_ASSERT(!remote_sync_entered, "PHYS_REMOTE_SYNC never entered in FD mode", remote_sync_entered);
 
@@ -419,7 +440,8 @@ static int test_fd_phys_axhang_bypassed(void) {
     phys.axhang_10ms = 20;   // Would cause 200 ms hang in HD mode
     phys.txdely_10ms = 0;
     phys.persist = 255;
-    DEBUG_VAR("axhang_10ms (set manually, should be ignored)", phys.axhang_10ms);DEBUG_BOOL("full_duplex flag", phys.full_duplex);
+    DEBUG_VAR("axhang_10ms (set manually, should be ignored)", phys.axhang_10ms);
+    DEBUG_BOOL("full_duplex flag", phys.full_duplex);
 
     uint8_t frame[20] = { 0x7E, 0x01, 0x02, 0x03, 0x7E };
     ax25_physical_queue_frame(&phys, frame, sizeof(frame), false);
@@ -430,7 +452,10 @@ static int test_fd_phys_axhang_bypassed(void) {
     uint32_t ptt_off_tick = 0;
     for (uint32_t tick = 0; tick < 60; tick++) {
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_BOOL("TX active", phys.tx_active);DEBUG_BOOL("PTT state", fd_ptt_state);DEBUG_STATE("Physical state", phys.state);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_BOOL("TX active", phys.tx_active);
+        DEBUG_BOOL("PTT state", fd_ptt_state);
+        DEBUG_STATE("Physical state", phys.state);
 
         // Detect transition from tx_active=true to tx_active=false
         if (!phys.tx_active && tx_ended_tick == 0 && fd_ptt_on_count > 0) {
@@ -445,8 +470,10 @@ static int test_fd_phys_axhang_bypassed(void) {
         }
     }
 
-    DEBUG_VAR("tx_ended_tick", tx_ended_tick);DEBUG_VAR("ptt_off_tick", ptt_off_tick);DEBUG_VAR("ptt_on_count", fd_ptt_on_count);DEBUG_VAR("ptt_off_count",
-            fd_ptt_off_count);
+    DEBUG_VAR("tx_ended_tick", tx_ended_tick);
+    DEBUG_VAR("ptt_off_tick", ptt_off_tick);
+    DEBUG_VAR("ptt_on_count", fd_ptt_on_count);
+    DEBUG_VAR("ptt_off_count", fd_ptt_off_count);
 
     // PTT must have been raised and then released
     TEST_ASSERT(fd_ptt_on_count >= 1, "PTT was raised", fd_ptt_on_count);
@@ -455,7 +482,8 @@ static int test_fd_phys_axhang_bypassed(void) {
     // In HD with axhang=20 the gap would be >= 20 ticks.
     // In FD the gap must be < 20 ticks (hang is 0 regardless of axhang_10ms).
     uint32_t hang_gap = (ptt_off_tick >= tx_ended_tick) ? (ptt_off_tick - tx_ended_tick) : 0;
-    DEBUG_VAR("Hang gap (ticks)", hang_gap);DEBUG_BOOL("Hang gap < 20 (axhang bypassed)", hang_gap < 20);
+    DEBUG_VAR("Hang gap (ticks)", hang_gap);
+    DEBUG_BOOL("Hang gap < 20 (axhang bypassed)", hang_gap < 20);
     TEST_ASSERT(hang_gap < 20, "AXHANG bypassed: PTT released without 200ms hang", hang_gap);
 
     DEBUG_PRINT("test_fd_phys_axhang_bypassed PASSED");
@@ -482,19 +510,23 @@ static int test_fd_phys_axdelay_bypassed(void) {
     phys.txdely_10ms = 0;
     phys.persist = 255;
     phys.axhang_10ms = 0;
-    DEBUG_VAR("axdelay_10ms (set manually, should be ignored)", phys.axdelay_10ms);DEBUG_BOOL("full_duplex flag", phys.full_duplex);
+    DEBUG_VAR("axdelay_10ms (set manually, should be ignored)", phys.axdelay_10ms);
+    DEBUG_BOOL("full_duplex flag", phys.full_duplex);
 
     // Queue a DIGIPEATED frame (is_digipeat=true)
     uint8_t frame[20] = { 0x7E, 0x01, 0x02, 0x03, 0x7E };
     bool queued = ax25_physical_queue_frame(&phys, frame, sizeof(frame), true);
-    TEST_ASSERT(queued, "Digipeated frame queued", !queued);DEBUG_PRINT("Digipeated frame queued (is_digipeat=true)");
+    TEST_ASSERT(queued, "Digipeated frame queued", !queued);
+    DEBUG_PRINT("Digipeated frame queued (is_digipeat=true)");
 
     // PTT must fire within 5 ticks - an axdelay of 50 would defer it far beyond
     uint32_t ptt_on_tick = 0;
     for (uint32_t tick = 0; tick < 10; tick++) {
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_BOOL("PTT state", fd_ptt_state);DEBUG_BOOL("axdelay_pending", phys.axdelay_pending);DEBUG_STATE("Physical state",
-                phys.state);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_BOOL("PTT state", fd_ptt_state);
+        DEBUG_BOOL("axdelay_pending", phys.axdelay_pending);
+        DEBUG_STATE("Physical state", phys.state);
         if (fd_ptt_state && ptt_on_tick == 0) {
             ptt_on_tick = tick + 1;  // 1-based
             DEBUG_VAR("PTT raised at tick", tick);
@@ -502,8 +534,8 @@ static int test_fd_phys_axdelay_bypassed(void) {
     }
 
     DEBUG_BOOL("axdelay_pending never set", !phys.axdelay_pending);
-    TEST_ASSERT(!phys.axdelay_pending, "axdelay_pending was never set in FD mode", phys.axdelay_pending);DEBUG_VAR("PTT on tick (1-based, must be <= 5)",
-            ptt_on_tick);
+    TEST_ASSERT(!phys.axdelay_pending, "axdelay_pending was never set in FD mode", phys.axdelay_pending);
+    DEBUG_VAR("PTT on tick (1-based, must be <= 5)", ptt_on_tick);
     TEST_ASSERT(ptt_on_tick > 0 && ptt_on_tick <= 5, "PTT raised promptly (within 5 ticks) - AXDELAY bypassed", ptt_on_tick);
 
     DEBUG_PRINT("test_fd_phys_axdelay_bypassed PASSED");
@@ -530,7 +562,8 @@ static int test_fd_phys_anti_hog_bypassed(void) {
     phys.txdely_10ms = 0;
     phys.persist = 255;
     phys.axhang_10ms = 0;
-    DEBUG_VAR("anti_hog_10ms (set manually, should be ignored)", phys.anti_hog_10ms);DEBUG_BOOL("full_duplex flag", phys.full_duplex);
+    DEBUG_VAR("anti_hog_10ms (set manually, should be ignored)", phys.anti_hog_10ms);
+    DEBUG_BOOL("full_duplex flag", phys.full_duplex);
 
     // Queue several frames to give anti-hog time to fire if broken
     uint8_t frame[20] = { 0x7E, 0x01, 0x02, 0x03, 0x7E };
@@ -543,7 +576,9 @@ static int test_fd_phys_anti_hog_bypassed(void) {
     bool was_tx_active = false;
     for (uint32_t tick = 0; tick < 40; tick++) {
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_BOOL("TX active", phys.tx_active);DEBUG_BOOL("anti_hog_expired", phys.anti_hog_expired);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_BOOL("TX active", phys.tx_active);
+        DEBUG_BOOL("anti_hog_expired", phys.anti_hog_expired);
 
         if (phys.tx_active && !was_tx_active) {
             was_tx_active = true;
@@ -556,7 +591,8 @@ static int test_fd_phys_anti_hog_bypassed(void) {
         }
     }
 
-    DEBUG_VAR("Total transmission breaks", transmission_breaks);DEBUG_BOOL("anti_hog_expired never set", !phys.anti_hog_expired);
+    DEBUG_VAR("Total transmission breaks", transmission_breaks);
+    DEBUG_BOOL("anti_hog_expired never set", !phys.anti_hog_expired);
     // In HD mode with anti_hog=3 we would see >= 1 break in 40 ticks
     TEST_ASSERT(!phys.anti_hog_expired, "anti_hog_expired never asserted in FD mode", phys.anti_hog_expired);
     // Allow exactly one break = the natural end-of-queue (all 4 frames sent)
@@ -582,7 +618,8 @@ static int test_fd_phys_txdelay_honored(void) {
 
     ax25_physical_set_duplex(&phys, true);
     phys.txdely_10ms = 20;  // 200 ms warm-up
-    DEBUG_VAR("txdely_10ms", phys.txdely_10ms);DEBUG_BOOL("full_duplex flag", phys.full_duplex);
+    DEBUG_VAR("txdely_10ms", phys.txdely_10ms);
+    DEBUG_BOOL("full_duplex flag", phys.full_duplex);
 
     uint8_t frame[20] = { 0x7E, 0x01, 0x02, 0x03, 0x7E };
     ax25_physical_queue_frame(&phys, frame, sizeof(frame), false);
@@ -595,7 +632,9 @@ static int test_fd_phys_txdelay_honored(void) {
     for (uint32_t tick = 0; tick < 60; tick++) {
         size_t prev_len = fd_captured_len;
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_BOOL("PTT state", fd_ptt_state);DEBUG_STATE("Physical state", phys.state);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_BOOL("PTT state", fd_ptt_state);
+        DEBUG_STATE("Physical state", phys.state);
 
         if (fd_ptt_state && ptt_on_tick == 0) {
             ptt_on_tick = tick;
@@ -607,9 +646,11 @@ static int test_fd_phys_txdelay_honored(void) {
         }
     }
 
-    DEBUG_VAR("ptt_on_tick", ptt_on_tick);DEBUG_VAR("data_tx_tick", data_tx_tick);
+    DEBUG_VAR("ptt_on_tick", ptt_on_tick);
+    DEBUG_VAR("data_tx_tick", data_tx_tick);
     uint32_t delay = (data_tx_tick > ptt_on_tick) ? (data_tx_tick - ptt_on_tick) : 0;
-    DEBUG_VAR("Delay between PTT and data (ticks)", delay);DEBUG_BOOL("Delay >= txdely_10ms (20 ticks)", delay >= 20);
+    DEBUG_VAR("Delay between PTT and data (ticks)", delay);
+    DEBUG_BOOL("Delay >= txdely_10ms (20 ticks)", delay >= 20);
 
     TEST_ASSERT(ptt_on_tick > 0, "PTT was raised in FD mode", ptt_on_tick == 0);
     TEST_ASSERT(data_tx_tick > 0, "Data was transmitted", data_tx_tick == 0);
@@ -635,7 +676,8 @@ static int test_fd_phys_ptt_fires_without_csma(void) {
     ax25_physical_set_duplex(&phys, true);
     phys.txdely_10ms = 0;      // No extra delay so we can test pure FD response
     fd_simulated_carrier = true;  // Busy channel - irrelevant in FD
-    DEBUG_BOOL("Carrier active (irrelevant in FD)", fd_simulated_carrier);DEBUG_BOOL("full_duplex flag", phys.full_duplex);
+    DEBUG_BOOL("Carrier active (irrelevant in FD)", fd_simulated_carrier);
+    DEBUG_BOOL("full_duplex flag", phys.full_duplex);
 
     uint8_t frame[20] = { 0x7E, 0x01, 0x02, 0x03, 0x7E };
     ax25_physical_queue_frame(&phys, frame, sizeof(frame), false);
@@ -643,8 +685,9 @@ static int test_fd_phys_ptt_fires_without_csma(void) {
 
     // Single tick - PTT must already be on
     ax25_physical_tick(&phys, 0);
-    DEBUG_BOOL("PTT state after tick 0", fd_ptt_state);DEBUG_STATE("Physical state after tick 0", phys.state);DEBUG_BOOL("TX active after tick 0",
-            phys.tx_active);
+    DEBUG_BOOL("PTT state after tick 0", fd_ptt_state);
+    DEBUG_STATE("Physical state after tick 0", phys.state);
+    DEBUG_BOOL("TX active after tick 0", phys.tx_active);
 
     TEST_ASSERT(fd_ptt_state == true, "PTT raised on first tick (no CSMA wait) in FD mode", !fd_ptt_state);
     TEST_ASSERT(phys.tx_active == true, "tx_active set on first tick in FD mode", !phys.tx_active);
@@ -670,7 +713,8 @@ static int test_fd_phys_queue_retained_on_t106(void) {
     ax25_physical_set_duplex(&phys, true);
     phys.max_tx_duration_10ms = 5;  // Very short limit so T106 fires quickly
     phys.txdely_10ms = 0;
-    DEBUG_VAR("max_tx_duration_10ms", phys.max_tx_duration_10ms);DEBUG_BOOL("full_duplex flag", phys.full_duplex);
+    DEBUG_VAR("max_tx_duration_10ms", phys.max_tx_duration_10ms);
+    DEBUG_BOOL("full_duplex flag", phys.full_duplex);
 
     // Queue 3 frames - T106 will fire before all are sent
     uint8_t frame[20] = { 0x7E, 0x01, 0x02, 0x03, 0x7E };
@@ -683,7 +727,10 @@ static int test_fd_phys_queue_retained_on_t106(void) {
     bool t106_fired = false;
     for (uint32_t tick = 0; tick < 30; tick++) {
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_BOOL("TX active", phys.tx_active);DEBUG_BOOL("PTT state", fd_ptt_state);DEBUG_STATE("Physical state", phys.state);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_BOOL("TX active", phys.tx_active);
+        DEBUG_BOOL("PTT state", fd_ptt_state);
+        DEBUG_STATE("Physical state", phys.state);
         // T106 fires and releases PTT; state returns to PHYS_IDLE
         if (!fd_ptt_state && fd_ptt_off_count >= 1 && tick >= (uint32_t) phys.max_tx_duration_10ms) {
             t106_fired = true;
@@ -696,8 +743,11 @@ static int test_fd_phys_queue_retained_on_t106(void) {
     uint8_t q_head = phys.queue_head;
     uint8_t q_tail = phys.queue_tail;
     uint8_t q_used = (uint8_t) ((q_tail - q_head + AX25_PHYS_QUEUE_SIZE) % AX25_PHYS_QUEUE_SIZE);
-    DEBUG_VAR("Queue head after T106", q_head);DEBUG_VAR("Queue tail after T106", q_tail);DEBUG_VAR("Frames still in queue", q_used);DEBUG_BOOL("T106 fired",
-            t106_fired);DEBUG_BOOL("Queue not empty (frames retained)", q_used > 0);
+    DEBUG_VAR("Queue head after T106", q_head);
+    DEBUG_VAR("Queue tail after T106", q_tail);
+    DEBUG_VAR("Frames still in queue", q_used);
+    DEBUG_BOOL("T106 fired", t106_fired);
+    DEBUG_BOOL("Queue not empty (frames retained)", q_used > 0);
 
     TEST_ASSERT(t106_fired, "T106 fired (confirmed by PTT release)", !t106_fired);
     TEST_ASSERT(q_used > 0, "Queue NOT flushed on T106 in FD mode (frames retained)", q_used);
@@ -722,18 +772,21 @@ static int test_fd_link_negotiation_both_agree(void) {
 
     ax25_mgmt_context_t ctx;
     uint8_t err = ax25_mgmt_init(&ctx);
-    TEST_ASSERT(err == 0, "mgmt_init succeeded", err);DEBUG_VAR("mgmt_init error code", err);
+    TEST_ASSERT(err == 0, "mgmt_init succeeded", err);
+    DEBUG_VAR("mgmt_init error code", err);
 
     // Both stations want full-duplex
     ctx.local_params.full_duplex = true;
     ctx.remote_params.full_duplex = true;
-    DEBUG_BOOL("local full_duplex", ctx.local_params.full_duplex);DEBUG_BOOL("remote full_duplex", ctx.remote_params.full_duplex);
+    DEBUG_BOOL("local full_duplex", ctx.local_params.full_duplex);
+    DEBUG_BOOL("remote full_duplex", ctx.remote_params.full_duplex);
 
     // Mirror the AND negotiation in ax25_mgmt_process_xid()
     ctx.agreed_params.full_duplex = ctx.local_params.full_duplex && ctx.remote_params.full_duplex;
     ctx.state = AX25_MGMT_NEGOTIATED;
 
-    DEBUG_BOOL("agreed full_duplex", ctx.agreed_params.full_duplex);DEBUG_STATE("mgmt state", ctx.state);
+    DEBUG_BOOL("agreed full_duplex", ctx.agreed_params.full_duplex);
+    DEBUG_STATE("mgmt state", ctx.state);
 
     TEST_ASSERT(ctx.agreed_params.full_duplex == true, "Agreed FD=true when both stations request it", ctx.agreed_params.full_duplex);
 
@@ -758,7 +811,8 @@ static int test_fd_link_negotiation_one_refuses(void) {
     // Local wants FD; remote does NOT
     ctx.local_params.full_duplex = true;
     ctx.remote_params.full_duplex = false;
-    DEBUG_BOOL("local full_duplex", ctx.local_params.full_duplex);DEBUG_BOOL("remote full_duplex", ctx.remote_params.full_duplex);
+    DEBUG_BOOL("local full_duplex", ctx.local_params.full_duplex);
+    DEBUG_BOOL("remote full_duplex", ctx.remote_params.full_duplex);
 
     ctx.agreed_params.full_duplex = ctx.local_params.full_duplex && ctx.remote_params.full_duplex;
     ctx.state = AX25_MGMT_NEGOTIATED;
@@ -811,7 +865,8 @@ static int test_fd_link_apply_params_to_conn_and_phys(void) {
     mgmt_ctx.agreed_params.retries = 10;
     mgmt_ctx.agreed_params.response_delay_timer = 500;
     mgmt_ctx.state = AX25_MGMT_NEGOTIATED;
-    DEBUG_BOOL("agreed full_duplex", mgmt_ctx.agreed_params.full_duplex);DEBUG_STATE("mgmt state", mgmt_ctx.state);
+    DEBUG_BOOL("agreed full_duplex", mgmt_ctx.agreed_params.full_duplex);
+    DEBUG_STATE("mgmt state", mgmt_ctx.state);
 
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = fd_capture_transmit };
@@ -825,9 +880,12 @@ static int test_fd_link_apply_params_to_conn_and_phys(void) {
     DEBUG_BOOL("phys full_duplex before apply", phys.full_duplex);
 
     uint8_t result = ax25_apply_negotiated_params(&mgmt_ctx, &conn, &phys);
-    DEBUG_VAR("apply_negotiated_params return code", result);DEBUG_BOOL("conn full_duplex after apply", conn.full_duplex);DEBUG_BOOL(
-            "phys full_duplex after apply", phys.full_duplex);DEBUG_VAR("phys axhang_10ms after apply (must be 0)", phys.axhang_10ms);DEBUG_VAR(
-            "phys anti_hog_10ms after apply (must be 0)", phys.anti_hog_10ms);DEBUG_VAR("phys remote_sync_10ms after apply (must be 0)", phys.remote_sync_10ms);
+    DEBUG_VAR("apply_negotiated_params return code", result);
+    DEBUG_BOOL("conn full_duplex after apply", conn.full_duplex);
+    DEBUG_BOOL("phys full_duplex after apply", phys.full_duplex);
+    DEBUG_VAR("phys axhang_10ms after apply (must be 0)", phys.axhang_10ms);
+    DEBUG_VAR("phys anti_hog_10ms after apply (must be 0)", phys.anti_hog_10ms);
+    DEBUG_VAR("phys remote_sync_10ms after apply (must be 0)", phys.remote_sync_10ms);
 
     TEST_ASSERT(result == 0, "apply_negotiated_params succeeded", result);
     TEST_ASSERT(conn.full_duplex == true, "conn->full_duplex set to true by apply", conn.full_duplex);
@@ -871,7 +929,8 @@ static int test_fd_link_apply_params_null_phys(void) {
 
     DEBUG_PRINT("Calling apply_negotiated_params with phys=NULL");
     uint8_t result = ax25_apply_negotiated_params(&mgmt_ctx, &conn, NULL);
-    DEBUG_VAR("Return code", result);DEBUG_BOOL("conn full_duplex", conn.full_duplex);
+    DEBUG_VAR("Return code", result);
+    DEBUG_BOOL("conn full_duplex", conn.full_duplex);
 
     TEST_ASSERT(result == 0, "apply_negotiated_params with NULL phys returns 0", result);
     TEST_ASSERT(conn.full_duplex == true, "conn->full_duplex still set even with NULL phys", conn.full_duplex);
@@ -945,7 +1004,8 @@ static int test_fd_link_t2_rr_immediate(void) {
     if (res != 0) {
         fd_cleanup_addresses(&dest, &src);
         TEST_ASSERT(false, "Connection established", res);
-    }DEBUG_STATE("Connection state after establish", conn.state);
+    }
+    DEBUG_STATE("Connection state after establish", conn.state);
 
     // Enable full-duplex on the connection
     conn.full_duplex = true;
@@ -980,8 +1040,10 @@ static int test_fd_link_t2_rr_immediate(void) {
     ax25_frame_free(iframe, &decode_err);
 
     uint32_t transmit_after = fd_transmit_count;
-    DEBUG_VAR("Transmit count after process_frame", transmit_after);DEBUG_BOOL("T2 running (must be false in FD)", conn.t2.running);DEBUG_BOOL(
-            "T2 ack pending (must be false in FD)", conn.t2_ack_pending);DEBUG_BOOL("RR sent immediately", transmit_after > transmit_before);
+    DEBUG_VAR("Transmit count after process_frame", transmit_after);
+    DEBUG_BOOL("T2 running (must be false in FD)", conn.t2.running);
+    DEBUG_BOOL("T2 ack pending (must be false in FD)", conn.t2_ack_pending);
+    DEBUG_BOOL("RR sent immediately", transmit_after > transmit_before);
 
     TEST_ASSERT(conn.t2.running == 0, "T2 not started in FD mode", conn.t2.running);
     TEST_ASSERT(conn.t2_ack_pending == false, "No pending deferred ACK in FD mode", conn.t2_ack_pending);

@@ -24,6 +24,7 @@
 //   - State machine dumps for abort / stuffing
 //   - Every test starts with "=== ENTERING TEST: xxx ==="
 //   - All error paths show exact bytes/bits
+
 #define DEBUG_ENABLE
 
 #include <stdio.h>
@@ -141,7 +142,8 @@ static uint8_t* nrzi_encode(const unsigned char *nrz_bytes, int byte_len, int *o
             printf("\n");
     }
     printf("\n");
-    DEBUG_VAR("Total transitions", count_nrzi_transitions(levels, total_bits));DEBUG_PRINT("=== NRZI ENCODE END ===");
+    DEBUG_VAR("Total transitions", count_nrzi_transitions(levels, total_bits));
+    DEBUG_PRINT("=== NRZI ENCODE END ===");
     return levels;
 }
 

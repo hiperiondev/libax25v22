@@ -21,7 +21,7 @@
 static inline bool il2p_sixbit_encode_char(uint8_t ascii, uint8_t *out) {
     if (ascii < IL2P_SIXBIT_VALID_MIN || ascii > IL2P_SIXBIT_VALID_MAX)
         return false;
-    *out = (uint8_t)(ascii - IL2P_SIXBIT_VALID_MIN) & 0x3Fu;
+    *out = (uint8_t) (ascii - IL2P_SIXBIT_VALID_MIN) & 0x3Fu;
     return true;
 }
 
@@ -32,7 +32,7 @@ static inline bool il2p_sixbit_encode_char(uint8_t ascii, uint8_t *out) {
  * @return        ASCII character.
  */
 static inline uint8_t il2p_sixbit_decode_char(uint8_t sixbit) {
-    return (uint8_t)((sixbit & 0x3Fu) + IL2P_SIXBIT_VALID_MIN);
+    return (uint8_t) ((sixbit & 0x3Fu) + IL2P_SIXBIT_VALID_MIN);
 }
 
 /**

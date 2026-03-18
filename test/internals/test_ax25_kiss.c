@@ -229,7 +229,8 @@ static bool verify_kiss_data_frame(const kiss_harness_t *h, uint8_t expected_por
         }
     }
     if (dec_len != expected_len) {
-        DEBUG_VAR("decoded length", dec_len);DEBUG_VAR("expected length", expected_len);
+        DEBUG_VAR("decoded length", dec_len);
+        DEBUG_VAR("expected length", expected_len);
         return false;
     }
     return memcmp(decoded, expected_payload, expected_len) == 0;
@@ -245,7 +246,11 @@ static int test_kiss_init_defaults(void) {
     ax25_kiss_ctx_t ctx;
     uint8_t rc = ax25_kiss_init(&ctx);
 
-    DEBUG_VAR("ax25_kiss_init return code (expect KISS_OK=0)", rc);DEBUG_BOOL("kiss_mode after init (expect false)", ctx.kiss_mode);DEBUG_VAR("rx_state after init (expect KISS_RX_IDLE=0)", ctx.rx_state);DEBUG_VAR("rx_len after init (expect 0)", ctx.rx_len);DEBUG_BOOL("rx_got_type after init (expect false)", ctx.rx_got_type);
+    DEBUG_VAR("ax25_kiss_init return code (expect KISS_OK=0)", rc);
+    DEBUG_BOOL("kiss_mode after init (expect false)", ctx.kiss_mode);
+    DEBUG_VAR("rx_state after init (expect KISS_RX_IDLE=0)", ctx.rx_state);
+    DEBUG_VAR("rx_len after init (expect 0)", ctx.rx_len);
+    DEBUG_BOOL("rx_got_type after init (expect false)", ctx.rx_got_type);
 
     TEST_ASSERT(rc == KISS_OK, "ax25_kiss_init returns KISS_OK", rc);
     TEST_ASSERT(ctx.kiss_mode == false, "kiss_mode is false after init", 0);
@@ -259,7 +264,11 @@ static int test_kiss_init_defaults(void) {
     TEST_ASSERT(ctx.user_data == NULL, "user_data is NULL", 0);
 
     for (uint8_t i = 0; i < KISS_MAX_PORTS; i++) {
-        DEBUG_VAR("Port txdelay", ctx.ports[i].txdelay);DEBUG_VAR("Port persistence", ctx.ports[i].persistence);DEBUG_VAR("Port slottime", ctx.ports[i].slottime);DEBUG_VAR("Port txtail", ctx.ports[i].txtail);DEBUG_BOOL("Port full_duplex", ctx.ports[i].full_duplex);
+        DEBUG_VAR("Port txdelay", ctx.ports[i].txdelay);
+        DEBUG_VAR("Port persistence", ctx.ports[i].persistence);
+        DEBUG_VAR("Port slottime", ctx.ports[i].slottime);
+        DEBUG_VAR("Port txtail", ctx.ports[i].txtail);
+        DEBUG_BOOL("Port full_duplex", ctx.ports[i].full_duplex);
         TEST_ASSERT(ctx.ports[i].txdelay == KISS_DEFAULT_TXDELAY, "Default txdelay on port", i);
         TEST_ASSERT(ctx.ports[i].persistence == KISS_DEFAULT_PERSISTENCE, "Default persistence on port", i);
         TEST_ASSERT(ctx.ports[i].slottime == KISS_DEFAULT_SLOTTIME, "Default slottime on port", i);
@@ -290,7 +299,9 @@ static int test_kiss_enter(void) {
 
     uint8_t rc = ax25_kiss_enter(&ctx);
 
-    DEBUG_VAR("ax25_kiss_enter return code (expect 0)", rc);DEBUG_BOOL("kiss_mode after enter (expect true)", ctx.kiss_mode);DEBUG_VAR("tx_count after enter (expect 1)", h.tx_count);
+    DEBUG_VAR("ax25_kiss_enter return code (expect 0)", rc);
+    DEBUG_BOOL("kiss_mode after enter (expect true)", ctx.kiss_mode);
+    DEBUG_VAR("tx_count after enter (expect 1)", h.tx_count);
 
     TEST_ASSERT(rc == KISS_OK, "ax25_kiss_enter returns KISS_OK", rc);
     TEST_ASSERT(ctx.kiss_mode == true, "kiss_mode is true after enter", 0);
@@ -335,7 +346,8 @@ static int test_kiss_send_frame_basic(void) {
 
     uint8_t rc = ax25_kiss_send_frame(&ctx, 0, payload, sizeof(payload));
 
-    DEBUG_VAR("send_frame return code (expect 0)", rc);DEBUG_VAR("tx_count (expect 1)", h.tx_count);
+    DEBUG_VAR("send_frame return code (expect 0)", rc);
+    DEBUG_VAR("tx_count (expect 1)", h.tx_count);
 
     TEST_ASSERT(rc == KISS_OK, "ax25_kiss_send_frame returns KISS_OK", rc);
     TEST_ASSERT(h.tx_count == 1, "One serial write for send_frame", 0);
@@ -525,7 +537,8 @@ static int test_kiss_rx_data_frame(void) {
 
     inject(&ctx, frame, 6);
 
-    DEBUG_VAR("rx_count (expect 1)", h.rx_count);DEBUG_BOOL("kiss_mode after receiving FEND (expect true)", ctx.kiss_mode);
+    DEBUG_VAR("rx_count (expect 1)", h.rx_count);
+    DEBUG_BOOL("kiss_mode after receiving FEND (expect true)", ctx.kiss_mode);
 
     TEST_ASSERT(h.rx_count == 1, "on_frame fired once", h.rx_count);
     if (h.rx_count > 0) {
@@ -617,7 +630,8 @@ static int test_kiss_rx_invalid_escape(void) {
     // so the invalid byte is dropped; 0xBB still arrives
     TEST_ASSERT(h.rx_count == 1, "on_frame still fires after invalid escape", h.rx_count);
     if (h.rx_count > 0) {
-        DEBUG_BUF("Received payload after invalid escape", h.rx_frames[0], h.rx_lens[0]);DEBUG_VAR("Received payload length (expect 2: 0xAA 0xBB)", h.rx_lens[0]);
+        DEBUG_BUF("Received payload after invalid escape", h.rx_frames[0], h.rx_lens[0]);
+        DEBUG_VAR("Received payload length (expect 2: 0xAA 0xBB)", h.rx_lens[0]);
         // 0xAA was stored before the escape, invalid byte dropped, 0xBB stored after
         TEST_ASSERT(h.rx_lens[0] == 2, "Payload length = 2 (invalid escape byte dropped)", (unsigned int )h.rx_lens[0]);
         TEST_ASSERT(h.rx_frames[0][0] == 0xAA, "First byte = 0xAA", h.rx_frames[0][0]);
@@ -736,7 +750,9 @@ static int test_kiss_rx_multiple_frames(void) {
     DEBUG_VAR("rx_count (expect 3)", h.rx_count);
     TEST_ASSERT(h.rx_count == 3, "Three on_frame callbacks fired", h.rx_count);
     if (h.rx_count >= 3) {
-        DEBUG_VAR("Frame 0 port (expect 0)", h.rx_port[0]);DEBUG_VAR("Frame 1 port (expect 1)", h.rx_port[1]);DEBUG_VAR("Frame 2 port (expect 2)", h.rx_port[2]);
+        DEBUG_VAR("Frame 0 port (expect 0)", h.rx_port[0]);
+        DEBUG_VAR("Frame 1 port (expect 1)", h.rx_port[1]);
+        DEBUG_VAR("Frame 2 port (expect 2)", h.rx_port[2]);
         TEST_ASSERT(h.rx_port[0] == 0, "Frame 0 port = 0", h.rx_port[0]);
         TEST_ASSERT(h.rx_port[1] == 1, "Frame 1 port = 1", h.rx_port[1]);
         TEST_ASSERT(h.rx_port[2] == 2, "Frame 2 port = 2", h.rx_port[2]);
@@ -762,7 +778,8 @@ static int test_kiss_rx_cmd_txdelay(void) {
     uint8_t new_txdelay = 120u;
     uint8_t raw[] = { KISS_FEND, KISS_TYPE_BYTE(0, KISS_CMD_TXDELAY), new_txdelay,
     KISS_FEND };
-    DEBUG_BUF("Injecting TXDELAY command frame", raw, sizeof(raw));DEBUG_VAR("Port 0 txdelay before (expect default=50)", ctx.ports[0].txdelay);
+    DEBUG_BUF("Injecting TXDELAY command frame", raw, sizeof(raw));
+    DEBUG_VAR("Port 0 txdelay before (expect default=50)", ctx.ports[0].txdelay);
 
     inject(&ctx, raw, sizeof(raw));
 
@@ -936,7 +953,8 @@ static int test_kiss_rx_cmd_return(void) {
 
     inject(&ctx, raw, sizeof(raw));
 
-    DEBUG_BOOL("kiss_mode after RETURN (expect false)", ctx.kiss_mode);DEBUG_VAR("return_count (expect 1)", h.return_count);
+    DEBUG_BOOL("kiss_mode after RETURN (expect false)", ctx.kiss_mode);
+    DEBUG_VAR("return_count (expect 1)", h.return_count);
 
     TEST_ASSERT(ctx.kiss_mode == false, "kiss_mode is false after RETURN received", 0);
     TEST_ASSERT(h.return_count == 1, "on_return fired once", h.return_count);
@@ -960,7 +978,8 @@ static int test_kiss_send_return(void) {
 
     uint8_t rc = ax25_kiss_send_return(&ctx);
 
-    DEBUG_VAR("send_return return code (expect 0)", rc);DEBUG_BOOL("kiss_mode after send_return (expect false)", ctx.kiss_mode);
+    DEBUG_VAR("send_return return code (expect 0)", rc);
+    DEBUG_BOOL("kiss_mode after send_return (expect false)", ctx.kiss_mode);
 
     TEST_ASSERT(rc == KISS_OK, "ax25_kiss_send_return returns KISS_OK", rc);
     TEST_ASSERT(ctx.kiss_mode == false, "kiss_mode is false after send_return", 0);
@@ -1080,7 +1099,11 @@ static int test_kiss_set_get_port_params(void) {
     set_p.full_duplex = true;
     set_p.hardware_len = 0u;
 
-    DEBUG_VAR("Setting txdelay", set_p.txdelay);DEBUG_VAR("Setting persistence", set_p.persistence);DEBUG_VAR("Setting slottime", set_p.slottime);DEBUG_VAR("Setting txtail", set_p.txtail);DEBUG_BOOL("Setting full_duplex", set_p.full_duplex);
+    DEBUG_VAR("Setting txdelay", set_p.txdelay);
+    DEBUG_VAR("Setting persistence", set_p.persistence);
+    DEBUG_VAR("Setting slottime", set_p.slottime);
+    DEBUG_VAR("Setting txtail", set_p.txtail);
+    DEBUG_BOOL("Setting full_duplex", set_p.full_duplex);
 
     uint8_t rc = ax25_kiss_set_port_params(&ctx, 2, &set_p);
 
@@ -1102,7 +1125,12 @@ static int test_kiss_set_get_port_params(void) {
     memset(&get_p, 0xFF, sizeof(get_p));
     rc = ax25_kiss_get_port_params(&ctx, 2, &get_p);
 
-    DEBUG_VAR("get_port_params return code (expect 0)", rc);DEBUG_VAR("Got txdelay (expect 80)", get_p.txdelay);DEBUG_VAR("Got persistence (expect 128)", get_p.persistence);DEBUG_VAR("Got slottime (expect 15)", get_p.slottime);DEBUG_VAR("Got txtail (expect 3)", get_p.txtail);DEBUG_BOOL("Got full_duplex (expect true)", get_p.full_duplex);
+    DEBUG_VAR("get_port_params return code (expect 0)", rc);
+    DEBUG_VAR("Got txdelay (expect 80)", get_p.txdelay);
+    DEBUG_VAR("Got persistence (expect 128)", get_p.persistence);
+    DEBUG_VAR("Got slottime (expect 15)", get_p.slottime);
+    DEBUG_VAR("Got txtail (expect 3)", get_p.txtail);
+    DEBUG_BOOL("Got full_duplex (expect true)", get_p.full_duplex);
 
     TEST_ASSERT(rc == KISS_OK, "ax25_kiss_get_port_params returns KISS_OK", rc);
     TEST_ASSERT(get_p.txdelay == set_p.txdelay, "Get txdelay = set txdelay", get_p.txdelay);
@@ -1403,7 +1431,8 @@ static int test_kiss_tx_empty_frame(void) {
 
     uint8_t rc = ax25_kiss_send_frame(&ctx, 0, NULL, 0);
 
-    DEBUG_VAR("send_frame(len=0) return code (expect 0)", rc);DEBUG_VAR("tx_count (expect 1)", h.tx_count);
+    DEBUG_VAR("send_frame(len=0) return code (expect 0)", rc);
+    DEBUG_VAR("tx_count (expect 1)", h.tx_count);
     TEST_ASSERT(rc == KISS_OK, "send_frame(empty) returns KISS_OK", rc);
     TEST_ASSERT(h.tx_count == 1, "One TX write for empty frame", h.tx_count);
 
@@ -1500,7 +1529,9 @@ static int test_kiss_rx_unknown_cmd(void) {
 
     inject(&ctx, raw, sizeof(raw));
 
-    DEBUG_VAR("rx_count (expect 0 - not a DATA frame)", h.rx_count);DEBUG_VAR("hw_count (expect 0 - not SETHARDWARE)", h.hw_count);DEBUG_VAR("return_count (expect 0 - not RETURN)", h.return_count);
+    DEBUG_VAR("rx_count (expect 0 - not a DATA frame)", h.rx_count);
+    DEBUG_VAR("hw_count (expect 0 - not SETHARDWARE)", h.hw_count);
+    DEBUG_VAR("return_count (expect 0 - not RETURN)", h.return_count);
     TEST_ASSERT(h.rx_count == 0, "on_frame not fired for unknown command", h.rx_count);
     TEST_ASSERT(h.hw_count == 0, "on_hardware not fired for unknown command", h.hw_count);
     TEST_ASSERT(h.return_count == 0, "on_return not fired for unknown command", h.return_count);

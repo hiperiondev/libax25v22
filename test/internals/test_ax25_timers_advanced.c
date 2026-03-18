@@ -23,6 +23,7 @@
  *   - Exponential Backoff: progressive retry delays under loss
  *   - T100-T108 Interaction: digipeater timer interplay
  */
+
 #define DEBUG_ENABLE
 #include <stdio.h>
 #include <string.h>
@@ -273,7 +274,8 @@ static int test_t1_adaptive_fullduplex_margin(void) {
     ax25_adjust_t1_adaptive(&conn);
     // Expected: 30*2 + 10 = 70
     uint16_t expected = 70;
-    DEBUG_VAR("T1 after adaptive FD (ticks)", conn.timers.t1);DEBUG_VAR("Expected T1 FD (ticks)", expected);
+    DEBUG_VAR("T1 after adaptive FD (ticks)", conn.timers.t1);
+    DEBUG_VAR("Expected T1 FD (ticks)", expected);
     TEST_ASSERT(conn.timers.t1 == expected, "T1 full-duplex margin = 10 ticks", conn.timers.t1);
 
     ax25_connection_cleanup(&conn);
@@ -405,7 +407,9 @@ static int test_t1_adaptive_progressive_refinement(void) {
         // Advance 20 ticks (RTT = 200ms)
         tick += 20;
         inject_test_response(&conn, tick);
-        DEBUG_VAR("RTT sample injected (ticks)", (uint32_t)20); DEBUG_VAR("ema_seeded now", conn.test_stats.ema_seeded); DEBUG_VAR("ema_rtt now", conn.test_stats.ema_rtt);
+        DEBUG_VAR("RTT sample injected (ticks)", (uint32_t)20);
+        DEBUG_VAR("ema_seeded now", conn.test_stats.ema_seeded);
+        DEBUG_VAR("ema_rtt now", conn.test_stats.ema_rtt);
 
         ax25_adjust_t1_adaptive(&conn);
         DEBUG_VAR("T1 after iteration %d (ticks)", conn.timers.t1);
@@ -413,7 +417,8 @@ static int test_t1_adaptive_progressive_refinement(void) {
 
     // After 5 samples all equal to 20: EMA converges to 20 -> T1=2*20+30=70
     uint16_t expected = 70;
-    DEBUG_VAR("Final T1 (ticks)", conn.timers.t1);DEBUG_VAR("Expected T1 (ticks)", expected);
+    DEBUG_VAR("Final T1 (ticks)", conn.timers.t1);
+    DEBUG_VAR("Expected T1 (ticks)", expected);
     TEST_ASSERT(conn.timers.t1 == expected, "T1 converges to 2*RTT+margin after 5 samples", conn.timers.t1);
 
     // Verify T1 decreased from the (much larger) default
@@ -483,7 +488,8 @@ static int test_backoff_n2_exhaustion(void) {
     // Use very short T1 and small N2 for fast test
     conn.timers.t1 = 5;   // 50ms
     conn.timers.n2 = 3;   // 3 retries
-    DEBUG_VAR("T1 configured (ticks)", conn.timers.t1);DEBUG_VAR("N2 configured (retries)", conn.timers.n2);
+    DEBUG_VAR("T1 configured (ticks)", conn.timers.t1);
+    DEBUG_VAR("N2 configured (retries)", conn.timers.n2);
 
     uint8_t parse_err = 0;
     ax25_address_t *dest = ax25_address_from_string("TEST2-0", &parse_err);
@@ -516,14 +522,18 @@ static int test_backoff_n2_exhaustion(void) {
     for (uint32_t i = 1; i <= max_ticks; i++) {
         global_tick = i;
         ax25_tick(&conn, i);
-        DEBUG_VAR("tick", i);DEBUG_STATE("state", conn.state);DEBUG_VAR("retry_count", conn.retry_count);
+        DEBUG_VAR("tick", i);
+        DEBUG_STATE("state", conn.state);
+        DEBUG_VAR("retry_count", conn.retry_count);
         if (conn.state == AX25_STATE_DISCONNECTED) {
             DEBUG_VAR("DISCONNECTED at tick", i);
             break;
         }
     }
 
-    DEBUG_STATE("Final state", conn.state);DEBUG_VAR("DL-ERROR call count", dl_error_call_count);DEBUG_VAR("Last DL-ERROR code", (unsigned)last_dl_error);
+    DEBUG_STATE("Final state", conn.state);
+    DEBUG_VAR("DL-ERROR call count", dl_error_call_count);
+    DEBUG_VAR("Last DL-ERROR code", (unsigned)last_dl_error);
     TEST_ASSERT(conn.state == AX25_STATE_DISCONNECTED, "State = DISCONNECTED after N2 exhaustion", conn.state);
     TEST_ASSERT(dl_error_call_count >= 1, "DL-ERROR callback fired at least once", dl_error_call_count);
     TEST_ASSERT(last_dl_error == AX25_DL_ERROR_N, "DL-ERROR code N (retry limit exceeded) raised", (unsigned )last_dl_error);
@@ -543,7 +553,8 @@ static int test_backoff_retry_counter(void) {
 
     conn.timers.t1 = 5;
     conn.timers.n2 = 10;  // plenty of retries so we do not disconnect
-    DEBUG_VAR("T1 (ticks)", conn.timers.t1);DEBUG_VAR("N2 (retries)", conn.timers.n2);
+    DEBUG_VAR("T1 (ticks)", conn.timers.t1);
+    DEBUG_VAR("N2 (retries)", conn.timers.n2);
 
     uint8_t parse_err = 0;
     ax25_address_t *dest = ax25_address_from_string("TEST2-0", &parse_err);
@@ -671,7 +682,8 @@ static int test_backoff_go_back_n_retransmit(void) {
         ax25_tick(&conn, i);
         if (conn.state == AX25_STATE_TIMER_RECOVERY)
             break;
-    }DEBUG_STATE("State after T1 expiry", conn.state);
+    }
+    DEBUG_STATE("State after T1 expiry", conn.state);
     uint32_t after_retry_tx = transmit_count;
     DEBUG_VAR("Transmit count after retransmit", after_retry_tx);
 
@@ -707,7 +719,8 @@ static int test_backoff_sabm_retransmit_no_recovery_state(void) {
     reset_capture();
     uint8_t err = ax25_connect(&conn, dest, src);
     TEST_ASSERT(err == 0, "ax25_connect returned 0", err);
-    TEST_ASSERT(conn.state == AX25_STATE_AWAITING_CONNECTION, "State = AWAITING_CONNECTION after connect", conn.state);DEBUG_STATE("State after connect", conn.state);
+    TEST_ASSERT(conn.state == AX25_STATE_AWAITING_CONNECTION, "State = AWAITING_CONNECTION after connect", conn.state);
+    DEBUG_STATE("State after connect", conn.state);
 
     uint32_t tx_before = transmit_count;
 
@@ -715,12 +728,15 @@ static int test_backoff_sabm_retransmit_no_recovery_state(void) {
     for (uint32_t i = 1; i <= (uint32_t) (conn.timers.t1 + 3); i++) {
         global_tick = i;
         ax25_tick(&conn, i);
-        DEBUG_VAR("tick", i);DEBUG_STATE("state", conn.state);
+        DEBUG_VAR("tick", i);
+        DEBUG_STATE("state", conn.state);
         if (transmit_count > tx_before)
             break;  // SABM retransmitted
     }
 
-    DEBUG_VAR("tx count before retry", tx_before);DEBUG_VAR("tx count after retry", transmit_count);DEBUG_STATE("State after T1 expiry during AWAITING_CONNECTION", conn.state);
+    DEBUG_VAR("tx count before retry", tx_before);
+    DEBUG_VAR("tx count after retry", transmit_count);
+    DEBUG_STATE("State after T1 expiry during AWAITING_CONNECTION", conn.state);
 
     TEST_ASSERT(conn.state == AX25_STATE_AWAITING_CONNECTION, "State remains AWAITING_CONNECTION (not TIMER_RECOVERY)", conn.state);
     TEST_ASSERT(transmit_count > tx_before, "SABM retransmitted on T1 expiry", transmit_count);
@@ -768,7 +784,11 @@ static int test_backoff_stats_tracking(void) {
     }
 
     const ax25_statistics_t *stats = ax25_get_statistics(&conn);
-    TEST_ASSERT(stats != NULL, "Statistics pointer valid", 0);DEBUG_VAR("t1_expirations", stats->t1_expirations);DEBUG_VAR("retries stat", stats->retries);DEBUG_VAR("iframe_retransmitted", stats->iframe_retransmitted);DEBUG_VAR("dl_error_call_count", dl_error_call_count);
+    TEST_ASSERT(stats != NULL, "Statistics pointer valid", 0);
+    DEBUG_VAR("t1_expirations", stats->t1_expirations);
+    DEBUG_VAR("retries stat", stats->retries);
+    DEBUG_VAR("iframe_retransmitted", stats->iframe_retransmitted);
+    DEBUG_VAR("dl_error_call_count", dl_error_call_count);
 
     TEST_ASSERT(stats->t1_expirations >= (uint16_t )conn.timers.n2, "t1_expirations >= N2", stats->t1_expirations);
     TEST_ASSERT(dl_error_call_count >= 1, "DL-ERROR fired (N2 exhaustion)", dl_error_call_count);
@@ -833,7 +853,8 @@ static int test_t100_t103_interaction(void) {
     phys.slottime_10ms = 0;
     phys.interframe_flags = 1;
     phys.preamble_flags = 0;
-    DEBUG_VAR("txdely_10ms (T103)", phys.txdely_10ms);DEBUG_VAR("axhang_10ms (T100)", phys.axhang_10ms);
+    DEBUG_VAR("txdely_10ms (T103)", phys.txdely_10ms);
+    DEBUG_VAR("axhang_10ms (T100)", phys.axhang_10ms);
 
     uint8_t frame[10] = { 0x7E, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x7E };
     ax25_physical_queue_frame(&phys, frame, sizeof(frame), false);
@@ -858,7 +879,8 @@ static int test_t100_t103_interaction(void) {
 #ifdef DEBUG_ENABLE
     bool ptt_held = ptt_state;  // still ON during hang
 #endif
-    DEBUG_BOOL("PTT still held during hang", ptt_held);DEBUG_VAR("phys_send_count", phys_send_count);
+    DEBUG_BOOL("PTT still held during hang", ptt_held);
+    DEBUG_VAR("phys_send_count", phys_send_count);
     // The key assertion: data was sent (send_data called)
     TEST_ASSERT(phys_send_count > 0, "Data transmitted via send_data callback", phys_send_count);
 
@@ -930,7 +952,8 @@ static int test_t100_t104_combined(void) {
     phys.slottime_10ms = 0;
     phys.preamble_flags = 0;
     phys.interframe_flags = 1;
-    DEBUG_VAR("axhang_10ms (T100)", phys.axhang_10ms);DEBUG_VAR("axdelay_10ms (T104)", phys.axdelay_10ms);
+    DEBUG_VAR("axhang_10ms (T100)", phys.axhang_10ms);
+    DEBUG_VAR("axdelay_10ms (T104)", phys.axdelay_10ms);
 
     uint8_t frame[8] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
 
@@ -1051,7 +1074,8 @@ static int test_t103_data_after_txdely(void) {
         ax25_physical_tick(&phys, i);
         if (phys_send_count > send_before)
             break;
-    }DEBUG_VAR("phys_send_count after txdely", phys_send_count);
+    }
+    DEBUG_VAR("phys_send_count after txdely", phys_send_count);
     TEST_ASSERT(phys_send_count > send_before, "Data sent after txdely elapses", phys_send_count);
 
     return 0;
@@ -1122,7 +1146,8 @@ static int test_t107_t100_combined(void) {
     phys.slottime_10ms = 0;
     phys.preamble_flags = 0;
     phys.interframe_flags = 1;
-    DEBUG_VAR("anti_hog_10ms (T107)", phys.anti_hog_10ms);DEBUG_VAR("axhang_10ms  (T100)", phys.axhang_10ms);
+    DEBUG_VAR("anti_hog_10ms (T107)", phys.anti_hog_10ms);
+    DEBUG_VAR("axhang_10ms  (T100)", phys.axhang_10ms);
 
     uint8_t frame[20];
     memset(frame, 0x55, sizeof(frame));
@@ -1204,7 +1229,8 @@ static int test_t108_rx_startup_interaction(void) {
         }
     }
 
-    DEBUG_VAR("T108 rx_startup_10ms", phys.rx_startup_10ms);DEBUG_VAR("second_ptt_on - first_tx_end", second_ptt_on > 0 ? second_ptt_on - first_tx_end : 0);
+    DEBUG_VAR("T108 rx_startup_10ms", phys.rx_startup_10ms);
+    DEBUG_VAR("second_ptt_on - first_tx_end", second_ptt_on > 0 ? second_ptt_on - first_tx_end : 0);
     TEST_ASSERT(second_ptt_on != 0, "Second transmission eventually starts", second_ptt_on);
     TEST_ASSERT((second_ptt_on - first_tx_end) >= (uint32_t )phys.rx_startup_10ms, "Second TX delayed by at least T108 rx_startup ticks",
             second_ptt_on - first_tx_end);
@@ -1278,7 +1304,8 @@ static int test_t100_hang_defers_new_frame(void) {
         }
     }
 
-    DEBUG_BOOL("PTT dropped during hang", ptt_dropped_during_hang);DEBUG_VAR("second_data_tick", second_data_tick);
+    DEBUG_BOOL("PTT dropped during hang", ptt_dropped_during_hang);
+    DEBUG_VAR("second_data_tick", second_data_tick);
     TEST_ASSERT(second_data_tick > first_data_end, "Second frame sent after first frame completes", second_data_tick);
 
     return 0;
@@ -1309,7 +1336,8 @@ static int test_all_timers_disabled(void) {
 
     // One tick should be enough to start
     ax25_physical_tick(&phys, 1);
-    DEBUG_BOOL("PTT after tick 1", ptt_state);DEBUG_VAR("phys_send_count after tick 1", phys_send_count);
+    DEBUG_BOOL("PTT after tick 1", ptt_state);
+    DEBUG_VAR("phys_send_count after tick 1", phys_send_count);
 
     ax25_physical_tick(&phys, 2);
     DEBUG_BOOL("PTT after tick 2", ptt_state);

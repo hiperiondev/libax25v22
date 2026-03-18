@@ -371,8 +371,7 @@ static int test_errors_at_boundary_positions(void) {
 
         // Corrupt exactly one byte at specified position in codeword
         rx_buf[8u + positions[p]] ^= 0x5A;
-        DEBUG_PRINT("  Corrupted codeword[%zu] (codeword position: %s)",
-                positions[p], positions_label[p]);
+        DEBUG_PRINT("  Corrupted codeword[%zu] (codeword position: %s)", positions[p], positions_label[p]);
 
         fx25_frame_t rx_frame;
         memset(&rx_frame, 0, sizeof(rx_frame));
@@ -597,7 +596,8 @@ static int test_errors_parity_vs_data_region(void) {
             uint8_t cv = (uint8_t) ((prng_next() & 0xFE) | 0x01);
             rx_buf[8u + pos] ^= cv;
             injected++;
-        }DEBUG_PRINT("  Injected %d errors in data region", injected);
+        }
+        DEBUG_PRINT("  Injected %d errors in data region", injected);
 
         fx25_frame_t rx_frame;
         memset(&rx_frame, 0, sizeof(rx_frame));
@@ -646,7 +646,8 @@ static int test_errors_parity_vs_data_region(void) {
             uint8_t cv = (uint8_t) ((prng_next() & 0xFE) | 0x01);
             rx_buf[8u + pos] ^= cv;
             injected++;
-        }DEBUG_PRINT("  Injected %d errors in parity region", injected);
+        }
+        DEBUG_PRINT("  Injected %d errors in parity region", injected);
 
         fx25_frame_t rx_frame;
         memset(&rx_frame, 0, sizeof(rx_frame));
@@ -709,7 +710,8 @@ static int test_errors_parity_vs_data_region(void) {
             up[rel] = 1;
             rx_buf[8u + data_len + rel] ^= (uint8_t) ((prng_next() & 0xFE) | 0x01);
             inj++;
-        }DEBUG_PRINT("  Injected %d+%d=10 mixed region errors", n_data, n_parity);
+        }
+        DEBUG_PRINT("  Injected %d+%d=10 mixed region errors", n_data, n_parity);
 
         fx25_frame_t rx_frame;
         memset(&rx_frame, 0, sizeof(rx_frame));
@@ -776,8 +778,7 @@ static int test_hdlc_noisy_channel(void) {
             size_t codeword_region = tx_len - preamble_tag_len - 4u;  // minus postamble
             if (codeword_region > 0) {
                 inject_byte_errors(tx_buf + preamble_tag_len, codeword_region, n_err, 0xF00Du + (uint32_t) e);
-                DEBUG_PRINT("  [hdlc_noisy/errs=%d] injected %d errors into codeword region (%zu bytes)",
-                        n_err, n_err, codeword_region);
+                DEBUG_PRINT("  [hdlc_noisy/errs=%d] injected %d errors into codeword region (%zu bytes)", n_err, n_err, codeword_region);
             }
         }
 

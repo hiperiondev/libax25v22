@@ -22,9 +22,9 @@ static void set_segment_received(ax25_segmenter_t *seg, uint8_t sequence) {
         return;  // Invalid sequence
     }
     // Division/modulo with explicit bit-shift and bit-mask.
-    // Guarantees fast code at all optimisation levels including -O0 debug builds.
+    // Guarantees fast code at all optimization levels including -O0 debug builds.
     // Any compiler already does this for power-of-2 constants at -O1+, but
-    // making it explicit removes the dependency on optimiser behaviour.
+    // making it explicit removes the dependency on optimizer behavior.
     seg->rx_segment_bitmap[sequence >> 3u] |= (uint8_t) (1u << (sequence & 0x07u));
 
 }

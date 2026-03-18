@@ -144,7 +144,8 @@ static int test_t1_timer_expiration(void) {
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = capture_transmit };
     uint8_t err = ax25_connection_init(&conn, &cb, NULL);
-    TEST_ASSERT(err == 0, "Connection init succeeded", err);DEBUG_VAR("Connection init error code", err);
+    TEST_ASSERT(err == 0, "Connection init succeeded", err);
+    DEBUG_VAR("Connection init error code", err);
 
     // Set T1 to a short value for testing (100ms = 10 ticks)
     conn.timers.t1 = 10;
@@ -160,7 +161,8 @@ static int test_t1_timer_expiration(void) {
         DEBUG_PRINT("Connection establishment failed");
         cleanup_addresses(&dest, &src);
         TEST_ASSERT(false, "Connection established", result);
-    }DEBUG_STATE("Connection state after establish", conn.state);
+    }
+    DEBUG_STATE("Connection state after establish", conn.state);
 
     // Send data but don't acknowledge
     const uint8_t payload[] = { 'T', 'E', 'S', 'T' };
@@ -171,13 +173,15 @@ static int test_t1_timer_expiration(void) {
         DEBUG_VAR("Send data error code", err);
         cleanup_addresses(&dest, &src);
         TEST_ASSERT(false, "Data sent successfully", err);
-    }DEBUG_FRAME("Payload sent", payload, sizeof(payload));
+    }
+    DEBUG_FRAME("Payload sent", payload, sizeof(payload));
 
     if (transmit_count != 1) {
         DEBUG_VAR("Unexpected transmit count", transmit_count);
         cleanup_addresses(&dest, &src);
         TEST_ASSERT(false, "Frame transmitted once", transmit_count);
-    }DEBUG_VAR("Initial transmit count", transmit_count);
+    }
+    DEBUG_VAR("Initial transmit count", transmit_count);
 
     uint32_t initial_transmit_count = transmit_count;
 
@@ -185,7 +189,8 @@ static int test_t1_timer_expiration(void) {
     DEBUG_PRINT("Advancing time past T1 expiration");
     for (uint32_t i = 0; i < 11; i++) {
         ax25_tick(&conn, i);
-        DEBUG_VAR("Tick", i);DEBUG_STATE("Connection state", conn.state);DEBUG_VAR("Transmit count", transmit_count);
+        DEBUG_VAR("Tick", i);
+        DEBUG_STATE("Connection state", conn.state);DEBUG_VAR("Transmit count", transmit_count);
     }
 
     if (transmit_count <= initial_transmit_count) {
@@ -200,7 +205,8 @@ static int test_t1_timer_expiration(void) {
         TEST_ASSERT(false, "State changed to TIMER_RECOVERY", conn.state);
     }
 
-    DEBUG_VAR("Final transmit count", transmit_count);DEBUG_STATE("Final state", conn.state);
+    DEBUG_VAR("Final transmit count", transmit_count);
+    DEBUG_STATE("Final state", conn.state);
     TEST_ASSERT(transmit_count > initial_transmit_count, "Frame retransmitted after T1 expiration", transmit_count);
     TEST_ASSERT(conn.state == AX25_STATE_TIMER_RECOVERY, "State changed to TIMER_RECOVERY", conn.state);
 
@@ -233,7 +239,8 @@ static int test_t1_timer_reset_on_ack(void) {
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = capture_transmit };
     uint8_t err = ax25_connection_init(&conn, &cb, NULL);
-    TEST_ASSERT(err == 0, "Connection init succeeded", err);DEBUG_VAR("Connection init error code", err);
+    TEST_ASSERT(err == 0, "Connection init succeeded", err);
+    DEBUG_VAR("Connection init error code", err);
 
     conn.timers.t1 = 20;  // 200ms
     DEBUG_VAR("T1 timer configured (ticks)", conn.timers.t1);
@@ -248,7 +255,8 @@ static int test_t1_timer_reset_on_ack(void) {
         DEBUG_PRINT("Connection establishment failed");
         cleanup_addresses(&dest, &src);
         TEST_ASSERT(false, "Connection established", result);
-    }DEBUG_STATE("Connection state after establish", conn.state);
+    }
+    DEBUG_STATE("Connection state after establish", conn.state);
 
     // Send data
     const uint8_t payload[] = { 'T', 'E', 'S', 'T' };
@@ -259,7 +267,8 @@ static int test_t1_timer_reset_on_ack(void) {
         DEBUG_VAR("Send data error code", err);
         cleanup_addresses(&dest, &src);
         TEST_ASSERT(false, "Data sent successfully", err);
-    }DEBUG_FRAME("Payload sent", payload, sizeof(payload));
+    }
+    DEBUG_FRAME("Payload sent", payload, sizeof(payload));
 
     uint32_t t1_start = conn.t1.start_ms;
     DEBUG_VAR64("T1 start_ms", t1_start);
@@ -295,7 +304,8 @@ static int test_t1_timer_reset_on_ack(void) {
     DEBUG_STATE("Connection state after RR", conn.state);
 
     uint32_t t1_after_ack = conn.t1.start_ms;
-    DEBUG_VAR64("T1 start_ms after ACK", t1_after_ack);DEBUG_BOOL("T1 timer reset", t1_after_ack != t1_start);
+    DEBUG_VAR64("T1 start_ms after ACK", t1_after_ack);
+    DEBUG_BOOL("T1 timer reset", t1_after_ack != t1_start);
 
     TEST_ASSERT(t1_after_ack != t1_start, "T1 timer reset after ACK", t1_after_ack == t1_start);
 
@@ -329,7 +339,8 @@ static int test_t2_response_delay(void) {
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = capture_transmit };
     uint8_t err = ax25_connection_init(&conn, &cb, NULL);
-    TEST_ASSERT(err == 0, "Connection init succeeded", err);DEBUG_VAR("Connection init error code", err);
+    TEST_ASSERT(err == 0, "Connection init succeeded", err);
+    DEBUG_VAR("Connection init error code", err);
 
     conn.timers.t2 = 5;  // 50ms
     DEBUG_VAR("T2 timer configured (ticks)", conn.timers.t2);
@@ -344,7 +355,8 @@ static int test_t2_response_delay(void) {
         DEBUG_PRINT("Connection establishment failed");
         cleanup_addresses(&dest, &src);
         TEST_ASSERT(false, "Connection established", result);
-    }DEBUG_STATE("Connection state after establish", conn.state);
+    }
+    DEBUG_STATE("Connection state after establish", conn.state);
 
     // Simulate receiving I-frame
     DEBUG_PRINT("Simulating received I-frame");
@@ -371,7 +383,8 @@ static int test_t2_response_delay(void) {
     reset_capture();
     ax25_process_frame(&conn, iframe, 1);
     ax25_frame_free(iframe, &decode_err);
-    DEBUG_STATE("Connection state after I-frame", conn.state);DEBUG_BOOL("T2 running", conn.t2.running);
+    DEBUG_STATE("Connection state after I-frame", conn.state);
+    DEBUG_BOOL("T2 running", conn.t2.running);
 
     uint32_t immediate_transmit_count = transmit_count;
 
@@ -382,7 +395,8 @@ static int test_t2_response_delay(void) {
         DEBUG_VAR("Tick", i);DEBUG_VAR("Transmit count", transmit_count);
     }
 
-    DEBUG_VAR("Final transmit count", transmit_count);DEBUG_BOOL("ACK delayed", transmit_count > immediate_transmit_count);
+    DEBUG_VAR("Final transmit count", transmit_count);
+    DEBUG_BOOL("ACK delayed", transmit_count > immediate_transmit_count);
     TEST_ASSERT(transmit_count > immediate_transmit_count, "ACK delayed by T2", transmit_count <= immediate_transmit_count);
 
     cleanup_addresses(&dest, &src);
@@ -397,7 +411,8 @@ static int test_t3_inactive_link_polling(void) {
     ax25_connection_t conn;
     ax25_callbacks_t cb = { .transmit = capture_transmit };
     uint8_t err = ax25_connection_init(&conn, &cb, NULL);
-    TEST_ASSERT(err == 0, "Connection init succeeded", err);DEBUG_VAR("Connection init error code", err);
+    TEST_ASSERT(err == 0, "Connection init succeeded", err);
+    DEBUG_VAR("Connection init error code", err);
 
     conn.timers.t3 = 10;  // 100ms
     conn.t3_timeout = 10;
@@ -413,7 +428,8 @@ static int test_t3_inactive_link_polling(void) {
         DEBUG_PRINT("Connection establishment failed");
         cleanup_addresses(&dest, &src);
         TEST_ASSERT(false, "Connection established", result);
-    }DEBUG_STATE("Connection state after establish", conn.state);
+    }
+    DEBUG_STATE("Connection state after establish", conn.state);
 
     reset_capture();
 
@@ -424,7 +440,8 @@ static int test_t3_inactive_link_polling(void) {
         DEBUG_VAR("Tick", i);DEBUG_VAR("Transmit count", transmit_count);
     }
 
-    DEBUG_VAR("Final transmit count", transmit_count);DEBUG_BOOL("Poll sent", transmit_count > 0);
+    DEBUG_VAR("Final transmit count", transmit_count);
+    DEBUG_BOOL("Poll sent", transmit_count > 0);
     TEST_ASSERT(transmit_count > 0, "Poll sent after T3 expiration", transmit_count == 0);
 
     cleanup_addresses(&dest, &src);
@@ -470,22 +487,27 @@ static int test_t100_axhang_timer(void) {
 
     while (phys.tx_active && tick < 50) {
         ax25_physical_tick(&phys, tick++);
-        DEBUG_VAR("Tick", tick);DEBUG_BOOL("PTT state", ptt_state);DEBUG_STATE("Physical state", phys.state);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_BOOL("PTT state", ptt_state);DEBUG_STATE("Physical state", phys.state);
     }
 
     uint32_t tx_end_tick = tick;
-    DEBUG_VAR("Transmission ended at tick", tx_end_tick);DEBUG_BOOL("PTT still on", ptt_state);
+    DEBUG_VAR("Transmission ended at tick", tx_end_tick);
+    DEBUG_BOOL("PTT still on", ptt_state);
 
     // Continue ticking and check PTT stays on during hang
     DEBUG_PRINT("Checking PTT hang time");
     while (ptt_state && tick < tx_end_tick + 20) {
         ax25_physical_tick(&phys, tick++);
-        DEBUG_VAR("Tick", tick);DEBUG_BOOL("PTT state", ptt_state);DEBUG_STATE("Physical state", phys.state);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_BOOL("PTT state", ptt_state);DEBUG_STATE("Physical state", phys.state);
     }
 
     uint32_t ptt_off_tick = tick;
     uint32_t hang_duration = ptt_off_tick - tx_end_tick;
-    DEBUG_VAR("PTT released at tick", ptt_off_tick);DEBUG_VAR("Hang duration (ticks)", hang_duration);DEBUG_BOOL("Hang time >= configured", hang_duration >= 10);
+    DEBUG_VAR("PTT released at tick", ptt_off_tick);
+    DEBUG_VAR("Hang duration (ticks)", hang_duration);
+    DEBUG_BOOL("Hang time >= configured", hang_duration >= 10);
 
     TEST_ASSERT(hang_duration >= 10, "PTT held for AXHANG duration", hang_duration);
 
@@ -509,7 +531,8 @@ static int test_t102_slottime_persistence(void) {
     phys.persist = 128;        // p = 0.5
     phys.txdely_10ms = 0;
     phys.axhang_10ms = 0;
-    DEBUG_VAR("Slottime configured (ticks)", phys.slottime_10ms);DEBUG_VAR("Persist value", phys.persist);
+    DEBUG_VAR("Slottime configured (ticks)", phys.slottime_10ms);
+    DEBUG_VAR("Persist value", phys.persist);
 
     reset_ptt_state();
     simulated_carrier = false;
@@ -527,7 +550,8 @@ static int test_t102_slottime_persistence(void) {
     DEBUG_PRINT("Waiting for CSMA wait state");
     while (tick < 50) {
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_STATE("Physical state", phys.state);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_STATE("Physical state", phys.state);
         if (phys.state == PHYS_CSMA_WAIT && !entered_csma) {
             csma_wait_start = tick;
             entered_csma = true;
@@ -543,12 +567,14 @@ static int test_t102_slottime_persistence(void) {
     DEBUG_PRINT("Waiting for transmission start");
     while (tick < csma_wait_start + 50 && !phys.tx_active) {
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_BOOL("TX active", phys.tx_active);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_BOOL("TX active", phys.tx_active);
         tick++;
     }
 
     uint32_t csma_duration = tick - csma_wait_start;
-    DEBUG_VAR("CSMA duration (ticks)", csma_duration);DEBUG_BOOL("CSMA applied slottime", csma_duration >= 10);
+    DEBUG_VAR("CSMA duration (ticks)", csma_duration);
+    DEBUG_BOOL("CSMA applied slottime", csma_duration >= 10);
 
     TEST_ASSERT(csma_duration >= 10, "CSMA applied slottime delay", csma_duration);
 
@@ -589,7 +615,8 @@ static int test_t103_txdelay_timer(void) {
     DEBUG_PRINT("Waiting for PTT on");
     while (tick < 100 && ptt_on_tick == 0) {
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_BOOL("PTT state", ptt_state);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_BOOL("PTT state", ptt_state);
         if (ptt_state && ptt_on_tick == 0) {
             ptt_on_tick = tick;
             DEBUG_VAR("PTT on at tick", ptt_on_tick);
@@ -604,7 +631,8 @@ static int test_t103_txdelay_timer(void) {
     while (tick < ptt_on_tick + 100 && data_start_tick == 0) {
         size_t prev_len = captured_len;
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_VAR("Captured length", captured_len);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_VAR("Captured length", captured_len);
         if (captured_len > prev_len && data_start_tick == 0) {
             data_start_tick = tick;
             DEBUG_VAR("Data transmission started at tick", data_start_tick);
@@ -613,7 +641,8 @@ static int test_t103_txdelay_timer(void) {
     }
 
     uint32_t delay = data_start_tick - ptt_on_tick;
-    DEBUG_VAR("Delay between PTT and data (ticks)", delay);DEBUG_BOOL("Delay >= configured TXDELAY", delay >= 30);
+    DEBUG_VAR("Delay between PTT and data (ticks)", delay);
+    DEBUG_BOOL("Delay >= configured TXDELAY", delay >= 30);
 
     TEST_ASSERT(delay >= 30, "TXDELAY enforced between PTT and data", delay);
 
@@ -637,7 +666,8 @@ static int test_t104_axdelay_timer(void) {
     phys.axdelay_10ms = 50;  // 500ms digipeat delay
     phys.persist = 255;
     phys.axhang_10ms = 0;
-    DEBUG_VAR("TXDELAY configured (ticks)", phys.txdely_10ms);DEBUG_VAR("AXDELAY configured (ticks)", phys.axdelay_10ms);
+    DEBUG_VAR("TXDELAY configured (ticks)", phys.txdely_10ms);
+    DEBUG_VAR("AXDELAY configured (ticks)", phys.axdelay_10ms);
 
     reset_ptt_state();
     simulated_carrier = false;
@@ -679,7 +709,8 @@ static int test_t104_axdelay_timer(void) {
     DEBUG_PRINT("Waiting for second transmission");
     while (tick < first_tx_end + 100 && second_ptt_on == 0) {
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_BOOL("PTT state", ptt_state);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_BOOL("PTT state", ptt_state);
         if (ptt_state && second_ptt_on == 0) {
             second_ptt_on = tick;
             DEBUG_VAR("Second PTT on at tick", second_ptt_on);
@@ -688,7 +719,8 @@ static int test_t104_axdelay_timer(void) {
     }
 
     uint32_t digipeat_delay = second_ptt_on - first_tx_end;
-    DEBUG_VAR("Digipeat delay (ticks)", digipeat_delay);DEBUG_BOOL("Delay >= AXDELAY", digipeat_delay >= 50);
+    DEBUG_VAR("Digipeat delay (ticks)", digipeat_delay);
+    DEBUG_BOOL("Delay >= AXDELAY", digipeat_delay >= 50);
 
     TEST_ASSERT(digipeat_delay >= 50, "AXDELAY enforced for digipeated frame", digipeat_delay);
 
@@ -729,7 +761,8 @@ static int test_t105_remote_sync_timer(void) {
     DEBUG_PRINT("Checking for REMOTE_SYNC state");
     while (tick < 50) {
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_STATE("Physical state", phys.state);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_STATE("Physical state", phys.state);
         if (phys.state == PHYS_REMOTE_SYNC) {
             entered_remote_sync = true;
             DEBUG_VAR("Entered REMOTE_SYNC at tick", tick);
@@ -781,11 +814,15 @@ static int test_t106_transmission_limit(void) {
     DEBUG_PRINT("Running transmission until limit");
     while (phys.tx_active && tick < 50) {
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_BOOL("TX active", phys.tx_active);DEBUG_STATE("Physical state", phys.state);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_BOOL("TX active", phys.tx_active);
+        DEBUG_STATE("Physical state", phys.state);
         tick++;
     }
 
-    DEBUG_BOOL("Transmission stopped", !phys.tx_active);DEBUG_BOOL("PTT released", ptt_state == false);DEBUG_STATE("Final state", phys.state);
+    DEBUG_BOOL("Transmission stopped", !phys.tx_active);
+    DEBUG_BOOL("PTT released", ptt_state == false);
+    DEBUG_STATE("Final state", phys.state);
 
     TEST_ASSERT(!phys.tx_active, "Transmission stopped after T106 limit", phys.tx_active);
     TEST_ASSERT(ptt_state == false, "PTT released after limit", ptt_state);
@@ -833,7 +870,8 @@ static int test_t107_anti_hogging(void) {
     DEBUG_PRINT("Monitoring for transmission breaks");
     while (tick < 50) {
         ax25_physical_tick(&phys, tick);
-        DEBUG_VAR("Tick", tick);DEBUG_BOOL("TX active", phys.tx_active);
+        DEBUG_VAR("Tick", tick);
+        DEBUG_BOOL("TX active", phys.tx_active);
 
         if (phys.tx_active && !was_transmitting) {
             was_transmitting = true;
@@ -846,7 +884,8 @@ static int test_t107_anti_hogging(void) {
         tick++;
     }
 
-    DEBUG_VAR("Total transmission breaks", transmission_breaks);DEBUG_BOOL("Anti-hogging triggered", transmission_breaks > 0);
+    DEBUG_VAR("Total transmission breaks", transmission_breaks);
+    DEBUG_BOOL("Anti-hogging triggered", transmission_breaks > 0);
 
     TEST_ASSERT(transmission_breaks > 0, "Anti-hogging caused transmission break", transmission_breaks);
 
@@ -876,8 +915,10 @@ static int test_t108_receiver_startup(void) {
     phys.persist = 255;
     phys.axhang_10ms = 0;
     phys.interframe_flags = 1;  // Minimal interframe delay
-    DEBUG_VAR("RX startup time configured (ticks)", phys.rx_startup_10ms);DEBUG_VAR("TX delay (ticks)", phys.txdely_10ms);DEBUG_VAR("AX hang (ticks)",
-            phys.axhang_10ms);DEBUG_VAR("Interframe flags", phys.interframe_flags);
+    DEBUG_VAR("RX startup time configured (ticks)", phys.rx_startup_10ms);
+    DEBUG_VAR("TX delay (ticks)", phys.txdely_10ms);
+    DEBUG_VAR("AX hang (ticks)", phys.axhang_10ms);
+    DEBUG_VAR("Interframe flags", phys.interframe_flags);
 
     reset_ptt_state();
     simulated_carrier = false;
@@ -889,7 +930,8 @@ static int test_t108_receiver_startup(void) {
     DEBUG_FRAME("First frame queued", frame, sizeof(frame));
 
     uint32_t tick = 0;
-    DEBUG_PRINT("Transmitting first frame");DEBUG_PRINT("=== Starting transmission loop ===");
+    DEBUG_PRINT("Transmitting first frame");
+    DEBUG_PRINT("=== Starting transmission loop ===");
 
     // tx_active is false before the
     // first tick. The original loop exited immediately (break on !tx_active) before
@@ -903,14 +945,20 @@ static int test_t108_receiver_startup(void) {
     }
 
     while (tick < 50) {
-        DEBUG_VAR("Loop tick", tick);DEBUG_STATE("State before tick", phys.state);DEBUG_BOOL("TX active before tick", phys.tx_active);DEBUG_BOOL(
-                "RX warmup required before tick", phys.rx_warmup_required);DEBUG_VAR("Next action tick", phys.next_action_tick_10ms);DEBUG_VAR(
-                "Last unkey tick", phys.last_unkey_tick_10ms);
+        DEBUG_VAR("Loop tick", tick);
+        DEBUG_STATE("State before tick", phys.state);
+        DEBUG_BOOL("TX active before tick", phys.tx_active);
+        DEBUG_BOOL("RX warmup required before tick", phys.rx_warmup_required);
+        DEBUG_VAR("Next action tick", phys.next_action_tick_10ms);
+        DEBUG_VAR("Last unkey tick", phys.last_unkey_tick_10ms);
 
         ax25_physical_tick(&phys, tick);
 
-        DEBUG_STATE("State after tick", phys.state);DEBUG_BOOL("TX active after tick", phys.tx_active);DEBUG_BOOL("RX warmup required after tick",
-                phys.rx_warmup_required);DEBUG_VAR("Queue head", phys.queue_head);DEBUG_VAR("Queue tail", phys.queue_tail);
+        DEBUG_STATE("State after tick", phys.state);
+        DEBUG_BOOL("TX active after tick", phys.tx_active);
+        DEBUG_BOOL("RX warmup required after tick", phys.rx_warmup_required);
+        DEBUG_VAR("Queue head", phys.queue_head);
+        DEBUG_VAR("Queue tail", phys.queue_tail);
 
         if (!phys.tx_active) {
             DEBUG_PRINT("TX became inactive, breaking loop");
@@ -920,25 +968,35 @@ static int test_t108_receiver_startup(void) {
     }
 
     uint32_t first_tx_end = tick;
-    DEBUG_VAR("First transmission ended at tick", first_tx_end);DEBUG_STATE("State after first TX", phys.state);DEBUG_BOOL("RX warmup required after first TX",
-            phys.rx_warmup_required);DEBUG_VAR("Last unkey tick after first TX", phys.last_unkey_tick_10ms);
+    DEBUG_VAR("First transmission ended at tick", first_tx_end);
+    DEBUG_STATE("State after first TX", phys.state);
+    DEBUG_BOOL("RX warmup required after first TX", phys.rx_warmup_required);
+    DEBUG_VAR("Last unkey tick after first TX", phys.last_unkey_tick_10ms);
     TEST_ASSERT(!phys.tx_active, "First transmission completed", phys.tx_active);
 
     // Queue second frame immediately
     ax25_physical_queue_frame(&phys, frame, sizeof(frame), false);
-    DEBUG_PRINT("Second frame queued");DEBUG_VAR("Queue head after 2nd queue", phys.queue_head);DEBUG_VAR("Queue tail after 2nd queue", phys.queue_tail);
+    DEBUG_PRINT("Second frame queued");
+    DEBUG_VAR("Queue head after 2nd queue", phys.queue_head);
+    DEBUG_VAR("Queue tail after 2nd queue", phys.queue_tail);
 
     // Advance time and check when second transmission starts
     uint32_t second_tx_start = 0;
-    DEBUG_PRINT("Waiting for second transmission");DEBUG_PRINT("=== Starting second transmission detection loop ===");
+    DEBUG_PRINT("Waiting for second transmission");
+    DEBUG_PRINT("=== Starting second transmission detection loop ===");
     while (tick < first_tx_end + 20) {
-        DEBUG_VAR("Loop tick", tick);DEBUG_STATE("State before tick", phys.state);DEBUG_BOOL("TX active before tick", phys.tx_active);DEBUG_BOOL(
-                "RX warmup required before tick", phys.rx_warmup_required);DEBUG_VAR("Next action tick", phys.next_action_tick_10ms);DEBUG_VAR(
-                "Last unkey tick", phys.last_unkey_tick_10ms);
+        DEBUG_VAR("Loop tick", tick);
+        DEBUG_STATE("State before tick", phys.state);
+        DEBUG_BOOL("TX active before tick", phys.tx_active);
+        DEBUG_BOOL("RX warmup required before tick", phys.rx_warmup_required);
+        DEBUG_VAR("Next action tick", phys.next_action_tick_10ms);
+        DEBUG_VAR("Last unkey tick", phys.last_unkey_tick_10ms);
 
         ax25_physical_tick(&phys, tick);
 
-        DEBUG_STATE("State after tick", phys.state);DEBUG_BOOL("TX active after tick", phys.tx_active);DEBUG_VAR("Transmit count", transmit_count);
+        DEBUG_STATE("State after tick", phys.state);
+        DEBUG_BOOL("TX active after tick", phys.tx_active);
+        DEBUG_VAR("Transmit count", transmit_count);
 
         if (phys.tx_active && second_tx_start == 0) {
             second_tx_start = tick;
@@ -949,13 +1007,16 @@ static int test_t108_receiver_startup(void) {
     }
 
     if (second_tx_start == 0) {
-        DEBUG_PRINT("ERROR: Second transmission never started!");DEBUG_STATE("Final state", phys.state);DEBUG_VAR("Final tick", tick);
+        DEBUG_PRINT("ERROR: Second transmission never started!");
+        DEBUG_STATE("Final state", phys.state);
+        DEBUG_VAR("Final tick", tick);
         TEST_ASSERT(false, "Second transmission should have started", 0);
     }
 
     uint32_t rx_warmup_delay = second_tx_start - first_tx_end;
-    DEBUG_VAR("RX warmup delay (ticks)", rx_warmup_delay);DEBUG_VAR("Expected minimum delay (ticks)", phys.rx_startup_10ms);DEBUG_BOOL(
-            "Delay >= configured RX startup", rx_warmup_delay >= 4);
+    DEBUG_VAR("RX warmup delay (ticks)", rx_warmup_delay);
+    DEBUG_VAR("Expected minimum delay (ticks)", phys.rx_startup_10ms);
+    DEBUG_BOOL("Delay >= configured RX startup", rx_warmup_delay >= 4);
 
     TEST_ASSERT(rx_warmup_delay >= 4, "RX startup time enforced between transmissions", rx_warmup_delay);
 
@@ -969,7 +1030,8 @@ static int test_tr210_segmentation_timeout(void) {
 
     ax25_segmenter_t seg;
     uint8_t err = ax25_segmenter_init(&seg, 256);
-    TEST_ASSERT(err == 0, "Segmenter init succeeded", err);DEBUG_VAR("Segmenter init error code", err);
+    TEST_ASSERT(err == 0, "Segmenter init succeeded", err);
+    DEBUG_VAR("Segmenter init error code", err);
 
     seg.on_reassembly_error = NULL;  // We'll check state directly
     DEBUG_PRINT("Segmenter initialized without error callback");
@@ -989,11 +1051,13 @@ static int test_tr210_segmentation_timeout(void) {
     for (uint32_t tick = 0; tick <= 3100; tick++) {
         ax25_segmenter_tick(&seg, tick);
         if (tick % 500 == 0) {
-            DEBUG_VAR("Tick", tick);DEBUG_STATE("Segmenter state", seg.state);DEBUG_VAR("Buffer used", seg.rx_buffer_used);
+            DEBUG_VAR("Tick", tick);
+            DEBUG_STATE("Segmenter state", seg.state);DEBUG_VAR("Buffer used", seg.rx_buffer_used);
         }
     }
 
-    DEBUG_STATE("Final segmenter state", seg.state);DEBUG_VAR("Final buffer used", seg.rx_buffer_used);
+    DEBUG_STATE("Final segmenter state", seg.state);
+    DEBUG_VAR("Final buffer used", seg.rx_buffer_used);
 
     TEST_ASSERT(seg.state == SEG_STATE_IDLE, "Timeout caused return to IDLE", seg.state);
     TEST_ASSERT(seg.rx_buffer_used == 0, "Buffer cleared on timeout", seg.rx_buffer_used);

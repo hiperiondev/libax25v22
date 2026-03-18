@@ -31,7 +31,7 @@ char* my_strdup(const char *s) {
     // Sanity check for microcontroller
     if (len > 1024)
         return NULL;
-    char *dup = (char *)hal_mem_alloc((uint16_t)(len + 1));
+    char *dup = (char*) hal_mem_alloc((uint16_t) (len + 1));
     if (dup)
         memcpy(dup, s, len + 1);
     return dup;

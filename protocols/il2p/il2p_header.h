@@ -45,14 +45,14 @@
  * @brief Parsed representation of an IL2P Type 1 header (before bit-packing).
  */
 typedef struct {
-    uint8_t  dest_callsign[6];  /**< SIXBIT-encoded destination callsign */
-    uint8_t  dest_ssid;         /**< Destination SSID (4 bits, 0..15) */
-    uint8_t  src_callsign[6];   /**< SIXBIT-encoded source callsign */
-    uint8_t  src_ssid;          /**< Source SSID (4 bits, 0..15) */
-    uint8_t  ui;                /**< 1 if UI frame (PID field present in U-frame) */
-    uint8_t  pid;               /**< IL2P 4-bit PID code */
-    uint8_t  control;           /**< 7-bit translated control subfield */
-    uint8_t  hdr_type;          /**< Header type: IL2P_HDR_TYPE_0 or IL2P_HDR_TYPE_1 */
+    uint8_t dest_callsign[6]; /**< SIXBIT-encoded destination callsign */
+    uint8_t dest_ssid; /**< Destination SSID (4 bits, 0..15) */
+    uint8_t src_callsign[6]; /**< SIXBIT-encoded source callsign */
+    uint8_t src_ssid; /**< Source SSID (4 bits, 0..15) */
+    uint8_t ui; /**< 1 if UI frame (PID field present in U-frame) */
+    uint8_t pid; /**< IL2P 4-bit PID code */
+    uint8_t control; /**< 7-bit translated control subfield */
+    uint8_t hdr_type; /**< Header type: IL2P_HDR_TYPE_0 or IL2P_HDR_TYPE_1 */
     uint16_t payload_byte_count;/**< Total payload data bytes (0..1023) */
 } il2p_header_t;
 
@@ -104,8 +104,7 @@ bool il2p_header_decode(const uint8_t in[IL2P_HEADER_SIZE], il2p_header_t *hdr);
  * @param hdr            Output IL2P header.
  * @return               true if header was built, false on error.
  */
-bool il2p_header_from_ax25(const ax25_frame_t *frame, uint16_t payload_len,
-                             il2p_header_t *hdr);
+bool il2p_header_from_ax25(const ax25_frame_t *frame, uint16_t payload_len, il2p_header_t *hdr);
 
 /**
  * @brief Reconstruct an AX.25 frame header from an IL2P Type 1 header.
@@ -131,11 +130,7 @@ uint16_t il2p_payload_block_count(uint16_t payload_byte_count);
  * @param large_block_count   Output: number of large blocks.
  * @param small_block_count   Output: number of small blocks.
  */
-void il2p_payload_block_sizes(uint16_t payload_byte_count,
-                               uint16_t *num_blocks,
-                               uint8_t  *large_block_size,
-                               uint8_t  *small_block_size,
-                               uint16_t *large_block_count,
-                               uint16_t *small_block_count);
+void il2p_payload_block_sizes(uint16_t payload_byte_count, uint16_t *num_blocks, uint8_t *large_block_size, uint8_t *small_block_size,
+        uint16_t *large_block_count, uint16_t *small_block_count);
 
 #endif /* IL2P_HEADER_H */

@@ -20,9 +20,9 @@
  * @param buf  Output buffer, must have room for at least 3 bytes.
  */
 static inline void il2p_sync_write(uint8_t *buf) {
-    buf[0] = (uint8_t)((IL2P_SYNC_WORD >> 16) & 0xFFu);  /* 0xF1 */
-    buf[1] = (uint8_t)((IL2P_SYNC_WORD >>  8) & 0xFFu);  /* 0x5E */
-    buf[2] = (uint8_t)( IL2P_SYNC_WORD        & 0xFFu);  /* 0x48 */
+    buf[0] = (uint8_t) ((IL2P_SYNC_WORD >> 16) & 0xFFu); /* 0xF1 */
+    buf[1] = (uint8_t) ((IL2P_SYNC_WORD >> 8) & 0xFFu); /* 0x5E */
+    buf[2] = (uint8_t) ( IL2P_SYNC_WORD & 0xFFu); /* 0x48 */
 }
 
 /**
@@ -35,8 +35,8 @@ static inline void il2p_sync_write(uint8_t *buf) {
  * @return           Number of bits that differ from IL2P_SYNC_WORD (0..24).
  */
 static inline uint8_t il2p_sync_bit_errors(uint32_t candidate) {
-    uint32_t diff = (candidate ^ (uint32_t)IL2P_SYNC_WORD) & 0x00FFFFFFuL;
-    uint8_t  cnt  = 0u;
+    uint32_t diff = (candidate ^ (uint32_t) IL2P_SYNC_WORD) & 0x00FFFFFFuL;
+    uint8_t cnt = 0u;
     /* Brian Kernighan popcount — safe on any 32-bit MCU, no 64-bit ops */
     while (diff) {
         diff &= diff - 1u;
@@ -71,7 +71,6 @@ static inline bool il2p_sync_match(uint32_t candidate) {
  * @param bit_off  Output: bit offset within that byte (0 = MSB).
  * @return         true if sync word found, false otherwise.
  */
-bool il2p_sync_search(const uint8_t *buf, size_t buf_len,
-                      size_t *byte_off, uint8_t *bit_off);
+bool il2p_sync_search(const uint8_t *buf, size_t buf_len, size_t *byte_off, uint8_t *bit_off);
 
 #endif /* IL2P_SYNC_H */

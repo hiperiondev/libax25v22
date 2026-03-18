@@ -97,7 +97,7 @@ static void t2_on_reassembly_error(ax25_seg_error_t error, void *user_data) {
 static void t2_on_request_retransmit(uint8_t sequence, void *user_data) {
     if (g2_retransmit_requests.count < 64) {
         g2_retransmit_requests.sequences[g2_retransmit_requests.count++] = sequence;
-    } DEBUG_PRINT("Retransmit requested: seq=%u", sequence);
+    }DEBUG_PRINT("Retransmit requested: seq=%u", sequence);
 }
 
 static void t2_reset_globals(void) {
@@ -125,13 +125,9 @@ static void t2_feed(ax25_segmenter_t *rx, uint8_t idx, uint32_t tick) {
 
 // Helper: dump segment bitmap for debug
 static void t2_dump_bitmap(const ax25_segmenter_t *seg) {
-    DEBUG_PRINT("rx_bitmap: %02X %02X %02X %02X %02X %02X %02X %02X",
-            seg->rx_segment_bitmap[0], seg->rx_segment_bitmap[1],
-            seg->rx_segment_bitmap[2], seg->rx_segment_bitmap[3],
-            seg->rx_segment_bitmap[4], seg->rx_segment_bitmap[5],
-            seg->rx_segment_bitmap[6], seg->rx_segment_bitmap[7]); DEBUG_PRINT("ooo_count=%u rx_expected=%u rx_buffer_used=%u rx_last=%u",
-            seg->ooo_count, seg->rx_expected_segment,
-            seg->rx_buffer_used, seg->rx_last_received);
+    DEBUG_PRINT("rx_bitmap: %02X %02X %02X %02X %02X %02X %02X %02X", seg->rx_segment_bitmap[0], seg->rx_segment_bitmap[1], seg->rx_segment_bitmap[2],
+            seg->rx_segment_bitmap[3], seg->rx_segment_bitmap[4], seg->rx_segment_bitmap[5], seg->rx_segment_bitmap[6], seg->rx_segment_bitmap[7]);DEBUG_PRINT(
+            "ooo_count=%u rx_expected=%u rx_buffer_used=%u rx_last=%u", seg->ooo_count, seg->rx_expected_segment, seg->rx_buffer_used, seg->rx_last_received);
 }
 
 // ============================================================
@@ -172,8 +168,7 @@ static int test_ooo_reverse_order(void) {
     // Feed 0 — this is the first segment, starts reassembly
     DEBUG_PRINT("[A1] Feeding segment 0 (first)");
     t2_feed(&rx_seg, 0, tick);
-    DEBUG_PRINT("[A1] After feeding 0: state=%d ooo_count=%u called=%d",
-            rx_seg.state, rx_seg.ooo_count, g2_reassembly_result.called);
+    DEBUG_PRINT("[A1] After feeding 0: state=%d ooo_count=%u called=%d", rx_seg.state, rx_seg.ooo_count, g2_reassembly_result.called);
 
     // With all-reverse and OOO buffer: segs 2 and 1 were lost before first frame,
     // reassembly cannot complete without them being retransmitted.
@@ -204,8 +199,7 @@ static int test_ooo_interleaved_4seg(void) {
     uint32_t tick = 100;
     uint8_t order[] = { 0, 3, 1, 2 };
     for (int i = 0; i < 4; i++) {
-        DEBUG_PRINT("[A2] Feeding segment idx=%u seq=%u", order[i],
-                g2_captured_segments.segments[order[i]][0] & 0x3F);
+        DEBUG_PRINT("[A2] Feeding segment idx=%u seq=%u", order[i], g2_captured_segments.segments[order[i]][0] & 0x3F);
         t2_feed(&rx_seg, order[i], tick);
         t2_dump_bitmap(&rx_seg);
     }
@@ -249,7 +243,8 @@ static int test_ooo_two_consecutive_missing(void) {
     }
 
     TEST_ASSERT(rx_seg.state == SEG_STATE_REASSEMBLING, "[A3] Still reassembling after gap", 0);
-    TEST_ASSERT(g2_reassembly_result.called == false, "[A3] No premature complete", 0); DEBUG_PRINT("[A3] ooo_count=%u", rx_seg.ooo_count);
+    TEST_ASSERT(g2_reassembly_result.called == false, "[A3] No premature complete", 0);
+    DEBUG_PRINT("[A3] ooo_count=%u", rx_seg.ooo_count);
 
     // Deliver missing 1 and 2
     DEBUG_PRINT("[A3] Feed 1 (was missing)");
@@ -375,8 +370,8 @@ static int test_ooo_buffer_full_then_drain(void) {
         DEBUG_PRINT("[A6] feed OOO seg=%u", i);
         t2_feed(&rx_seg, i, tick);
         fed_ooo++;
-    } DEBUG_PRINT("[A6] ooo_count=%u rx_gap_count=%u rx_expected=%u",
-            rx_seg.ooo_count, rx_seg.rx_gap_count, rx_seg.rx_expected_segment);
+    }
+    DEBUG_PRINT("[A6] ooo_count=%u rx_gap_count=%u rx_expected=%u", rx_seg.ooo_count, rx_seg.rx_gap_count, rx_seg.rx_expected_segment);
 
     // OOO buffer should be at or near capacity
     TEST_ASSERT(rx_seg.ooo_count > 0, "[A6] OOO buffer has entries", rx_seg.ooo_count);
@@ -698,8 +693,7 @@ static int test_tr210_wraparound_tick(void) {
 
     // Run tick after wrap to ensure no false timeout
     ax25_segmenter_tick(&rx_seg, tick);
-    DEBUG_PRINT("[B5] after wrap: error_called=%d reassembly_called=%d state=%d",
-            g2_error_result.called, g2_reassembly_result.called, rx_seg.state);
+    DEBUG_PRINT("[B5] after wrap: error_called=%d reassembly_called=%d state=%d", g2_error_result.called, g2_reassembly_result.called, rx_seg.state);
 
     TEST_ASSERT(g2_reassembly_result.called == true, "[B5] Reassembly completes across tick wraparound", 0);
     TEST_ASSERT(g2_reassembly_result.length == 600, "[B5] Length correct across wraparound", 0);
@@ -969,14 +963,13 @@ static int test_large_7seg_with_recovery(void) {
     for (uint8_t i = 0; i < 3; i++)
         t2_feed(&rx_seg, i, tick);
 
-    DEBUG_PRINT("[C5] Before skip: state=%d ooo_count=%u expected=%u",
-            rx_seg.state, rx_seg.ooo_count, rx_seg.rx_expected_segment);
+    DEBUG_PRINT("[C5] Before skip: state=%d ooo_count=%u expected=%u", rx_seg.state, rx_seg.ooo_count, rx_seg.rx_expected_segment);
 
     for (uint8_t i = 4; i < total; i++)
         t2_feed(&rx_seg, i, tick);
 
-    DEBUG_PRINT("[C5] After skip: ooo_count=%u rx_expected=%u retransmit_requests=%u",
-            rx_seg.ooo_count, rx_seg.rx_expected_segment, g2_retransmit_requests.count);
+    DEBUG_PRINT("[C5] After skip: ooo_count=%u rx_expected=%u retransmit_requests=%u", rx_seg.ooo_count, rx_seg.rx_expected_segment,
+            g2_retransmit_requests.count);
 
     TEST_ASSERT(g2_reassembly_result.called == false, "[C5] Not yet complete without seg 3", 0);
     TEST_ASSERT(g2_retransmit_requests.count >= 1, "[C5] Retransmit requested for seg 3", g2_retransmit_requests.count);
@@ -1163,8 +1156,7 @@ static int test_large_bitmap_all_64_segs(void) {
     ax25_segmenter_receive(&rx_seg, seg8, 2, AX25_PID_SEGMENT_FRAGMENT, 0);
     TEST_ASSERT((rx_seg.rx_segment_bitmap[1] & 0x01u) != 0, "[C9] Bit 0 of byte 1 set (seq=8)", 0);
 
-    DEBUG_PRINT("[C9] bitmap byte0=0x%02X byte1=0x%02X expected=0x%02X",
-            rx_seg.rx_segment_bitmap[0], rx_seg.rx_segment_bitmap[1], rx_seg.rx_expected_segment);
+    DEBUG_PRINT("[C9] bitmap byte0=0x%02X byte1=0x%02X expected=0x%02X", rx_seg.rx_segment_bitmap[0], rx_seg.rx_segment_bitmap[1], rx_seg.rx_expected_segment);
 
     return 0;
 }
