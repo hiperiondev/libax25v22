@@ -852,12 +852,16 @@ static void handle_out_of_sequence_iframe(ax25_connection_t *conn, ax25_informat
         if (conn->srej_buffer_count < AX25_MAX_QUEUE_SIZE) {
             uint8_t buf_idx = conn->srej_buffer_count;
             size_t copy_len = iframe->payload_len;
-            if (copy_len > 255)
-                copy_len = 255;
+            // start modified part
+            // Clamp to AX25_SREJ_BUFFER_SIZE (not the old literal 255).
+            // srej_buffer_len is now uint16_t, so 256-byte payloads are stored intact.
+            if (copy_len > AX25_SREJ_BUFFER_SIZE)
+                copy_len = AX25_SREJ_BUFFER_SIZE;
             if (copy_len > 0 && iframe->payload) {
                 memcpy(conn->srej_buffer[buf_idx], iframe->payload, copy_len);
             }
-            conn->srej_buffer_len[buf_idx] = (uint8_t) copy_len;
+            conn->srej_buffer_len[buf_idx] = (uint16_t) copy_len;
+            // end modified part
             conn->srej_buffer_ns[buf_idx] = ns;
             conn->srej_buffer_pid[buf_idx] = iframe->pid;  // store PID for DL-DATA indication on delivery
             conn->srej_buffer_count++;
@@ -897,12 +901,16 @@ static void handle_out_of_sequence_iframe(ax25_connection_t *conn, ax25_informat
             if (conn->srej_buffer_count < AX25_MAX_QUEUE_SIZE) {
                 uint8_t buf_idx = conn->srej_buffer_count;
                 size_t copy_len = iframe->payload_len;
-                if (copy_len > 255)
-                    copy_len = 255;
+                // start modified part
+                // Clamp to AX25_SREJ_BUFFER_SIZE (not the old literal 255).
+                // srej_buffer_len is now uint16_t, so 256-byte payloads are stored intact.
+                if (copy_len > AX25_SREJ_BUFFER_SIZE)
+                    copy_len = AX25_SREJ_BUFFER_SIZE;
                 if (copy_len > 0 && iframe->payload) {
                     memcpy(conn->srej_buffer[buf_idx], iframe->payload, copy_len);
                 }
-                conn->srej_buffer_len[buf_idx] = (uint8_t) copy_len;
+                conn->srej_buffer_len[buf_idx] = (uint16_t) copy_len;
+                // end modified part
                 conn->srej_buffer_ns[buf_idx] = ns;
                 conn->srej_buffer_pid[buf_idx] = iframe->pid;  // store PID for DL-DATA indication on delivery
                 conn->srej_buffer_count++;
@@ -916,12 +924,16 @@ static void handle_out_of_sequence_iframe(ax25_connection_t *conn, ax25_informat
                 if (conn->srej_buffer_count < AX25_MAX_QUEUE_SIZE) {
                     uint8_t buf_idx = conn->srej_buffer_count;
                     size_t copy_len = iframe->payload_len;
-                    if (copy_len > 255)
-                        copy_len = 255;
+                    // start modified part
+                    // Clamp to AX25_SREJ_BUFFER_SIZE (not the old literal 255).
+                    // srej_buffer_len is now uint16_t, so 256-byte payloads are stored intact.
+                    if (copy_len > AX25_SREJ_BUFFER_SIZE)
+                        copy_len = AX25_SREJ_BUFFER_SIZE;
                     if (copy_len > 0 && iframe->payload) {
                         memcpy(conn->srej_buffer[buf_idx], iframe->payload, copy_len);
                     }
-                    conn->srej_buffer_len[buf_idx] = (uint8_t) copy_len;
+                    conn->srej_buffer_len[buf_idx] = (uint16_t) copy_len;
+                    // end modified part
                     conn->srej_buffer_ns[buf_idx] = ns;
                     conn->srej_buffer_pid[buf_idx] = iframe->pid;  // store PID for DL-DATA indication on delivery
                     conn->srej_buffer_count++;
@@ -1451,10 +1463,10 @@ static uint8_t ax25_send_data_raw(ax25_connection_t *conn, uint8_t *data, size_t
     if (conn->callbacks.transmit)
         conn->callbacks.transmit(conn->user_data, encoded, frame_len);
 
-// Update statistics - S-frame sent
-    conn->stats.sframe_sent++;
-    if (conn->stats.sframe_sent == 0)
-        conn->stats.sframe_sent = 1;
+// start modified part
+// I-frames are not S-frames; the erroneous sframe_sent increment is removed.
+// sframe_sent is updated only in send_rr(), send_rnr(), send_rej(), send_srej().
+// end modified part
 
 // Update statistics - I-frame sent
     conn->stats.iframe_sent++;
