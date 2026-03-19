@@ -172,28 +172,38 @@ uint8_t ax25_mux_classify_priority(const uint8_t *frame, size_t len) {
 
     uint8_t ctrl = frame[pos];
 
-    // Check specific known U-frames FIRST to prevent misclassification:
-    // 0xE1 (TEST rsp F=0) has bits 1-0 = 01 which would falsely match the
-    // S-frame pattern below if not intercepted here first.
-    if (ctrl == 0x03u || ctrl == 0x13u) {  // UI command / response
-        return AX25_MUX_PRI_UI;
+    // start modified part: use canonical helpers for frame classification
+    // Previous code used a hardcoded literal table with two bugs:
+    //   1. 0xE1 was listed as "TEST rsp F=0" but is not a valid AX.25 frame;
+    //      TEST P/F=0 = 0xE3, TEST P/F=1 = 0xE3|0x10 = 0xF3. The value 0xE1
+    //      has bits[1:0]=01 so it falls through to the S-frame branch, causing
+    //      any TEST frame with P=1 (0xF3) to be misclassified as ACK priority.
+    //   2. The table only handled specific P/F variants (0x03 and 0x13 for UI,
+    //      0xAF/0xBF for XID) leaving other valid P/F combinations uncovered.
+    // Fix: ax25_frame_class() checks I first (bit0==0), then S (bits[1:0]==01),
+    // then U (bits[1:0]==11), matching Linux ax25_decode() priority exactly.
+    // ax25_u_subtype() strips bit 4 (P/F) before comparing against AX25_U_*
+    // constants, covering all P/F combinations with a single comparison.
+    {
+        ax25_frame_class_t fc = ax25_frame_class(ctrl);
+        if (fc == AX25_FRAME_CLASS_I) {
+            // I-frame: reliable data transfer, highest data priority
+            return AX25_MUX_PRI_DATA;
+        }
+        if (fc == AX25_FRAME_CLASS_S) {
+            // S-frame: acknowledgment / flow control
+            return AX25_MUX_PRI_ACK;
+        }
+        // U-frame: strip P/F bit and compare subtype against named constants
+        uint8_t sub = ax25_u_subtype(ctrl);
+        if (sub == AX25_U_UI || sub == AX25_U_XID || sub == AX25_U_TEST) {
+            // UI, XID, TEST: connectionless / management frames, low priority
+            return AX25_MUX_PRI_UI;
+        }
+        // SABM, SABME, DISC, DM, UA, FRMR: urgent connection-control frames
+        return AX25_MUX_PRI_URGENT;
     }
-    if (ctrl == 0xAFu || ctrl == 0xBFu) {  // XID command / response
-        return AX25_MUX_PRI_UI;
-    }
-    if (ctrl == 0xE3u || ctrl == 0xE1u) {  // TEST command / response
-        return AX25_MUX_PRI_UI;
-    }
-
-    if ((ctrl & 0x01u) == 0u) {  // I-frame: bit 0 cleared
-        return AX25_MUX_PRI_DATA;
-    }
-    if ((ctrl & 0x03u) == 0x01u) {  // S-frame: bits 1-0 = 01
-        return AX25_MUX_PRI_ACK;
-    }
-
-    // All other U-frames (SABM/SABME/DISC/DM/UA/FRMR) are urgent
-    return AX25_MUX_PRI_URGENT;
+    // end modified part: use canonical helpers for frame classification
 }
 
 void ax25_mux_transmit_adapter(void *user_data, uint8_t *frame, size_t len) {

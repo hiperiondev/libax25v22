@@ -455,15 +455,22 @@ static int test_mux_classify_priority(void) {
     pri = ax25_mux_classify_priority(frame, flen);
     TEST_ASSERT(pri == AX25_MUX_PRI_UI, "XID rsp ctrl=0xBF -> PRI_UI (0)", pri);
 
-    /* TEST command (0xE3) -> PRI_UI */
+    /* TEST command P/F=0 (0xE3) -> PRI_UI */
     build_raw_frame(frame, &flen, 0xE3);
     pri = ax25_mux_classify_priority(frame, flen);
     TEST_ASSERT(pri == AX25_MUX_PRI_UI, "TEST cmd ctrl=0xE3 -> PRI_UI (0)", pri);
 
-    /* TEST response (0xE1) -> PRI_UI */
-    build_raw_frame(frame, &flen, 0xE1);
+    // start modified part: fix invalid test byte 0xE1 -> correct TEST P/F=1 value 0xF3
+    // 0xE1 = 1110_0001 has bits[1:0]=01 which classifies as S-frame, NOT TEST.
+    // The AX.25 TEST modifier is 0xE3; with P/F bit (bit4=0x10) set: 0xE3|0x10=0xF3.
+    // The old code only caught it because both the implementation and test were wrong
+    // in the same way (hardcoded 0xE1 in both places). Fixed implementation now uses
+    // ax25_u_subtype() which strips bit4 before comparing, so 0xF3 -> sub=0xE3=AX25_U_TEST.
+    /* TEST with P/F=1 (0xF3 = 0xE3 | 0x10) -> PRI_UI */
+    build_raw_frame(frame, &flen, 0xF3);
     pri = ax25_mux_classify_priority(frame, flen);
-    TEST_ASSERT(pri == AX25_MUX_PRI_UI, "TEST rsp ctrl=0xE1 -> PRI_UI (0)", pri);
+    TEST_ASSERT(pri == AX25_MUX_PRI_UI, "TEST P/F=1 ctrl=0xF3 -> PRI_UI (0)", pri);
+    // end modified part: fix invalid test byte 0xE1 -> correct TEST P/F=1 value 0xF3
 
     /* --- Urgent U-frames: SABM, SABME, DISC, DM, UA, FRMR --- */
     /* SABM = 0x2F (ctrl 0x2F: bits 1:0 = 11 = U-frame, not UI/XID/TEST) */

@@ -598,7 +598,10 @@ ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, 
     uint8_t control = hdr_result.remaining[0];
     ax25_frame_t *frame = NULL;
 
-    if ((control & CONTROL_US_MASK) == CONTROL_U_VAL) {
+    // use ax25_frame_class() for U-frame detection
+    // Guarantees UI (0x03) is never misrouted to the I/S branch because
+    // ax25_frame_class() checks I first (bit0==0), so 0x03 falls to U.
+    if (ax25_frame_class(control) == AX25_FRAME_CLASS_U) {
         frame = (ax25_frame_t*) ax25_unnumbered_frame_decode(hdr_result.header, control, hdr_result.remaining + 1, hdr_result.remaining_len - 1, err);
         // If unnumbered frame decode failed with invalid control, propagate error code 6
         if (!frame && *err == 1) {
@@ -655,7 +658,9 @@ ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, 
                 // decoding, which always has more than 2 bytes remaining (ctrl+PID+data).
                 if (!is_16bit && hdr_result.remaining_len == 2) {
                     uint8_t first_ctrl = hdr_result.remaining[0];
-                    if ((first_ctrl & CONTROL_US_MASK) == CONTROL_S_VAL) {
+                    // use ax25_frame_class() for S-frame 16-bit detect
+                    // Guarantees same classification priority as Linux ax25_decode().
+                    if (ax25_frame_class(first_ctrl) == AX25_FRAME_CLASS_S) {
                         // Exactly 2 bytes remaining with S-frame indicator: 16-bit S-frame
                         is_16bit = true;
                     }
@@ -674,10 +679,16 @@ ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, 
             const uint8_t *data_start = hdr_result.remaining + control_size;
             size_t data_len = hdr_result.remaining_len - control_size;
 
-            if ((full_control & CONTROL_I_MASK) == CONTROL_I_VAL) {
-                frame = (ax25_frame_t*) ax25_information_frame_decode(hdr_result.header, full_control, data_start, data_len, is_16bit, err);
-            } else if ((full_control & CONTROL_US_MASK) == CONTROL_S_VAL) {
-                frame = (ax25_frame_t*) ax25_supervisory_frame_decode(hdr_result.header, full_control, is_16bit, err);
+            // use ax25_frame_class() on full_control low byte
+            // I-frame: bit 0 == 0; S-frame: bits[1:0] == 01.
+            // U-frames handled above; this branch only sees I and S.
+            {
+                ax25_frame_class_t fc = ax25_frame_class((uint8_t) (full_control & 0xFFu));
+                if (fc == AX25_FRAME_CLASS_I) {
+                    frame = (ax25_frame_t*) ax25_information_frame_decode(hdr_result.header, full_control, data_start, data_len, is_16bit, err);
+                } else if (fc == AX25_FRAME_CLASS_S) {
+                    frame = (ax25_frame_t*) ax25_supervisory_frame_decode(hdr_result.header, full_control, is_16bit, err);
+                }
             }
         }
     }
@@ -953,6 +964,12 @@ uint8_t* ax25_raw_frame_encode(const ax25_raw_frame_t *frame, size_t *len, uint8
 //   mod-8  S: s_cmd=bits[3:2], pf=bit4, nr=bits[7:5]
 //   mod-128 S: s_cmd=c0 bits[3:2], pf=c1 bit0, nr=c1 bits[7:1]
 //   U (always 1 byte): pf=bit4, u_cmd = c0 & 0xEF (P/F stripped)
+// ax25_parse_ctrl uses canonical classification helpers
+// Replaced ad-hoc inline masks with ax25_frame_class(), ax25_get_pf_mod8(),
+// ax25_get_pf_mod128(), ax25_u_subtype(), and ax25_s_subtype() so that
+// the classification logic is identical to ax25_frame_decode() and to
+// Linux ax25_decode().  The (uint8_t)~0x10u trick is replaced by the
+// explicit ax25_u_subtype() call which masks 0xEFu unambiguously.
 uint8_t ax25_parse_ctrl(ax25_ctrl_t *out, const uint8_t *ctrl, size_t avail, uint8_t mod128) {
     // Validate pointers and minimum buffer size
     if (!out || !ctrl)
@@ -971,7 +988,11 @@ uint8_t ax25_parse_ctrl(ax25_ctrl_t *out, const uint8_t *ctrl, size_t avail, uin
 
     uint8_t c0 = ctrl[0];
 
-    if ((c0 & 0x01u) == 0u) {
+    // Use canonical classifier — matches Linux ax25_decode() priority exactly:
+    // I-frame (bit 0 == 0) checked before S (bits[1:0]==01) before U (bits[1:0]==11).
+    ax25_frame_class_t fc = ax25_frame_class(c0);
+
+    if (fc == AX25_FRAME_CLASS_I) {
         // I-frame: bit 0 of first byte is 0
         out->type = 'I';
         if (mod128) {
@@ -983,7 +1004,7 @@ uint8_t ax25_parse_ctrl(ax25_ctrl_t *out, const uint8_t *ctrl, size_t avail, uin
             out->ns = (c0 >> 1) & 0x7Fu;
             // P/F: bit 0 of c1 (bit 8 of the 16-bit control word)
             // Confirmed: ax25_information_frame_decode uses (control & 0x0100)
-            out->pf = (c1 >> 0) & 0x01u;
+            out->pf = ax25_get_pf_mod128(c1);
             // N(R): bits 7-1 of c1 (7-bit sequence number, range 0-127)
             // Confirmed: ax25_information_frame_decode uses (control >> 9) & 0x7F
             out->nr = (c1 >> 1) & 0x7Fu;
@@ -992,30 +1013,30 @@ uint8_t ax25_parse_ctrl(ax25_ctrl_t *out, const uint8_t *ctrl, size_t avail, uin
             // N(S): bits 3-1 of c0 (3-bit sequence number, range 0-7)
             out->ns = (c0 >> 1) & 0x07u;
             // P/F: bit 4 of c0 -- POLL_FINAL_8BIT = 0x10
-            out->pf = (c0 >> 4) & 0x01u;
+            out->pf = ax25_get_pf_mod8(c0);
             // N(R): bits 7-5 of c0 (3-bit sequence number, range 0-7)
             out->nr = (c0 >> 5) & 0x07u;
             out->ctrl_len = 1u;
         }
-    } else if ((c0 & 0x03u) == 0x01u) {
+    } else if (fc == AX25_FRAME_CLASS_S) {
         // S-frame: bits 1-0 = 01
         out->type = 'S';
         // Supervisory code: bits 3-2 (0=RR, 1=RNR, 2=REJ, 3=SREJ)
         // Confirmed: ax25_supervisory_frame_decode uses (control >> 2) & 0x03
-        out->s_cmd = (c0 >> 2) & 0x03u;
+        out->s_cmd = ax25_s_subtype(c0);
         if (mod128) {
             // mod-128 requires a second control byte
             if (avail < 2u)
                 return 2u;
             uint8_t c1 = ctrl[1];
             // P/F: bit 0 of c1 -- POLL_FINAL_16BIT = 0x0100 (bit 8 of 16-bit word)
-            out->pf = (c1 >> 0) & 0x01u;
+            out->pf = ax25_get_pf_mod128(c1);
             // N(R): bits 7-1 of c1
             out->nr = (c1 >> 1) & 0x7Fu;
             out->ctrl_len = 2u;
         } else {
             // P/F: bit 4 of c0 -- POLL_FINAL_8BIT = 0x10
-            out->pf = (c0 >> 4) & 0x01u;
+            out->pf = ax25_get_pf_mod8(c0);
             // N(R): bits 7-5 of c0
             out->nr = (c0 >> 5) & 0x07u;
             out->ctrl_len = 1u;
@@ -1024,10 +1045,9 @@ uint8_t ax25_parse_ctrl(ax25_ctrl_t *out, const uint8_t *ctrl, size_t avail, uin
         // U-frame: bits 1-0 = 11; always 1 byte regardless of mod128
         out->type = 'U';
         // P/F: bit 4 of c0 -- U-frames always use 8-bit control
-        out->pf = (c0 >> 4) & 0x01u;
-        // Strip P/F bit to get canonical opcode -- matches existing: modifier = control & 0xEF
-        // Explicit cast to uint8_t prevents ~0x10u (uint32_t) from widening the expression
-        out->u_cmd = (uint8_t) (c0 & (uint8_t) ~0x10u);
+        out->pf = ax25_get_pf_mod8(c0);
+        // Strip P/F bit to get canonical opcode -- ax25_u_subtype masks 0xEFu
+        out->u_cmd = ax25_u_subtype(c0);
         out->ctrl_len = 1u;
     }
 
