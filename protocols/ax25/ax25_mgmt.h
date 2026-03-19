@@ -136,6 +136,23 @@
  */
 #define XID_PI_RESP_DELAY_TIMER        11
 
+// Protocol-maximum window sizes for XID negotiation and state machine.
+// Defined here (not in ax25_state_machine.h) to avoid a circular include:
+// ax25_state_machine.h already includes ax25_mgmt.h, so these constants
+// must originate in ax25_mgmt.h and be reused transitively elsewhere.
+// AX.25 v2.2 §4.2.2.4 / PE1CHL §5:
+//   mod-8  : k_max = M-1 = 7
+//   mod-128: k_max = 63  (NOT 127 — values 64..127 create N(S) resequencing
+//            ambiguity: a retransmitted frame with N(S)=V(R)+64 mod 128
+//            cannot be distinguished from a new frame beyond V(R))
+#ifndef AX25_K_MAX_MOD8
+#define AX25_K_MAX_MOD8   7u
+#endif
+
+#ifndef AX25_K_MAX_MOD128
+#define AX25_K_MAX_MOD128 63u
+#endif
+
 // XID frame structure constants per ISO 8885 / AX.25 v2.2 §4.3.3.7
 // FI: Format Identifier = 0x82 identifies the parameter negotiation group
 // GID: Group Identifier = 0x80 identifies the HDLC optional functions group

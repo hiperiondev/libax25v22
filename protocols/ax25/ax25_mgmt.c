@@ -13,6 +13,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include "hal.h" // start modified part: include HAL allocator for hal_mem_free // end modified part
 
 #include "ax25_mgmt.h"
 #include "ax25.h"
@@ -107,7 +108,7 @@ static bool ax25_mgmt_send_xid_command(ax25_mgmt_context_t *ctx) {
     if (encoded) {
         ctx->transmit(encoded, len);
         if (encoded != NULL) {
-            free(encoded);
+            hal_mem_free(encoded); // start modified part: use HAL free for HAL-allocated XID encoded frame // end modified part
             encoded = NULL;
         }
 
@@ -337,7 +338,7 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
             transmit(encoded, len);
 
             if (encoded != NULL) {
-                free(encoded);
+                hal_mem_free(encoded); // start modified part: use HAL free for HAL-allocated XID response encoded frame // end modified part
                 encoded = NULL;
             }
         }

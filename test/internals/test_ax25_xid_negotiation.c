@@ -278,7 +278,7 @@ static int test_xid_retries_max_uint8(void) {
     return 0;
 }
 
-/* --- 53: Window=127 both sides mod-128 ---------------------------------- */
+/* --- 53: Window=127 both sides mod-128 -> capped to 63 (PE1CHL §5) ------ */
 static int test_xid_window_max_mod128_both(void) {
     assert_count = 0;
     printf("\n--- test_xid_window_max_mod128_both (test 53) ---\n");
@@ -305,14 +305,15 @@ static int test_xid_window_max_mod128_both(void) {
     TEST_ASSERT(rc == 0, "process succeeds window=127", rc);
     TEST_ASSERT(ctx.state == AX25_MGMT_NEGOTIATED, "state=NEGOTIATED", 0);
     TEST_ASSERT(ctx.agreed_params.modulo128 == true, "agreed modulo128=true", 0);
-    TEST_ASSERT(ctx.agreed_params.window_size == 127u, "agreed window=127", 0);
+    // min(127,127)=127, then capped to AX25_K_MAX_MOD128=63 per PE1CHL §5.
+    TEST_ASSERT(ctx.agreed_params.window_size == 63u, "agreed window=63 (capped from 127 per PE1CHL §5)", 0);
 
     free(dest);
     free(src);
     return 0;
 }
 
-/* --- 54: Window>127 both sides mod-128 -> capped to 127 ----------------- */
+/* --- 54: Window>127 both sides mod-128 -> capped to 63 (PE1CHL §5) ------ */
 static int test_xid_window_over127_mod128_capped(void) {
     assert_count = 0;
     printf("\n--- test_xid_window_over127_mod128_capped (test 54) ---\n");
@@ -336,8 +337,9 @@ static int test_xid_window_over127_mod128_capped(void) {
     uint8_t rc = local_process_xid_response(&ctx, xid, xlen);
     TEST_ASSERT(rc == 0, "process succeeds window=200", rc);
     TEST_ASSERT(ctx.state == AX25_MGMT_NEGOTIATED, "state=NEGOTIATED", 0);
-    TEST_ASSERT(ctx.agreed_params.window_size <= 127u, "agreed window<=127 (cap applied)", 0);
-    TEST_ASSERT(ctx.agreed_params.window_size == 127u, "agreed window=127 (min(200,200)=200 -> capped)", 0);
+    // min(200,200)=200 -> capped to AX25_K_MAX_MOD128=63 per PE1CHL §5.
+    TEST_ASSERT(ctx.agreed_params.window_size <= 63u, "agreed window<=63 (protocol cap applied)", 0);
+    TEST_ASSERT(ctx.agreed_params.window_size == 63u, "agreed window=63 (min(200,200)=200 -> capped to 63)", 0);
 
     free(dest);
     free(src);

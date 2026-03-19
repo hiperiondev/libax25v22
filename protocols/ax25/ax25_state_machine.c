@@ -13,6 +13,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include "hal.h" // start modified part: include HAL allocator for hal_mem_free // end modified part
 
 #include "common.h"
 #include "fx25.h"
@@ -220,7 +221,7 @@ static void ax25_send_xid_response_defaults(ax25_connection_t *conn, const ax25_
     uint8_t *encoded = ax25_exchange_identification_frame_encode(&resp, &enc_len, &err);
     if (encoded) {
         conn->callbacks.transmit(conn->user_data, encoded, enc_len);
-        free(encoded);
+        hal_mem_free(encoded); // start modified part: use HAL free for HAL-allocated XID encoded frame // end modified part
     }
     // Release every parameter object whether or not encoding succeeded
     for (uint8_t i = 0; i < num_params; i++) {
@@ -697,7 +698,7 @@ static void handle_test_frame(ax25_connection_t *conn, ax25_test_frame_t *test, 
             conn->callbacks.transmit(conn->user_data, encoded, len);
 
             if (encoded != NULL) {
-                free(encoded);
+                hal_mem_free(encoded); // start modified part: use HAL free for HAL-allocated test frame // end modified part
                 encoded = NULL;
             }
         }
@@ -1139,7 +1140,7 @@ static bool ax25_process_nr(ax25_connection_t *conn, uint8_t nr, uint8_t raw_ctr
         if (head_ns == nr) {
             break;  // This frame not yet acknowledged
         }
-        free(conn->tx_queue.frames[conn->tx_queue.head]);
+        hal_mem_free(conn->tx_queue.frames[conn->tx_queue.head]); // start modified part: use HAL free for HAL-allocated I-frame // end modified part
         conn->tx_queue.frames[conn->tx_queue.head] = NULL;
         conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
         conn->tx_queue.count--;
@@ -1390,7 +1391,7 @@ static void handle_received_frmr(ax25_connection_t *conn, ax25_frame_reject_fram
 
 // Clear all pending frames
     while (conn->tx_queue.count > 0) {
-        free(conn->tx_queue.frames[conn->tx_queue.head]);
+        hal_mem_free(conn->tx_queue.frames[conn->tx_queue.head]); // start modified part: use HAL free for HAL-allocated I-frame // end modified part
         conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
         conn->tx_queue.count--;
     }
@@ -1758,7 +1759,7 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
 
             // Free any I-frames queued for retransmission
             while (conn->tx_queue.count > 0) {
-                free(conn->tx_queue.frames[conn->tx_queue.head]);
+                hal_mem_free(conn->tx_queue.frames[conn->tx_queue.head]); // start modified part: use HAL free for HAL-allocated I-frame // end modified part
                 conn->tx_queue.frames[conn->tx_queue.head] = NULL;
                 conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
                 conn->tx_queue.count--;
@@ -2378,7 +2379,7 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                 conn->local_busy = false;
                 // Flush tx_queue on forced disconnect
                 while (conn->tx_queue.count > 0) {
-                    free(conn->tx_queue.frames[conn->tx_queue.head]);
+                    hal_mem_free(conn->tx_queue.frames[conn->tx_queue.head]); // start modified part: use HAL free for HAL-allocated I-frame // end modified part
                     conn->tx_queue.frames[conn->tx_queue.head] = NULL;
                     conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
                     conn->tx_queue.count--;
@@ -2480,8 +2481,7 @@ uint8_t ax25_disconnect(ax25_connection_t *conn) {
 
 // free all frames queued for retransmission - they will not be sent after DISC
     while (conn->tx_queue.count > 0) {
-        free(conn->tx_queue.frames[conn->tx_queue.head]);
-        conn->tx_queue.frames[conn->tx_queue.head] = NULL;
+        hal_mem_free(conn->tx_queue.frames[conn->tx_queue.head]); // start modified part: use HAL free for HAL-allocated I-frame // end modified part
         conn->tx_queue.frames[conn->tx_queue.head] = NULL;
         conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
         conn->tx_queue.count--;
@@ -2626,7 +2626,7 @@ uint8_t ax25_send_ui(ax25_address_t *dest, ax25_address_t *src, uint8_t *data, s
     transmit(encoded, encoded_len);
 
     if (encoded != NULL) {
-        free(encoded);
+        hal_mem_free(encoded); // start modified part: use HAL free for HAL-allocated UI encoded frame // end modified part
         encoded = NULL;
     }
 
@@ -2668,7 +2668,7 @@ uint8_t ax25_send_ui_conn(ax25_connection_t *conn, uint8_t *data, size_t len, ui
     }
 
     if (encoded != NULL) {
-        free(encoded);
+        hal_mem_free(encoded); // start modified part: use HAL free for HAL-allocated UI conn encoded frame // end modified part
         encoded = NULL;
     }
 
@@ -3000,23 +3000,23 @@ uint8_t ax25_send_data_with_fec(ax25_connection_t *conn, uint8_t *data, size_t l
     uint8_t *dest_enc = ax25_address_encode(&conn->peer_addr.destination, &addr_len, &err_addr);
     if (!dest_enc || err_addr != 0 || addr_len != 7) {
         if (dest_enc)
-            free(dest_enc);
+            hal_mem_free(dest_enc); // start modified part: use HAL free for HAL-allocated address // end modified part
         return 5;
     }
     memcpy(&ax25_frame[offset], dest_enc, 7);
-    free(dest_enc);
+    hal_mem_free(dest_enc); // start modified part: use HAL free for HAL-allocated dest address // end modified part
     offset += 7;
 
 // Source address - extension bit 1 (last address, no repeaters used)
     uint8_t *src_enc = ax25_address_encode(&conn->peer_addr.source, &addr_len, &err_addr);
     if (!src_enc || err_addr != 0 || addr_len != 7) {
         if (src_enc)
-            free(src_enc);
+            hal_mem_free(src_enc); // start modified part: use HAL free for HAL-allocated address // end modified part
         return 5;
     }
     src_enc[6] |= 0x01u;  // Set extension bit: this is the last address subfield
     memcpy(&ax25_frame[offset], src_enc, 7);
-    free(src_enc);
+    hal_mem_free(src_enc); // start modified part: use HAL free for HAL-allocated src address // end modified part
     offset += 7;
 
 // Snapshot V(S) and V(R) before any state changes so the control field
@@ -3109,7 +3109,7 @@ void ax25_connection_cleanup(ax25_connection_t *conn) {
         return;
 // Drain and free every frame still queued for retransmission
     while (conn->tx_queue.count > 0) {
-        free(conn->tx_queue.frames[conn->tx_queue.head]);
+        hal_mem_free(conn->tx_queue.frames[conn->tx_queue.head]); // start modified part: use HAL free for HAL-allocated I-frame // end modified part
         conn->tx_queue.frames[conn->tx_queue.head] = NULL;
         conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
         conn->tx_queue.count--;

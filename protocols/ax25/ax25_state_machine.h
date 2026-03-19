@@ -96,24 +96,15 @@
 #define AX25_DEFAULT_N2  10u
 #endif
 
-// k: Window size for mod-8 connections.
-// Maximum permitted value: M-1 = 7 per §4.2.2.4.
 #ifndef AX25_DEFAULT_K_MOD8
 #define AX25_DEFAULT_K_MOD8  7u
 #endif
-// Maximum k for mod-8: protocol maximum = 7.
-#define AX25_K_MAX_MOD8  7u
 
 // k: Window size default for mod-128 connections.
 // Spec default: 32 per §6.7.2 / PE1CHL §5.
 #ifndef AX25_DEFAULT_K_MOD128
 #define AX25_DEFAULT_K_MOD128  32u
 #endif
-// Maximum k for mod-128: MUST be <= 63 per PE1CHL §5 to avoid N(S) ambiguity.
-// PE1CHL §5 explicitly states EMAXFRAME <= 63 so the receiver can always
-// distinguish retransmitted old frames from new frames beyond V(R).
-// Allowing k=127 creates an irresolvable resequencing ambiguity.
-#define AX25_K_MAX_MOD128  63u
 
 // Non-blocking tick-driven timer (32-bit milliseconds).
 // Handles 32-bit wrap-around; 2^32 ms ~= 49.7 days — sufficient for AX.25.
