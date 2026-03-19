@@ -776,7 +776,8 @@ int test_xid_parameter_functions() {
         TEST_ASSERT(encoded != NULL, "ax25_xid_raw_parameter_encode should return non-NULL", err);
         if (encoded) {
             DEBUG_FRAME("Encoded Class of Procedures parameter", encoded, len);
-            uint8_t expected[] = { 0x01, 0x02, 0x25, 0x00 };  // PI=1, PL=2, PV=0x25,0x00
+            // AX.25 v2.2 Table 12: Class of Procedures PI = 2, expected byte was wrong (was 0x01)
+            uint8_t expected[] = { 0x02, 0x02, 0x25, 0x00 };  // PI=2, PL=2, PV=0x25,0x00
             size_t expected_len = sizeof(expected);
             COMPARE_FRAME(encoded, len, expected, expected_len, "Class of Procedures parameter encoding");
             free(encoded);

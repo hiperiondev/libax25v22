@@ -1677,8 +1677,8 @@ bool e_flag, bool f_flag, bool g_flag, uint8_t reserved, uint8_t *err) {
     pv[0] = (a_flag ? 0x01 : 0) | (b_flag ? 0x02 : 0) | (c_flag ? 0x04 : 0) | (d_flag ? 0x08 : 0) | (e_flag ? 0x10 : 0) | (f_flag ? 0x20 : 0)
             | (g_flag ? 0x40 : 0);
     pv[1] = reserved;
-
-    return ax25_xid_raw_parameter_new(1, pv, 2, err);
+    // AX.25 v2.2 Table 12: Class of Procedures PI = 2
+    return ax25_xid_raw_parameter_new(2, pv, 2, err);
 }
 
 ax25_xid_parameter_t* ax25_xid_hdlc_optional_functions_new(
@@ -1693,7 +1693,9 @@ bool res1, bool res2, bool res3, bool res4, bool res5, bool res6, bool res7, uin
             | (res2 ? 0x80 : 0);
     pv[2] = (res3 ? 0x01 : 0) | (res4 ? 0x02 : 0) | (res5 ? 0x04 : 0) | (res6 ? 0x06 : 0) | (res7 ? 0x08 : 0);
     pv[3] = reserved | (ext ? 0x80 : 0);
-    return ax25_xid_raw_parameter_new(2, pv, 4, err);
+
+    // AX.25 v2.2 Table 12: HDLC Optional Functions PI = 3
+    return ax25_xid_raw_parameter_new(3, pv, 4, err);
 }
 
 ax25_xid_parameter_t* ax25_xid_big_endian_new(int pi, uint32_t value, size_t length, uint8_t *err) {
