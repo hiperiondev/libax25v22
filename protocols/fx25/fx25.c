@@ -156,9 +156,11 @@ uint8_t fx25_encode(const uint8_t *ax25_frame, size_t ax25_len, uint8_t mode_id,
     memset(full_message, 0, (size_t) shorten);
     memcpy(full_message + shorten, ax25_frame, ax25_len);
 
-    // Pad unused data bytes with 0x00
+    // Pad unused data bytes with 0x7E per FX.25 spec §4.3 (HDLC idle / AX.25 flag fill).
+    // 0x7E is the value recommended by the specification for unused codeblock bytes.
+    // The RS codec only requires encoder and decoder to agree on the same pad value.
     if (ax25_len < mode->data_bytes) {
-        memset(full_message + shorten + ax25_len, 0, mode->data_bytes - ax25_len);
+        memset(full_message + shorten + ax25_len, 0x7E, mode->data_bytes - ax25_len);
     }
 
     // Copy only the transmitted message portion (no leading zeros)

@@ -435,15 +435,15 @@ static int test_fx25_encode_with_padding(void) {
     int data_match = memcmp(fx25_frame.rs_codeword, ax25_frame, 32);
     TEST_ASSERT(data_match == 0, "FX25 data (first 32 bytes) matches input", 0);
 
-    // Verify padding is zeros
-    int padding_zero = 1;
+    // Verify padding is 0x7E per FX.25 spec §4.3 (was incorrectly 0x00 before)
+    int padding_7e = 1;
     for (int i = 32; i < 64; i++) {
-        if (fx25_frame.rs_codeword[i] != 0) {
-            padding_zero = 0;
+        if (fx25_frame.rs_codeword[i] != 0x7E) {
+            padding_7e = 0;
             break;
         }
     }
-    TEST_ASSERT(padding_zero, "FX25 padding (bytes 32-63) is zero", 0);
+    TEST_ASSERT(padding_7e, "FX25 padding (bytes 32-63) is 0x7E per FX.25 spec", 0);
 
     fx25_frame_free(&fx25_frame);
 

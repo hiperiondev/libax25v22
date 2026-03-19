@@ -349,25 +349,25 @@ static inline int fx25_decode_compat(const uint8_t *in, size_t in_len, uint8_t *
 
     memcpy(ax25_out, frame.rs_codeword, (size_t) mode->data_bytes);
 
-    /*
-     * Trim zero-padding to recover the true AX.25 frame length.
-     *
-     * fx25_encode() zero-pads rs_codeword[ax25_len .. data_bytes-1] when the
-     * original AX.25 frame is shorter than the mode's full data capacity.
-     * Stripping trailing zeros restores the original byte count so that
-     * length checks like (dr.ax25_len == original_ax25_len) pass correctly.
-     *
-     * This is safe for AX.25 because:
-     *   - AX.25 frames end with a 2-byte FCS that is almost never 0x0000.
-     *   - When ax25_len == data_bytes (no padding), the loop is a no-op.
-     *   - Raw test vectors (Y.0-Y.4) pass ax25_len == data_bytes == 32,
-     *     so there is no trailing-zero region and nothing is trimmed.
-     */
+    // Trim 0x7E pad bytes to recover the true AX.25 frame length.
+    //
+    // fx25_encode() pads rs_codeword[ax25_len .. data_bytes-1] with 0x7E per
+    // FX.25 spec §4.3 (HDLC idle / AX.25 flag fill) when the original AX.25
+    // frame is shorter than the mode's full data capacity.
+    // Stripping trailing 0x7E bytes restores the original byte count so that
+    // length checks like (dr.ax25_len == original_ax25_len) pass correctly.
+    //
+    // This is safe for AX.25 because:
+    //   - AX.25 frames never end with 0x7E: the closing flag is consumed by
+    //     the HDLC layer and is not stored in the raw AX.25 byte stream.
+    //   - When ax25_len == data_bytes (no padding), the loop is a no-op.
+    //   - Raw test vectors (Y.0-Y.4) pass ax25_len == data_bytes == 32,
+    //     so there is no trailing-pad region and nothing is trimmed.
     {
         size_t actual = (size_t) mode->data_bytes;
-        while (actual > 0 && ax25_out[actual - 1] == 0x00)
+        while (actual > 0 && ax25_out[actual - 1] == 0x7E)
             actual--;
-        /* Clamp: never return 0 for a legitimately all-zero frame */
+        // Clamp: never return 0 for an edge-case all-0x7E frame
         if (actual == 0)
             actual = (size_t) mode->data_bytes;
         *ax25_out_len = actual;
@@ -17559,27 +17559,26 @@ static int sec_y_fx25_fec(void) {
             TEST_ASSERT(fx25_len > 0, "Y.18.a Encode small payload with Tag_04", fx25_len);
 
             if (fx25_len > 0) {
-                /* Codeblock at fx25_frame[4+8=12].
-                 * Layout: [0..9]=raw data [10..31]=zero-pad (libax25v22 uses 0x00)
-                 *          [32..47]=RS parity
-                 *
-                 * NOTE: The FX.25 spec §Pad recommends filling unused codeblock
-                 * bytes with 0x7E, but libax25v22 fills them with 0x00 (which
-                 * is equally valid for the RS code — the pad content is arbitrary
-                 * as long as encoder and decoder agree).  Tests Y.18.b/c/d are
-                 * updated to verify 0x00 padding, matching the actual library
-                 * behaviour confirmed from fx25.c (memset to 0x00). */
-                int cb = Y_FX25_PREAMBLE_LEN + 8; /* 12 */
+                // start modified part
+                // Codeblock at fx25_frame[4+8=12].
+                // Layout: [0..9]=raw data [10..31]=0x7E pad (FX.25 spec §4.3)
+                //          [32..47]=RS parity
+                //
+                // The FX.25 spec §Pad recommends filling unused codeblock bytes
+                // with 0x7E (HDLC idle / AX.25 flag fill).  libax25v22 now uses
+                // 0x7E in fx25_encode() (memset to 0x7E) per spec §4.3.
+                int cb = Y_FX25_PREAMBLE_LEN + 8;  // 12
                 TEST_ASSERT(fx25_frame[cb] == 0x30, "Y.18.b Codeblock[0] == raw[0]=0x30 (data starts at byte 0)", (int )fx25_frame[cb]);
                 TEST_ASSERT(fx25_frame[cb + 9] == 0x39, "Y.18.c Codeblock[9] == raw[9]=0x39 (last data byte)", (int )fx25_frame[cb + 9]);
-                /* Pad bytes at [10..31] must be 0x00 (libax25v22 zero-padding) */
+                // Pad bytes at [10..31] must be 0x7E (FX.25 spec §4.3 fill value)
                 int pad_ok = 1;
                 for (i = 10; i < 32; i++)
-                    if (fx25_frame[cb + i] != 0x00) {
+                    if (fx25_frame[cb + i] != 0x7E) {
                         pad_ok = 0;
                         break;
                     }
-                TEST_ASSERT(pad_ok, "Y.18.d Pad bytes [10..31] are all 0x00 (libax25v22 zero-padding, fx25.c memset)", pad_ok);
+                TEST_ASSERT(pad_ok, "Y.18.d Pad bytes [10..31] are all 0x7E (FX.25 spec §4.3, fx25.c memset)", pad_ok);
+                // end modified part
                 DEBUG_PRINT("Y.18 Pad verification: data[0]=%02X data[9]=%02X pad[10]=%02X", fx25_frame[cb], fx25_frame[cb+9], fx25_frame[cb+10]);
             }
         } else {
