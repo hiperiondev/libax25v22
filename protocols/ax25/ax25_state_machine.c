@@ -859,7 +859,11 @@ static void handle_out_of_sequence_iframe(ax25_connection_t *conn, ax25_informat
             uint16_t copy_len = (iframe->payload_len > (size_t) AX25_SREJ_BUFFER_SIZE) ? (uint16_t) AX25_SREJ_BUFFER_SIZE : (uint16_t) iframe->payload_len;
             if (copy_len > 0u && iframe->payload)
                 memcpy(conn->srej_buffer[buf_idx], iframe->payload, (size_t) copy_len);
-            // end modified part
+            // srej_buffer_len never set in case (a). dispatch_to_protocol()
+            // guards on len==0 and returns early without calling on_data, so all
+            // frames buffered by the initial SREJ were silently dropped on delivery.
+            // Cases (b) and (c) already set this field — case (a) was missing it.
+            conn->srej_buffer_len[buf_idx] = copy_len;
             conn->srej_buffer_ns[buf_idx] = ns;
             conn->srej_buffer_pid[buf_idx] = iframe->pid;  // store PID for DL-DATA indication on delivery
             conn->srej_buffer_count++;

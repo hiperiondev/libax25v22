@@ -154,6 +154,10 @@ ax25_address_t* ax25_address_from_string(const char *str, uint8_t *err) {
     memset(addr, 0, sizeof(ax25_address_t));
     addr->res0 = true;
     addr->res1 = true;
+    // mod8_legacy must mirror res1 on construction — matches ax25_address_decode()
+    // where addr->mod8_legacy = addr->res1 is always set. Omitting this left
+    // mod8_legacy=false even when res1=true, causing incorrect modulo detection.
+    addr->mod8_legacy = true;
     addr->extension = false;
 
     char callsign[7] = { 0 };
@@ -274,11 +278,17 @@ uint8_t* ax25_address_encode(const ax25_address_t *addr, size_t *len, uint8_t *e
     // Always encode 6 bytes, padding with spaces if callsign is shorter
     size_t callsign_len = strlen(addr->callsign);
     for (int i = 0; i < 6; i++) {
-        char c = (i < callsign_len) ? addr->callsign[i] : ' ';
-        data[i] = (c & 0x7F) << 1;
+        // Cast to unsigned char before the left-shift: char may be signed on the
+        // target platform; shifting a negative value is undefined behaviour (C99 §6.5.7).
+        unsigned char c = (i < (int) callsign_len) ? (unsigned char) addr->callsign[i] : (unsigned char) ' ';
+        data[i] = (uint8_t) ((c & 0x7Fu) << 1);
     }
 
-    uint8_t ssid_byte = (addr->ssid << 1) & 0x1E;
+    // Cast ssid to uint8_t before shifting: ssid is declared int and could be
+    // negative if a caller bypasses ax25_validate_ssid(). Casting first makes
+    // the shift defined and the mask correctly extracts bits 4:1.
+    uint8_t ssid_byte = (uint8_t) (((uint8_t) (addr->ssid & 0x0F)) << 1);
+
     if (addr->ch)
         ssid_byte |= 0x80;
     /* Spec §3.12.2: reserved bit 5 (res0) MUST always be 1.
@@ -429,8 +439,33 @@ header_decode_result_t ax25_frame_header_decode(const uint8_t *data, size_t len,
     // Populate header fields from stack-allocated addresses
     header->destination = addresses[0];
     header->source = addresses[1];
-    header->cr = (header->destination.ch && !header->source.ch);
-    header->src_cr = header->source.ch;
+    // AX.25 v2.2 §6.3.2 / Linux net/ax25/ax25_addr.c ax25_addr_parse():
+    //   Command  frame: dest C-bit=1, src C-bit=0
+    //   Response frame: dest C-bit=0, src C-bit=1
+    // When BOTH C-bits are 1 (non-conforming peer), Linux treats the frame as a
+    // command (dest C-bit dominates). The original single-expression
+    //   cr = (dest.ch && !src.ch)
+    // produced cr=false for the both-set case, causing the state machine to take
+    // the wrong branch for RR/RNR/REJ/I frames from buggy peers.
+    // When BOTH are 0 (legacy/malformed), preserve cr=false/src_cr=false so that
+    // decode->encode round-trips remain byte-for-byte faithful.
+    if (header->destination.ch && !header->source.ch) {
+        // Normal command frame
+        header->cr = true;
+        header->src_cr = false;
+    } else if (!header->destination.ch && header->source.ch) {
+        // Normal response frame
+        header->cr = false;
+        header->src_cr = true;
+    } else if (header->destination.ch && header->source.ch) {
+        // Both C-bits set: non-conforming peer — treat as command (Linux behaviour)
+        header->cr = true;
+        header->src_cr = false;
+    } else {
+        // Both C-bits clear: legacy/non-conforming — preserve for round-trip fidelity
+        header->cr = false;
+        header->src_cr = false;
+    }
     header->repeaters.num_repeaters = addr_count - 2;
     for (int i = 0; i < header->repeaters.num_repeaters; i++) {
         header->repeaters.repeaters[i] = addresses[i + 2];
@@ -480,14 +515,29 @@ uint8_t* ax25_frame_header_encode(const ax25_frame_header_t *header, size_t *len
         src.ch = true;
     }
     /* else: both zero (non-conforming) — preserve address struct ch bits */
+
+    // Null-check every ax25_address_encode() return value.
+    // ax25_address_encode() returns NULL on heap exhaustion (*err=1).
+    // The original code passed the NULL directly to memcpy(), causing an
+    // immediate SIGSEGV with no error propagation to the caller.
     size_t dest_len;
     uint8_t *dest_bytes = ax25_address_encode(&dest, &dest_len, err);
+    if (!dest_bytes) {
+        hal_mem_free(bytes);
+        *err = 1;
+        return NULL;
+    }
     memcpy(bytes + offset, dest_bytes, dest_len);
     offset += dest_len;
     hal_mem_free(dest_bytes);
 
     size_t src_len;
     uint8_t *src_bytes = ax25_address_encode(&src, &src_len, err);
+    if (!src_bytes) {
+        hal_mem_free(bytes);
+        *err = 1;
+        return NULL;
+    }
     memcpy(bytes + offset, src_bytes, src_len);
     offset += src_len;
     hal_mem_free(src_bytes);
@@ -497,6 +547,11 @@ uint8_t* ax25_frame_header_encode(const ax25_frame_header_t *header, size_t *len
         rpt.extension = (i == header->repeaters.num_repeaters - 1);
         size_t rpt_len;
         uint8_t *rpt_bytes = ax25_address_encode(&rpt, &rpt_len, err);
+        if (!rpt_bytes) {
+            hal_mem_free(bytes);
+            *err = 1;
+            return NULL;
+        }
         memcpy(bytes + offset, rpt_bytes, rpt_len);
         offset += rpt_len;
         hal_mem_free(rpt_bytes);
@@ -2370,10 +2425,12 @@ bool extension) {
     size_t callsign_len = strlen(addr->callsign);
     int i;
     for (i = 0; i < 6; i++) {
-        char c = (i < (int) callsign_len) ? addr->callsign[i] : ' ';
-        dst[i] = (uint8_t) ((c & 0x7F) << 1);
+        // Use unsigned char to avoid UB from shifting a potentially negative char
+        unsigned char c = (i < (int) callsign_len) ? (unsigned char) addr->callsign[i] : (unsigned char) ' ';
+        dst[i] = (uint8_t) ((c & 0x7Fu) << 1);
     }
-    uint8_t ssid_byte = (uint8_t) ((addr->ssid << 1) & 0x1E);
+    // Cast ssid to uint8_t before shifting to avoid UB on signed int left-shift
+    uint8_t ssid_byte = (uint8_t) (((uint8_t) (addr->ssid & 0x0F)) << 1);
     if (addr->ch)
         ssid_byte |= 0x80u;
     ssid_byte |= 0x20u;  // res0 forced to 1 per AX.25 §3.12.2
