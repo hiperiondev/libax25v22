@@ -108,7 +108,7 @@ static bool ax25_mgmt_send_xid_command(ax25_mgmt_context_t *ctx) {
     if (encoded) {
         ctx->transmit(encoded, len);
         if (encoded != NULL) {
-            hal_mem_free(encoded); // start modified part: use HAL free for HAL-allocated XID encoded frame // end modified part
+            hal_mem_free(encoded);  // start modified part: use HAL free for HAL-allocated XID encoded frame // end modified part
             encoded = NULL;
         }
 
@@ -241,10 +241,12 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
     ctx->agreed_params.modulo128 = ctx->local_params.modulo128 && remote.modulo128;
     ctx->agreed_params.ifield_length = (ctx->local_params.ifield_length < remote.ifield_length) ? ctx->local_params.ifield_length : remote.ifield_length;
     // Negotiate window: take minimum of the two offered values, then cap to the
-    // protocol maximum for the agreed modulo (127 for mod-128, 7 for mod-8).
+    // protocol maximum for the agreed modulo.
+    // AX25_K_MAX_MOD128=63 (NOT 127) per PE1CHL §5: values 64..127 create
+    // N(S) resequencing ambiguity on mod-128 links. AX25_K_MAX_MOD8=7 per AX.25 v2.2.
     // modulo128 is already agreed above so the cap uses the final negotiated value.
     ctx->agreed_params.window_size = (ctx->local_params.window_size < remote.window_size) ? ctx->local_params.window_size : remote.window_size;
-    uint8_t max_window = ctx->agreed_params.modulo128 ? 127u : 7u;
+    uint8_t max_window = ctx->agreed_params.modulo128 ? AX25_K_MAX_MOD128 : AX25_K_MAX_MOD8;
     if (ctx->agreed_params.window_size > max_window)
         ctx->agreed_params.window_size = max_window;
     ctx->agreed_params.ack_timer = (ctx->local_params.ack_timer > remote.ack_timer) ? ctx->local_params.ack_timer : remote.ack_timer;
@@ -338,7 +340,7 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
             transmit(encoded, len);
 
             if (encoded != NULL) {
-                hal_mem_free(encoded); // start modified part: use HAL free for HAL-allocated XID response encoded frame // end modified part
+                hal_mem_free(encoded);  // start modified part: use HAL free for HAL-allocated XID response encoded frame // end modified part
                 encoded = NULL;
             }
         }
