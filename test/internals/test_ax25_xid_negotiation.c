@@ -226,11 +226,26 @@ static int test_xid_t1_max_uint16(void) {
     ctx.local_params.window_size = 32;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid_no_t2(xid, sizeof(xid), true, true, true, false, 256 * 8, 32, 0xFFFFu, 10);
@@ -241,8 +256,6 @@ static int test_xid_t1_max_uint16(void) {
     TEST_ASSERT(ctx.state == AX25_MGMT_NEGOTIATED, "state=NEGOTIATED", 0);
     TEST_ASSERT(ctx.agreed_params.ack_timer == 0xFFFFu, "agreed T1=65535 (max rule)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -258,11 +271,26 @@ static int test_xid_retries_max_uint8(void) {
     ctx.local_params.window_size = 32;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid_no_t2(xid, sizeof(xid), true, true, true, false, 256 * 8, 32, 3000, 0xFFu);
@@ -273,8 +301,6 @@ static int test_xid_retries_max_uint8(void) {
     TEST_ASSERT(ctx.state == AX25_MGMT_NEGOTIATED, "state=NEGOTIATED", 0);
     TEST_ASSERT(ctx.agreed_params.retries == 255u, "agreed retries=255 (max rule)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -291,11 +317,26 @@ static int test_xid_window_max_mod128_both(void) {
     ctx.local_params.implicit_reject = true;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid_no_t2(xid, sizeof(xid), true, true, true, false, 256 * 8, 127, 3000, 10);
@@ -308,8 +349,6 @@ static int test_xid_window_max_mod128_both(void) {
     // min(127,127)=127, then capped to AX25_K_MAX_MOD128=63 per PE1CHL §5.
     TEST_ASSERT(ctx.agreed_params.window_size == 63u, "agreed window=63 (capped from 127 per PE1CHL §5)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -324,11 +363,26 @@ static int test_xid_window_over127_mod128_capped(void) {
     ctx.local_params.window_size = 200;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid_no_t2(xid, sizeof(xid), true, true, true, false, 256 * 8, 200, 3000, 10);
@@ -341,8 +395,6 @@ static int test_xid_window_over127_mod128_capped(void) {
     TEST_ASSERT(ctx.agreed_params.window_size <= 63u, "agreed window<=63 (protocol cap applied)", 0);
     TEST_ASSERT(ctx.agreed_params.window_size == 63u, "agreed window=63 (min(200,200)=200 -> capped to 63)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -359,11 +411,26 @@ static int test_xid_modulo_mismatch_local128_peer8(void) {
     ctx.local_params.implicit_reject = true;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid_no_t2(xid, sizeof(xid), false, false, true, false, 256 * 8, 7, 3000, 10);
@@ -376,8 +443,6 @@ static int test_xid_modulo_mismatch_local128_peer8(void) {
     TEST_ASSERT(ctx.agreed_params.window_size <= 7u, "agreed window<=7 (mod-8 cap)", 0);
     TEST_ASSERT(ctx.agreed_params.selective_reject == false, "agreed srej=false (peer no SREJ)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -393,11 +458,26 @@ static int test_xid_ifield_local_smaller_wins(void) {
     ctx.local_params.window_size = 32;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid_no_t2(xid, sizeof(xid), true, true, true, false, 256 * 8, 32, 3000, 10);
@@ -408,8 +488,6 @@ static int test_xid_ifield_local_smaller_wins(void) {
     TEST_ASSERT(ctx.state == AX25_MGMT_NEGOTIATED, "state=NEGOTIATED", 0);
     TEST_ASSERT(ctx.agreed_params.ifield_length == 128u, "agreed ifield=128 (local smaller wins)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -425,11 +503,26 @@ static int test_xid_ifield_peer_smaller_wins(void) {
     ctx.local_params.window_size = 32;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid_no_t2(xid, sizeof(xid), true, true, true, false, 64 * 8, 32, 3000, 10);
@@ -440,8 +533,6 @@ static int test_xid_ifield_peer_smaller_wins(void) {
     TEST_ASSERT(ctx.state == AX25_MGMT_NEGOTIATED, "state=NEGOTIATED", 0);
     TEST_ASSERT(ctx.agreed_params.ifield_length == 64u, "agreed ifield=64 (peer smaller wins)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -457,11 +548,26 @@ static int test_xid_t1_local_larger_wins(void) {
     ctx.local_params.window_size = 32;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid_no_t2(xid, sizeof(xid), true, true, true, false, 256 * 8, 32, 2000, 10);
@@ -472,8 +578,6 @@ static int test_xid_t1_local_larger_wins(void) {
     TEST_ASSERT(ctx.state == AX25_MGMT_NEGOTIATED, "state=NEGOTIATED", 0);
     TEST_ASSERT(ctx.agreed_params.ack_timer == 5000u, "agreed T1=5000 (local larger, max rule)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -489,11 +593,26 @@ static int test_xid_t1_peer_larger_wins(void) {
     ctx.local_params.window_size = 32;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid_no_t2(xid, sizeof(xid), true, true, true, false, 256 * 8, 32, 8000, 10);
@@ -504,8 +623,6 @@ static int test_xid_t1_peer_larger_wins(void) {
     TEST_ASSERT(ctx.state == AX25_MGMT_NEGOTIATED, "state=NEGOTIATED", 0);
     TEST_ASSERT(ctx.agreed_params.ack_timer == 8000u, "agreed T1=8000 (peer larger, max rule)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -521,11 +638,26 @@ static int test_xid_t1_equal_both_sides(void) {
     ctx.local_params.window_size = 32;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid_no_t2(xid, sizeof(xid), true, true, true, false, 256 * 8, 32, 4000, 10);
@@ -536,8 +668,6 @@ static int test_xid_t1_equal_both_sides(void) {
     TEST_ASSERT(ctx.state == AX25_MGMT_NEGOTIATED, "state=NEGOTIATED", 0);
     TEST_ASSERT(ctx.agreed_params.ack_timer == 4000u, "agreed T1=4000 (equal tie)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -553,11 +683,26 @@ static int test_xid_retries_local_larger(void) {
     ctx.local_params.window_size = 32;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid_no_t2(xid, sizeof(xid), true, true, true, false, 256 * 8, 32, 3000, 5);
@@ -568,8 +713,6 @@ static int test_xid_retries_local_larger(void) {
     TEST_ASSERT(ctx.state == AX25_MGMT_NEGOTIATED, "state=NEGOTIATED", 0);
     TEST_ASSERT(ctx.agreed_params.retries == 20u, "agreed retries=20 (local larger, max rule)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -585,11 +728,26 @@ static int test_xid_retries_peer_larger(void) {
     ctx.local_params.window_size = 32;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid_no_t2(xid, sizeof(xid), true, true, true, false, 256 * 8, 32, 3000, 20);
@@ -600,8 +758,6 @@ static int test_xid_retries_peer_larger(void) {
     TEST_ASSERT(ctx.state == AX25_MGMT_NEGOTIATED, "state=NEGOTIATED", 0);
     TEST_ASSERT(ctx.agreed_params.retries == 20u, "agreed retries=20 (peer larger, max rule)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -617,11 +773,26 @@ static int test_xid_t2_equal_both_sides(void) {
     ctx.local_params.window_size = 32;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid(xid, sizeof(xid), true, true, true, false, 256 * 8, 32, 3000, 10, true, 800);
@@ -632,8 +803,6 @@ static int test_xid_t2_equal_both_sides(void) {
     TEST_ASSERT(ctx.state == AX25_MGMT_NEGOTIATED, "state=NEGOTIATED", 0);
     TEST_ASSERT(ctx.agreed_params.response_delay_timer == 800u, "agreed T2=800 (equal tie)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -670,12 +839,27 @@ static int test_xid_response_in_negotiated_state(void) {
     init_ctx(&ctx);
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     /* First negotiation */
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
     uint8_t xid1[512];
     size_t xlen1 = build_xid_no_t2(xid1, sizeof(xid1), true, true, true, false, 256 * 8, 32, 3000, 10);
     uint8_t rc1 = local_process_xid_response(&ctx, xid1, xlen1);
@@ -698,8 +882,6 @@ static int test_xid_response_in_negotiated_state(void) {
     }
     printf("\033[0;32m[%04d]    PASS: Re-negotiate in NEGOTIATED handled without crash\033[0m\n", ++assert_count);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -712,18 +894,31 @@ static int test_xid_wrong_fi_byte(void) {
     init_ctx(&ctx);
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t bad[4] = { 0x00, 0x80, 0x00, 0x00 };
     uint8_t rc = local_process_xid_response(&ctx, bad, sizeof(bad));
     TEST_ASSERT(rc == 2u, "rc=2 for wrong FI=0x00", rc);
     TEST_ASSERT(ctx.state != AX25_MGMT_NEGOTIATED, "state does not advance to NEGOTIATED", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -736,17 +931,30 @@ static int test_xid_wrong_fi_byte_0x01(void) {
     init_ctx(&ctx);
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t bad[4] = { 0x01, 0x80, 0x00, 0x00 };
     uint8_t rc = local_process_xid_response(&ctx, bad, sizeof(bad));
     TEST_ASSERT(rc == 2u, "rc=2 for wrong FI=0x01", rc);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -759,10 +967,25 @@ static int test_xid_gl_truncated(void) {
     init_ctx(&ctx);
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     /* GL=100 but only 2 data bytes follow */
     uint8_t trunc[6] = { 0x82, 0x80, 0x00, 0x64, 0xAA, 0xBB };
@@ -770,8 +993,6 @@ static int test_xid_gl_truncated(void) {
     TEST_ASSERT(rc == 4u, "rc=4 for GL truncated", rc);
     TEST_ASSERT(ctx.state != AX25_MGMT_NEGOTIATED, "state does not advance to NEGOTIATED", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -823,10 +1044,25 @@ static int test_xid_multiple_unknown_pis(void) {
     init_ctx(&ctx);
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t params[256];
     size_t plen = 0;
@@ -901,8 +1137,6 @@ static int test_xid_multiple_unknown_pis(void) {
     TEST_ASSERT(ctx.agreed_params.ifield_length == 256u, "ifield parsed correctly despite unknown PIs", 0);
     TEST_ASSERT(ctx.agreed_params.modulo128 == true, "modulo128 parsed correctly despite unknown PIs", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -917,10 +1151,25 @@ static int test_xid_truncated_pv_bytes(void) {
     ctx.local_params.ack_timer = 3000;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     /* PI=9 PL=4 (claims 4 bytes) but only 1 byte of PV available */
     uint8_t buf[7];
@@ -941,8 +1190,6 @@ static int test_xid_truncated_pv_bytes(void) {
     (void) rc;
     printf("\033[0;32m[%04d]    PASS: Truncated PV handled without crash\033[0m\n", ++assert_count);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -956,11 +1203,26 @@ static int test_xid_retry_stepping_count(void) {
     ctx.max_retries = 3;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
     uint32_t tx_after_start = tx_history_count;
     TEST_ASSERT(tx_after_start == 1u, "1 XID sent at start", 0);
 
@@ -997,8 +1259,6 @@ static int test_xid_retry_stepping_count(void) {
         ax25_mgmt_tick(&ctx, t);
     TEST_ASSERT(mdl_error_fire_count == 1u, "MDL-ERROR count stays 1", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -1012,11 +1272,26 @@ static int test_xid_retry_count_resets_on_restart(void) {
     ctx.max_retries = 1;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // dest/src are used in two start_negotiation calls; free after the second.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
     ctx.timeout_tick = 0;
     ax25_mgmt_tick(&ctx, 1000);
     ax25_mgmt_tick(&ctx, 6000); /* -> error K, state=IDLE */
@@ -1024,12 +1299,15 @@ static int test_xid_retry_count_resets_on_restart(void) {
 
     reset_capture();
     uint8_t res = ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately after the last call that uses dest/src — copied by value.
+    dest = NULL;
+    src = NULL;
+    // end modified part
     TEST_ASSERT(res == 0, "second start_negotiation returns 0", res);
     TEST_ASSERT(ctx.retry_count == 0u, "retry_count=0 after restart", 0);
     TEST_ASSERT(ctx.state == AX25_MGMT_AWAITING_RESPONSE, "state=AWAITING_RESPONSE after restart", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -1045,10 +1323,25 @@ static int test_xid_ifield_minimum_1_byte(void) {
     ctx.local_params.window_size = 32;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid_no_t2(xid, sizeof(xid), true, true, true, false, 8u, 32, 3000, 10); /* 8 bits = 1 byte */
@@ -1059,8 +1352,6 @@ static int test_xid_ifield_minimum_1_byte(void) {
     TEST_ASSERT(ctx.state == AX25_MGMT_NEGOTIATED, "state=NEGOTIATED", 0);
     TEST_ASSERT(ctx.agreed_params.ifield_length == 1u, "agreed ifield=1 byte (min, 8 bits on wire)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -1075,10 +1366,25 @@ static int test_xid_window_minimum_1(void) {
     ctx.local_params.window_size = 1;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid_no_t2(xid, sizeof(xid), true, true, true, false, 256 * 8, 1, 3000, 10);
@@ -1089,8 +1395,6 @@ static int test_xid_window_minimum_1(void) {
     TEST_ASSERT(ctx.state == AX25_MGMT_NEGOTIATED, "state=NEGOTIATED", 0);
     TEST_ASSERT(ctx.agreed_params.window_size == 1u, "agreed window=1 (minimum)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -1112,10 +1416,25 @@ static int test_xid_agreed_params_integrity(void) {
     ctx.local_params.full_duplex = false;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
 
     uint8_t xid[512];
     size_t xlen = build_xid(xid, sizeof(xid), true, true, true, false, 256 * 8, 16, 4000, 8, true, 600);
@@ -1135,8 +1454,6 @@ static int test_xid_agreed_params_integrity(void) {
     TEST_ASSERT(ctx.agreed_params.implicit_reject == true, "rej=true (AND)", 0);
     TEST_ASSERT(ctx.agreed_params.full_duplex == false, "full_duplex=false (AND)", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -1158,11 +1475,26 @@ static int test_xid_agreed_params_zeroed_on_error_k(void) {
     ctx.agreed_params.full_duplex = true;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
     ctx.timeout_tick = 0;
     ax25_mgmt_tick(&ctx, 1000);
     ax25_mgmt_tick(&ctx, 6000); /* -> error K */
@@ -1175,8 +1507,6 @@ static int test_xid_agreed_params_zeroed_on_error_k(void) {
     TEST_ASSERT(ctx.agreed_params.selective_reject == false, "srej=0 after K", 0);
     TEST_ASSERT(ctx.agreed_params.retries == 0, "retries=0 after K", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 
@@ -1195,11 +1525,26 @@ static int test_xid_agreed_params_zeroed_on_frmr(void) {
     ctx.agreed_params.selective_reject = true;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation/process_xid copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(dest && src, "addresses parsed", err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "addresses parsed", err);
+    }
+    // end modified part
 
     uint8_t res = ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
     TEST_ASSERT(res == 0, "start_negotiation returns 0", res);
     TEST_ASSERT(ctx.state == AX25_MGMT_AWAITING_RESPONSE, "state=AWAITING", 0);
 
@@ -1213,8 +1558,6 @@ static int test_xid_agreed_params_zeroed_on_frmr(void) {
     TEST_ASSERT(ctx.agreed_params.ack_timer == 0, "ack_timer=0 after FRMR", 0);
     TEST_ASSERT(ctx.agreed_params.modulo128 == false, "modulo128=0 after FRMR", 0);
 
-    free(dest);
-    free(src);
     return 0;
 }
 

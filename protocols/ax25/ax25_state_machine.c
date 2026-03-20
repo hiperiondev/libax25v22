@@ -36,13 +36,46 @@
             (conn)->callbacks.on_dl_error((conn)->user_data, (code)); \
     } while (0)
 
+// start modified part
+// ax25_t1_backed_off_ms: compute backed-off T1 duration in milliseconds.
+// All arithmetic is 32-bit unsigned — no uint16_t overflow even with 32x exponential factor.
+// Max value: 2^5 * 3000 ticks * 10ms = 960,000ms, well within uint32_t range.
+// Clamps are NOT applied here; AX25_T1CLAMPLO/HI are only for the RTT adaptive path.
+static uint32_t ax25_t1_backed_off_ms(uint16_t base_ticks, uint8_t backoff, uint8_t retry_count) {
+    uint32_t t;
+    switch (backoff) {
+        case AX25_BACKOFF_LINEAR:
+            // t = (1 + retry_count) * base_ticks; safe: max (1+10)*3000 = 33000 << UINT32_MAX
+            t = ((uint32_t) retry_count + 1u) * (uint32_t) base_ticks;
+        break;
+        case AX25_BACKOFF_EXPONENTIAL: {
+            // t = base_ticks * 2^retry_count, capped at AX25_BACKOFF_EXP_CAP_SHIFTS doublings
+            // 2^5 * 3000 = 96000 ticks; fits uint32_t with large margin
+            uint8_t shifts = (retry_count < AX25_BACKOFF_EXP_CAP_SHIFTS) ? retry_count : (uint8_t) AX25_BACKOFF_EXP_CAP_SHIFTS;
+            t = (uint32_t) base_ticks << shifts;
+            break;
+        }
+        default:  // AX25_BACKOFF_NONE
+            t = (uint32_t) base_ticks;
+        break;
+    }
+    // Convert 10ms ticks to milliseconds; 96000 * 10 = 960,000ms << UINT32_MAX
+    return t * 10u;
+}
+// end modified part
+
 // Convenience wrappers so every call site uses the connection's cached
 // last_tick_10ms rather than carrying a raw tick through every helper.
 // TICKS_TO_MS converts 10ms ticks to milliseconds for ax25_timer_t.
+// start modified part
+// T1_START: arm T1 with backoff-adjusted duration returned as uint32_t milliseconds.
+// ax25_t1_backed_off_ms applies NONE/LINEAR/EXPONENTIAL per timers.backoff,
+// capped at 5 doublings to prevent overflow. retry_count is read at arm-time.
 #define T1_START(conn) \
     ax25_timer_start(&(conn)->t1, \
-                     TICKS_TO_MS((uint32_t)(conn)->timers.t1), \
+                     ax25_t1_backed_off_ms((conn)->timers.t1, (conn)->timers.backoff, (conn)->retry_count), \
                      (conn)->last_tick_10ms * 10u)
+// end modified part
 #define T1_STOP(conn)    ax25_timer_stop(&(conn)->t1)
 #define T1_RUNNING(conn) ((conn)->t1.running)
 
@@ -715,6 +748,13 @@ static void handle_test_frame(ax25_connection_t *conn, ax25_test_frame_t *test, 
             } else {
                 conn->test_stats.ema_rtt = conn->test_stats.ema_rtt - (conn->test_stats.ema_rtt >> 3u) + (rtt >> 3u);
             }
+            // start modified part
+            // 1-tick floor: prevent ema_rtt converging to zero after seeding.
+            // A zero EMA would make ax25_adjust_t1_adaptive produce T1 = margin only,
+            // ignoring measured channel latency and violating AX.25 v2.2 §6.7.1.1.
+            if (conn->test_stats.ema_rtt < 1u)
+                conn->test_stats.ema_rtt = 1u;
+            // end modified part
             conn->test_stats.test_received++;
 
             // Clear pending test
@@ -1564,6 +1604,7 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     conn->timers.t1 = (uint16_t) (AX25_DEFAULT_T1_MS / 10u);  // 10000ms -> 1000 ticks (Linux AX25_DEF_T1)
     conn->timers.t2 = (uint16_t) (AX25_DEFAULT_T2_MS / 10u);  // 3000ms  ->  300 ticks (Linux AX25_DEF_T2)
     conn->timers.t3 = (uint16_t) (AX25_DEFAULT_T3_MS / 10u);  // 300000ms-> 30000 ticks (Linux AX25_DEF_T3)
+    conn->timers.backoff = AX25_BACKOFF_NONE;  // no backoff by default; caller may set before ax25_connect()
     // end modified part
     conn->timers.n2 = (uint8_t) AX25_DEFAULT_N2;             // 10 retries
     conn->timers.k = (uint8_t) AX25_DEFAULT_K_MOD8;         // 7 for mod-8 default
@@ -2926,11 +2967,14 @@ void ax25_adjust_t1_adaptive(ax25_connection_t *conn) {
         // FD: 100ms margin (10 ticks), HD: 300ms (30 ticks)
         uint32_t margin = conn->full_duplex ? 10u : 30u;
         uint32_t new_t1 = (avg_rtt * 2u) + margin;
-        // Clamp to [100ms, 30s] per AX.25 v2.2
-        if (new_t1 < 10u)
-            new_t1 = 10u;
-        if (new_t1 > 3000u)
-            new_t1 = 3000u;
+        // start modified part
+        // Use named clamp constants — mirrors Linux AX25_T1CLAMPLO / AX25_T1CLAMPHI
+        // from net/ax25/ax25_subr.c to prevent T1 going below 100ms or above 30s.
+        if (new_t1 < AX25_T1CLAMPLO_TICKS)
+            new_t1 = AX25_T1CLAMPLO_TICKS;
+        if (new_t1 > AX25_T1CLAMPHI_TICKS)
+            new_t1 = AX25_T1CLAMPHI_TICKS;
+        // end modified part
         conn->timers.t1 = (uint16_t) new_t1;
     }
 }

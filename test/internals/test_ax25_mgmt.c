@@ -81,11 +81,17 @@ static int test_start_negotiation(void) {
     ax25_mgmt_init(&ctx);
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
+    // ax25_mgmt_start_negotiation copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
-    TEST_ASSERT(dest != NULL && err == 0, "Parsed destination address", err);
-
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(src != NULL && err == 0, "Parsed source address", err);
+    if (!dest || err != 0 || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "Parsed dest and src addresses", err);
+    }
+    // end modified part
 
     // Modify some parameters to ensure XID frame is non-empty
     ctx.local_params.ifield_length = 512;
@@ -94,13 +100,17 @@ static int test_start_negotiation(void) {
 
     captured_len = 0;
     uint8_t res = ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
     TEST_ASSERT(res == 0, "ax25_mgmt_start_negotiation returns success", res);
     TEST_ASSERT(ctx.state == AX25_MGMT_AWAITING_RESPONSE, "State changed to AWAITING_RESPONSE", 0);
     TEST_ASSERT(captured_len > 20, "XID command frame transmitted (reasonable length)", 0);
     TEST_ASSERT(ctx.retry_count == 0, "Initial retry_count = 0", 0);
-
-    free(dest);
-    free(src);
 
     return 0;
 }
@@ -118,14 +128,29 @@ static int test_negotiation_timeout(void) {
     ctx.on_mdl_error = test_on_mdl_error;
 
     uint8_t err = 0;
+    // start modified part
+    // Allocate both addresses before any TEST_ASSERT so a single cleanup path covers both.
+    // ax25_mgmt_start_negotiation copies addresses by value (ctx->peer = *dest),
+    // so dest and src can be freed immediately after the call without affecting ctx.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
-    TEST_ASSERT(dest != NULL && err == 0, "Parsed destination address", err);
-
     ax25_address_t *src = ax25_address_from_string("SRC-0", &err);
-    TEST_ASSERT(src != NULL && err == 0, "Parsed source address", err);
+    if (!dest || err != 0 || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "Parsed dest and src addresses", err);
+    }
+    // end modified part
 
     captured_len = 0;
     uint8_t res = ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
+    // start modified part
+    // Free immediately after start_negotiation — addresses are copied into ctx by value.
+    // All subsequent TEST_ASSERT paths are now leak-free.
+    free(dest);
+    free(src);
+    dest = NULL;
+    src = NULL;
+    // end modified part
     TEST_ASSERT(res == 0, "ax25_mgmt_start_negotiation succeeded", res);
     TEST_ASSERT(ctx.state == AX25_MGMT_AWAITING_RESPONSE, "State is AWAITING_RESPONSE", 0);
 
@@ -152,9 +177,6 @@ static int test_negotiation_timeout(void) {
     current_tick += 4000;
     ax25_mgmt_tick(&ctx, current_tick);
     TEST_ASSERT(ctx.state == AX25_MGMT_IDLE, "State returned to IDLE after max retries", 0);
-
-    free(dest);
-    free(src);
 
     return 0;
 }

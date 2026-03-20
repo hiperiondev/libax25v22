@@ -84,6 +84,28 @@
 #endif
 // end modified part
 
+// start modified part
+// Backoff mode constants for ax25_timers_t.backoff.
+// Mirror Linux ax25_calculate_t1() backoff modes in net/ax25/ax25_subr.c.
+// 0 = none (default), 1 = linear multiplier, 2 = exponential doubling.
+#define AX25_BACKOFF_NONE        0u
+#define AX25_BACKOFF_LINEAR      1u
+#define AX25_BACKOFF_EXPONENTIAL 2u
+
+// AX25_BACKOFF_EXP_CAP_SHIFTS: maximum doublings for exponential backoff.
+// 2^5 = 32; 32 * 3000 ticks = 96000 ticks; 96000 * 10ms = 960000ms << UINT32_MAX.
+// Without this cap: 2^10 * 1000 = 1,024,000 ticks overflows uint16_t (max 65535).
+#define AX25_BACKOFF_EXP_CAP_SHIFTS 5u
+
+// AX25_T1CLAMPLO_TICKS: minimum T1 for RTT adaptive path (10 ticks = 100ms).
+// Mirrors Linux AX25_T1CLAMPLO (1 jiffy at HZ=100 = 10ms; practical min used here is 100ms).
+#define AX25_T1CLAMPLO_TICKS 10u
+
+// AX25_T1CLAMPHI_TICKS: maximum T1 for RTT adaptive path (3000 ticks = 30s).
+// Mirrors Linux AX25_T1CLAMPHI = 30 * HZ (at HZ=100 -> 3000 jiffies -> 30000ms).
+#define AX25_T1CLAMPHI_TICKS 3000u
+// end modified part
+
 // N1: Maximum I-field length in octets (§6.7.2).
 #ifndef AX25_DEFAULT_N1
 #define AX25_DEFAULT_N1  256u
@@ -412,14 +434,17 @@ typedef struct {
  * - k: 7 (modulo-8) or 32 (modulo-128)
  * - N1: 256 bytes
  */
+// start modified part
 typedef struct {
-    uint16_t t1; /**< T1: Acknowledgment timer (10ms units) */
-    uint16_t t2; /**< T2: Response delay timer (10ms units) */
-    uint16_t t3; /**< T3: Inactive link timer (10ms units) */
-    uint8_t n2; /**< N2: Maximum number of retries */
-    uint8_t k; /**< k: Window size (max outstanding I-frames) */
-    uint16_t n1; /**< N1: Maximum I-field length (octets) */
+    uint16_t t1;      // T1: Acknowledgment timer (10ms units)
+    uint16_t t2;      // T2: Response delay timer (10ms units)
+    uint16_t t3;      // T3: Inactive link timer (10ms units)
+    uint8_t n2;      // N2: Maximum number of retries
+    uint8_t k;       // k: Window size (max outstanding I-frames)
+    uint8_t backoff;  // Backoff mode: AX25_BACKOFF_NONE / LINEAR / EXPONENTIAL
+    uint16_t n1;      // N1: Maximum I-field length (octets)
 } ax25_timers_t;
+// end modified part
 
 /*============================================================================*/
 /* Retransmission Queue                                                       */
