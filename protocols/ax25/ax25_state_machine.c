@@ -1560,9 +1560,11 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     memset(conn, 0, sizeof(ax25_connection_t));
     conn->state = AX25_STATE_DISCONNECTED;  //
     conn->vars.mod = 8;                    // Default to modulo 8
-    conn->timers.t1 = (uint16_t) (AX25_DEFAULT_T1_MS / 10u);  // 3000ms -> 300 ticks
-    conn->timers.t2 = (uint16_t) (AX25_DEFAULT_T2_MS / 10u);  // 1500ms -> 150 ticks
-    conn->timers.t3 = (uint16_t) (AX25_DEFAULT_T3_MS / 10u);  // 30000ms -> 3000 ticks
+    // start modified part
+    conn->timers.t1 = (uint16_t) (AX25_DEFAULT_T1_MS / 10u);  // 10000ms -> 1000 ticks (Linux AX25_DEF_T1)
+    conn->timers.t2 = (uint16_t) (AX25_DEFAULT_T2_MS / 10u);  // 3000ms  ->  300 ticks (Linux AX25_DEF_T2)
+    conn->timers.t3 = (uint16_t) (AX25_DEFAULT_T3_MS / 10u);  // 300000ms-> 30000 ticks (Linux AX25_DEF_T3)
+    // end modified part
     conn->timers.n2 = (uint8_t) AX25_DEFAULT_N2;             // 10 retries
     conn->timers.k = (uint8_t) AX25_DEFAULT_K_MOD8;         // 7 for mod-8 default
     conn->timers.n1 = (uint16_t) AX25_DEFAULT_N1;             // 256 octets

@@ -1824,8 +1824,13 @@ void ax25_xid_init_defaults(uint8_t *err) {
     AX25_22_DEFAULT_XID_IFIELDRX = ax25_xid_big_endian_new(6, 2048, 2, err);
     AX25_20_DEFAULT_XID_WINDOWSZRX = ax25_xid_big_endian_new(8, 7, 1, err);
     AX25_22_DEFAULT_XID_WINDOWSZRX = ax25_xid_big_endian_new(8, 7, 1, err);
-    AX25_20_DEFAULT_XID_ACKTIMER = ax25_xid_big_endian_new(9, 3000, 2, err);
-    AX25_22_DEFAULT_XID_ACKTIMER = ax25_xid_big_endian_new(9, 3000, 2, err);
+    // start modified part
+    // XID ACK timer defaults aligned with Linux AX25_DEF_T1 = 10000 ms.
+    // Using 3000 caused Linux peers to time out their own T1 and send RR
+    // polls before libax25v22 expected any response, reducing throughput.
+    AX25_20_DEFAULT_XID_ACKTIMER = ax25_xid_big_endian_new(9, 10000, 2, err);
+    AX25_22_DEFAULT_XID_ACKTIMER = ax25_xid_big_endian_new(9, 10000, 2, err);
+    // end modified part
     AX25_20_DEFAULT_XID_RETRIES = ax25_xid_big_endian_new(10, 10, 2, err);
     AX25_22_DEFAULT_XID_RETRIES = ax25_xid_big_endian_new(10, 10, 2, err);
 }

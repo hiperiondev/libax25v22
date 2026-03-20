@@ -60,24 +60,29 @@
  * @brief Special values for timer state management
  */
 
-// All defaults follow AX.25 v2.2 §6.7.2 and PE1CHL §5.
+// start modified part
+// All defaults match Linux kernel ax25_dev.c AX25_DEF_T* values so that
+// libax25v22 interoperates correctly with Linux AX.25 peers.  Using smaller
+// values causes the Linux peer to retransmit (via its own T1=10000 ms) before
+// libax25v22 expects, stalling throughput on any mixed Linux/MCU link.
 // Override at build time with -DAX25_DEFAULT_T1_MS=<value> etc.
-// T1: Acknowledgment timer default — 3000 ms (§6.7.1.1)
-// Stored as 10ms ticks in ax25_timers_t.t1: 3000/10 = 300 ticks.
+// T1: Acknowledgment timer — 10000 ms, matches Linux AX25_DEF_T1 = 10000 ms.
+// Stored as 10 ms ticks in ax25_timers_t.t1: 10000/10 = 1000 ticks.
 #ifndef AX25_DEFAULT_T1_MS
-#define AX25_DEFAULT_T1_MS  3000u
+#define AX25_DEFAULT_T1_MS  10000u
 #endif
-// T2: Response delay timer default — 3000 ms (§6.7.1.2).
-// Spec says T2 < T1; default kept at 1500 ms (half of T1) for piggybacking.
-// Stored as 10ms ticks: 1500/10 = 150 ticks.
+// T2: Response delay timer — 3000 ms, matches Linux AX25_DEF_T2 = 3000 ms.
+// Spec requires T2 < T1; 3000 < 10000 satisfies this constraint.
+// Stored as 10 ms ticks: 3000/10 = 300 ticks.
 #ifndef AX25_DEFAULT_T2_MS
-#define AX25_DEFAULT_T2_MS  1500u
+#define AX25_DEFAULT_T2_MS  3000u
 #endif
-// T3: Inactive link timer default — 30000 ms (§6.7.1.3).
-// Stored as 10ms ticks: 30000/10 = 3000 ticks.
+// T3: Inactive link timer — 300000 ms, matches Linux AX25_DEF_T3 = 300000 ms.
+// Stored as 10 ms ticks: 300000/10 = 30000 ticks (fits uint16_t, max 65535).
 #ifndef AX25_DEFAULT_T3_MS
-#define AX25_DEFAULT_T3_MS  30000u
+#define AX25_DEFAULT_T3_MS  300000u
 #endif
+// end modified part
 
 // N1: Maximum I-field length in octets (§6.7.2).
 #ifndef AX25_DEFAULT_N1

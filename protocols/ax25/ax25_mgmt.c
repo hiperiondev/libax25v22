@@ -35,9 +35,13 @@ uint8_t ax25_mgmt_init(ax25_mgmt_context_t *ctx) {
     // AX.25 v2.2 Appendix C Table C1: default window is 32 for modulo-128,
     // 7 for modulo-8. Using 7 here with modulo-128 caps throughput unnecessarily.
     ctx->local_params.window_size = 32;
-    ctx->local_params.ack_timer = 3000;
+    // start modified part
+    // ack_timer and response_delay_timer set to Linux AX25_DEF_T1/T2 values
+    // so XID negotiation defaults match the Linux peer's expectations.
+    ctx->local_params.ack_timer = 10000;           // Linux AX25_DEF_T1 = 10000 ms
     ctx->local_params.retries = 10;
-    ctx->local_params.response_delay_timer = 500;
+    ctx->local_params.response_delay_timer = 3000;  // Linux AX25_DEF_T2 = 3000 ms
+    // end modified part
 
     // initialize new MDL-ERROR fields
     ctx->max_retries = 3;      // NM201 default per AX.25 v2.2 Appendix C5
@@ -167,9 +171,13 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
     remote.modulo128 = false;
     remote.ifield_length = 256;
     remote.window_size = 4;  // AX.25 v2.0 default
-    remote.ack_timer = 3000;
+    // start modified part
+    // Remote defaults match Linux AX25_DEF_T* so a silent Linux peer is
+    // assumed to use its own defaults, preventing timer mismatch.
+    remote.ack_timer = 10000;            // Linux AX25_DEF_T1 = 10000 ms
     remote.retries = 10;
-    remote.response_delay_timer = 500;  // T2 default
+    remote.response_delay_timer = 3000;  // Linux AX25_DEF_T2 = 3000 ms
+    // end modified part
 
     // Parse each parameter
     for (size_t i = 0; i < xid->param_count; i++) {
@@ -538,9 +546,13 @@ uint8_t ax25_decode_xid(const uint8_t *buf, uint16_t len, ax25_negotiated_params
     params->modulo128 = false;
     params->ifield_length = 256u;
     params->window_size = 4u;
-    params->ack_timer = 3000u;
+    // start modified part
+    // Defaults match Linux AX25_DEF_T* so missing XID parameters assume
+    // Linux peer values rather than stale AX.25 v2.2 spec minimums.
+    params->ack_timer = 10000u;            // Linux AX25_DEF_T1 = 10000 ms
     params->retries = 10u;
-    params->response_delay_timer = 500u;
+    params->response_delay_timer = 3000u;  // Linux AX25_DEF_T2 = 3000 ms
+    // end modified part
 
     // GL byte: total length of the parameter group that follows
     uint8_t gl = buf[1];
