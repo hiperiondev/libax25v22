@@ -1398,18 +1398,44 @@ static void handle_received_rr(ax25_connection_t *conn, ax25_supervisory_frame_t
         }
     }
 
-// Stop T1 here; ax25_tick will restart it if needed
-    conn->retry_count = 0;
-    T1_STOP(conn);  // Stop T1 - will be restarted by ax25_tick if frames pending
-
-// per AX.25 v2.2 §6.4.7 SDL, when in Timer Recovery
-// state and we receive RR F=1 (a response to our poll) with V(A)==V(S) (all
-// outstanding frames have now been acknowledged), we must return to Connected
-// state.  Without this transition ax25_send_data_raw() returns 6 forever and
-// the link is permanently blocked after the first T1 expiry.
-    if (conn->state == AX25_STATE_TIMER_RECOVERY && pf && conn->vars.va == conn->vars.vs) {
-        conn->state = AX25_STATE_CONNECTED;
+    // start modified part
+    // State 4 (TIMER_RECOVERY) RR handling per Linux ax25_std_frame_in.c:
+    //   F=1: peer responded to our poll — decide whether to return to CONNECTED or retransmit.
+    //   F=0: ack already processed by ax25_process_nr; do NOT send response, stay in recovery.
+    // Sending RR/RNR in TIMER_RECOVERY would create a spurious poll loop with the Linux peer.
+    if (conn->state == AX25_STATE_TIMER_RECOVERY) {
+        if (pf) {
+            // RR F=1: peer answered our RR P=1 enquiry
+            conn->retry_count = 0;
+            T1_STOP(conn);
+            if (conn->vars.va == conn->vars.vs) {
+                // All outstanding frames acknowledged: return to CONNECTED, start T3
+                conn->state = AX25_STATE_CONNECTED;
+                T3_START(conn);
+            } else {
+                // Frames still outstanding: retransmit from V(A), restart T1 to await next F=1
+                uint8_t idx = conn->tx_queue.head;
+                for (uint8_t i = 0; i < conn->tx_queue.count; i++) {
+                    if (conn->callbacks.transmit)
+                        conn->callbacks.transmit(conn->user_data, conn->tx_queue.frames[idx], conn->tx_queue.lengths[idx]);
+                    conn->stats.iframe_retransmitted++;
+                    if (conn->stats.iframe_retransmitted == 0)
+                        conn->stats.iframe_retransmitted = 1;
+                    idx = (idx + 1) % AX25_MAX_QUEUE_SIZE;
+                }
+                T1_START(conn);
+            }
+        }
+        // F=0 in TIMER_RECOVERY: ax25_process_nr already advanced V(A);
+        // T1 was stopped there if queue drained, else keeps running (waiting for F=1).
+        // Never respond with RR/RNR in TIMER_RECOVERY state.
+        return;
     }
+    // end modified part
+
+    // CONNECTED and other states
+    conn->retry_count = 0;
+    T1_STOP(conn);
 
     if (pf) {
         if (conn->local_busy) {
@@ -1842,8 +1868,26 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
                 // Do NOT transition to TIMER_RECOVERY: stay in AWAITING_RELEASE.
                 send_disc(conn);
                 T1_START(conn);
+                // start modified part
+            } else if (conn->state == AX25_STATE_TIMER_RECOVERY) {
+                // State 4 T1 expiry: send RR P=1 enquiry, do NOT retransmit I-frames.
+                // Per Linux ax25_std_t1timer_expiry() State 4: only poll, let peer's
+                // F=1 response drive retransmission via handle_received_rr.
+                // This prevents the Linux peer from seeing unsolicited non-poll RR frames
+                // that it would count against its own N2, causing premature disconnect.
+                if (conn->local_busy)
+                    send_rnr(conn, true);
+                else
+                    send_rr(conn, true);
+                T1_START(conn);
+            } else if (conn->state == AX25_STATE_FRAME_REJECT) {
+                // FRAME_REJECT T1 expiry: resend stored FRMR and restart T1
+                // per AX.25 v2.2 Section 4.4.5.  Do NOT enter TIMER_RECOVERY.
+                resend_stored_frmr(conn);
+                T1_START(conn);
+                // end modified part
             } else {
-                // Enter timer recovery and retransmit per AX.25 v2.2 Section 6.7.1.1
+                // CONNECTED: enter timer recovery, retransmit per AX.25 v2.2 Section 6.7.1.1
                 conn->state = AX25_STATE_TIMER_RECOVERY;
 
                 // Retransmit all unacknowledged I-frames from V(A) to V(S)-1
@@ -1923,14 +1967,25 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
         // our local receive state: send RNR P=1 when locally busy so the peer knows we
         // are still flow-controlled while we solicit its F=1 status response; send RR P=1
         // in all other cases (idle poll or recovery while peer was busy)
+        // start modified part
+        // T3 expiry in State 3 (CONNECTED): send RR/RNR P=1 and move to State 4
+        // (TIMER_RECOVERY) per Linux ax25_std_t3timer_expiry().  The Linux peer
+        // drives its own N2 counter only via T1 retries in State 4; staying in
+        // State 3 would produce unsolicited non-poll RR frames that Linux counts
+        // against its own N2, causing premature disconnect from the Linux side.
+        T3_STOP(conn);
         if (conn->local_busy) {
             send_rnr(conn, true);  // RNR P=1: locally busy, poll peer for status
         } else {
             send_rr(conn, true);   // RR P=1: not busy, idle link poll
         }
-
+        if (conn->state == AX25_STATE_CONNECTED) {
+            // Transition to State 4: T1 monitors F=1 response; T3 stopped above
+            conn->retry_count = 0;
+            conn->state = AX25_STATE_TIMER_RECOVERY;
+        }
+        // end modified part
         T1_START(conn);  // Start T1 for poll response
-        T3_START(conn);  // Restart T3
     }
 }
 
@@ -2069,6 +2124,27 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                 if (conn->callbacks.on_connect) {
                     conn->callbacks.on_connect(conn->user_data, true);
                 }
+                // start modified part
+            } else if (conn->state == AX25_STATE_TIMER_RECOVERY) {
+                // UA unexpected in State 4 (TIMER_RECOVERY): we never sent SABM/SABME
+                // so this UA is unsolicited.  Linux ax25_std_frame_in State 4 treats it
+                // like DM (remote reset) — issue DL-ERROR A and disconnect.
+                FIRE_DL_ERROR(conn, AX25_DL_ERROR_A);
+                conn->state = AX25_STATE_DISCONNECTED;
+                T1_STOP(conn);
+                T3_STOP(conn);
+                conn->retry_count = 0;
+                conn->peer_busy = false;
+                conn->local_busy = false;
+                while (conn->tx_queue.count > 0) {
+                    hal_mem_free(conn->tx_queue.frames[conn->tx_queue.head]);
+                    conn->tx_queue.frames[conn->tx_queue.head] = NULL;
+                    conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
+                    conn->tx_queue.count--;
+                }
+                if (conn->callbacks.on_disconnect)
+                    conn->callbacks.on_disconnect(conn->user_data, 1);
+                // end modified part
             }
             // UA frames in other states are ignored per AX.25 v2.2
             break;
