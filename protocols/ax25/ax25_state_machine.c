@@ -236,16 +236,24 @@ static void ax25_send_xid_response_defaults(ax25_connection_t *conn, const ax25_
     XID_PI_WINDOW_SIZE_RX, (uint32_t) conn->timers.k, 1, &err);
 
     // PI=9: Acknowledgment timer - T1 is in 10 ms ticks; wire value is ms
+    // start modified part: clamp to 65535 ms -- PI=9 PL=2 max per AX.25 v2.2 §4.3.3.7
+    uint32_t t1_wire_ms = (uint32_t)conn->timers.t1 * 10u;
+    if (t1_wire_ms > 65535u) t1_wire_ms = 65535u;
     params[num_params++] = ax25_xid_big_endian_new(
-    XID_PI_ACK_TIMER, (uint32_t) conn->timers.t1 * 10u, 2, &err);
+    XID_PI_ACK_TIMER, t1_wire_ms, 2, &err);
+    // end modified part
 
     // PI=10: Maximum retries
     params[num_params++] = ax25_xid_big_endian_new(
     XID_PI_RETRIES, (uint32_t) conn->timers.n2, 1, &err);
 
     // PI=11: Response delay timer - T2 is in 10 ms ticks; wire value is ms
+    // start modified part: clamp to 65535 ms -- PI=11 PL=2 max per AX.25 v2.2 §4.3.3.7
+    uint32_t t2_wire_ms = (uint32_t)conn->timers.t2 * 10u;
+    if (t2_wire_ms > 65535u) t2_wire_ms = 65535u;
     params[num_params++] = ax25_xid_big_endian_new(
-    XID_PI_RESP_DELAY_TIMER, (uint32_t) conn->timers.t2 * 10u, 2, &err);
+    XID_PI_RESP_DELAY_TIMER, t2_wire_ms, 2, &err);
+    // end modified part
 
     resp.parameters = params;
     resp.param_count = num_params;

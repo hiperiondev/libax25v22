@@ -209,7 +209,9 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
                 // Wire value is in bits per AX.25 v2.2 §4.3.3.7; convert to bytes.
                 // Guard against zero to avoid a zero ifield_length in agreed params.
                 if (raw->pv_len == 2) {
-                    uint16_t bits = (uint16_t) ((raw->pv[0] << 8) | raw->pv[1]);
+                    // start modified part: UB fix -- uint8_t left-shifted 8 bits is UB when bit 7 is set
+                    uint16_t bits = (uint16_t)(((uint16_t)raw->pv[0] << 8) | (uint16_t)raw->pv[1]);
+                    // end modified part
                     remote.ifield_length = (bits > 0u) ? (bits / 8u) : 256u;
                 }
             break;
@@ -222,7 +224,9 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
 
             case XID_PI_ACK_TIMER:  // 9
                 if (raw->pv_len == 2) {
-                    remote.ack_timer = (raw->pv[0] << 8) | raw->pv[1];
+                    // start modified part: UB fix
+                    remote.ack_timer = (uint16_t)(((uint16_t)raw->pv[0] << 8) | (uint16_t)raw->pv[1]);
+                    // end modified part
                 }
             break;
 
@@ -234,7 +238,9 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
 
             case XID_PI_RESP_DELAY_TIMER:  // 11
                 if (raw->pv_len == 2) {
-                    remote.response_delay_timer = (raw->pv[0] << 8) | raw->pv[1];
+                    // start modified part: UB fix
+                    remote.response_delay_timer = (uint16_t)(((uint16_t)raw->pv[0] << 8) | (uint16_t)raw->pv[1]);
+                    // end modified part
                 }
             break;
         }
@@ -451,9 +457,12 @@ bool mod128, bool full_duplex) {
     // FI: Format Identifier = 0x82 (parameter negotiation per ISO 8885)
     buf[pos++] = XID_FI_GFI;
 
-    // GL placeholder: back-filled after writing all parameters
+    // start modified part: GL is 2 bytes big-endian per ISO 8885 §4.4.1
+    // Reserve two bytes for GL and back-fill both after writing all parameters
     uint16_t gl_pos = pos;
-    buf[pos++] = 0;
+    buf[pos++] = 0x00u;   // GL high byte placeholder
+    buf[pos++] = 0x00u;   // GL low byte placeholder
+    // end modified part
 
     // PI=2: Class of Procedures (2 bytes PV)
     // Byte 0: bit0 = half-duplex (always offered), bit1 = full-duplex
@@ -518,8 +527,12 @@ bool mod128, bool full_duplex) {
     buf[pos++] = (uint8_t) (t2_ms >> 8);
     buf[pos++] = (uint8_t) (t2_ms & 0xFFu);
 
-    // Back-fill GL: total bytes of the parameter group (everything after the GL byte)
-    buf[gl_pos] = (uint8_t) (pos - gl_pos - 1u);
+    // start modified part: back-fill GL as 2-byte big-endian per ISO 8885 §4.4.1
+    // GL value = bytes written after both GL bytes = pos - gl_pos - 2
+    uint16_t gl_val = (uint16_t)(pos - gl_pos - 2u);
+    buf[gl_pos]      = (uint8_t)(gl_val >> 8);     // GL high byte (always 0 for our payload)
+    buf[gl_pos + 1u] = (uint8_t)(gl_val & 0xFFu);  // GL low byte
+    // end modified part
 
     return pos;
 }
@@ -529,11 +542,13 @@ bool mod128, bool full_duplex) {
 // Fills *params with decoded values; defaults are applied for missing parameters.
 // Unknown PI values are silently skipped per AX.25 v2.2 §4.3.3.7.
 // Returns: 0 on success
-//          1 if buf or params is NULL, or len < 2
+//          1 if buf or params is NULL, or len < 3
 //          2 if FI byte is not XID_FI_GFI (not a parameter-negotiation frame)
 uint8_t ax25_decode_xid(const uint8_t *buf, uint16_t len, ax25_negotiated_params_t *params) {
-    if (!buf || !params || len < 2u)
+    // start modified part: minimum 3 bytes required for FI + 2-byte GL per ISO 8885 §4.4.1
+    if (!buf || !params || len < 3u)
         return 1;
+    // end modified part
 
     // Check FI (Format Identifier): must be 0x82 for parameter negotiation
     if (buf[0] != XID_FI_GFI)
@@ -598,7 +613,9 @@ uint8_t ax25_decode_xid(const uint8_t *buf, uint16_t len, ax25_negotiated_params
             case XID_PI_IFIELD_LENGTH_RX:
                 // Wire value is in bits; convert to octets; guard against zero
                 if (pl == 2u) {
-                    uint16_t bits = (uint16_t) ((buf[pos] << 8) | buf[pos + 1u]);
+                    // start modified part: UB fix -- uint8_t left-shifted 8 bits is UB when bit 7 is set
+                    uint16_t bits = (uint16_t)(((uint16_t)buf[pos] << 8) | (uint16_t)buf[pos + 1u]);
+                    // end modified part
                     params->ifield_length = (bits > 0u) ? (uint16_t) (bits / 8u) : 256u;
                 }
             break;
@@ -609,8 +626,11 @@ uint8_t ax25_decode_xid(const uint8_t *buf, uint16_t len, ax25_negotiated_params
             break;
 
             case XID_PI_ACK_TIMER:
-                if (pl == 2u)
-                    params->ack_timer = (uint16_t) ((buf[pos] << 8) | buf[pos + 1u]);
+                if (pl == 2u) {
+                    // start modified part: UB fix
+                    params->ack_timer = (uint16_t)(((uint16_t)buf[pos] << 8) | (uint16_t)buf[pos + 1u]);
+                    // end modified part
+                }
             break;
 
             case XID_PI_RETRIES:
@@ -619,8 +639,11 @@ uint8_t ax25_decode_xid(const uint8_t *buf, uint16_t len, ax25_negotiated_params
             break;
 
             case XID_PI_RESP_DELAY_TIMER:
-                if (pl == 2u)
-                    params->response_delay_timer = (uint16_t) ((buf[pos] << 8) | buf[pos + 1u]);
+                if (pl == 2u) {
+                    // start modified part: UB fix
+                    params->response_delay_timer = (uint16_t)(((uint16_t)buf[pos] << 8) | (uint16_t)buf[pos + 1u]);
+                    // end modified part
+                }
             break;
 
             default:

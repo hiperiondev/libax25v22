@@ -1226,38 +1226,40 @@ static int test_xid_retry_stepping_count(void) {
     uint32_t tx_after_start = tx_history_count;
     TEST_ASSERT(tx_after_start == 1u, "1 XID sent at start", 0);
 
+    // start modified part: tick values raised to exceed tm201=max(ack_timer=10000,3000)=10000 ms
     ctx.timeout_tick = 0;
-    ax25_mgmt_tick(&ctx, 1000); /* arm timer */
+    ax25_mgmt_tick(&ctx, 1000); /* arm: elapsed=1000 < 10000, no timeout */
     TEST_ASSERT(ctx.state == AX25_MGMT_AWAITING_RESPONSE, "AWAITING after arm", 0);
     TEST_ASSERT(!mdl_error_fired, "no MDL-ERROR yet", 0);
 
-    /* 1st timeout -> retry_count=1 */
-    ax25_mgmt_tick(&ctx, 6000);
+    /* 1st timeout -> retry_count=1: elapsed=11000-0=11000 >= 10000 */
+    ax25_mgmt_tick(&ctx, 11000);
     TEST_ASSERT(ctx.state == AX25_MGMT_AWAITING_RESPONSE, "AWAITING after retry 1", 0);
     TEST_ASSERT(!mdl_error_fired, "no MDL-ERROR after retry 1", 0);
     TEST_ASSERT(ctx.retry_count == 1u, "retry_count=1", 0);
     TEST_ASSERT(tx_history_count > tx_after_start, "XID retransmitted after retry 1", 0);
     uint32_t tx_r1 = tx_history_count;
 
-    /* 2nd timeout -> retry_count=2 */
-    ctx.timeout_tick = 6000;
-    ax25_mgmt_tick(&ctx, 11000);
+    /* 2nd timeout -> retry_count=2: elapsed=22000-11000=11000 >= 10000 */
+    ctx.timeout_tick = 11000;
+    ax25_mgmt_tick(&ctx, 22000);
     TEST_ASSERT(ctx.state == AX25_MGMT_AWAITING_RESPONSE, "AWAITING after retry 2", 0);
     TEST_ASSERT(!mdl_error_fired, "no MDL-ERROR after retry 2", 0);
     TEST_ASSERT(ctx.retry_count == 2u, "retry_count=2", 0);
     TEST_ASSERT(tx_history_count > tx_r1, "XID retransmitted after retry 2", 0);
 
-    /* 3rd timeout -> error K */
-    ctx.timeout_tick = 11000;
-    ax25_mgmt_tick(&ctx, 16000);
+    /* 3rd timeout -> error K: elapsed=33000-22000=11000 >= 10000 */
+    ctx.timeout_tick = 22000;
+    ax25_mgmt_tick(&ctx, 33000);
     TEST_ASSERT(ctx.state == AX25_MGMT_IDLE, "state=IDLE after exhaustion", 0);
     TEST_ASSERT(mdl_error_fired, "MDL-ERROR K fired", 0);
     TEST_ASSERT(mdl_error_code_rcvd == AX25_MDL_ERROR_K, "error code=K", 0);
     TEST_ASSERT(mdl_error_fire_count == 1u, "MDL-ERROR fires exactly once", 0);
 
-    for (uint32_t t = 20000; t <= 50000; t += 5000)
+    for (uint32_t t = 38000; t <= 68000; t += 5000)
         ax25_mgmt_tick(&ctx, t);
     TEST_ASSERT(mdl_error_fire_count == 1u, "MDL-ERROR count stays 1", 0);
+    // end modified part
 
     return 0;
 }
@@ -1292,10 +1294,12 @@ static int test_xid_retry_count_resets_on_restart(void) {
     dest = NULL;
     src = NULL;
     // end modified part
+    // start modified part: tick raised to exceed tm201=10000 ms
     ctx.timeout_tick = 0;
-    ax25_mgmt_tick(&ctx, 1000);
-    ax25_mgmt_tick(&ctx, 6000); /* -> error K, state=IDLE */
+    ax25_mgmt_tick(&ctx, 1000);   /* no timeout: elapsed=1000 < 10000 */
+    ax25_mgmt_tick(&ctx, 11000);  /* -> error K: elapsed=11000-0=11000 >= 10000 */
     TEST_ASSERT(ctx.state == AX25_MGMT_IDLE, "state=IDLE after error K", 0);
+    // end modified part
 
     reset_capture();
     uint8_t res = ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
@@ -1495,9 +1499,11 @@ static int test_xid_agreed_params_zeroed_on_error_k(void) {
     dest = NULL;
     src = NULL;
     // end modified part
+    // start modified part: tick raised to exceed tm201=10000 ms
     ctx.timeout_tick = 0;
-    ax25_mgmt_tick(&ctx, 1000);
-    ax25_mgmt_tick(&ctx, 6000); /* -> error K */
+    ax25_mgmt_tick(&ctx, 1000);   /* no timeout: elapsed=1000 < 10000 */
+    ax25_mgmt_tick(&ctx, 11000);  /* -> error K: elapsed=11000-0=11000 >= 10000 */
+    // end modified part
 
     TEST_ASSERT(mdl_error_fired, "MDL-ERROR K fired", 0);
     TEST_ASSERT(ctx.state == AX25_MGMT_IDLE, "state=IDLE", 0);

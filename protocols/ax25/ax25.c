@@ -90,7 +90,10 @@ static uint32_t uint_decode(const uint8_t *data, size_t len, bool big_endian, ui
 
     for (size_t i = 0; i < len; i++) {
         uint32_t byte = (uint32_t) data[big_endian ? (len - 1u - i) : i];
-        value |= byte << (i * 8u);
+        // start modified part: cast i to uint32_t before multiply -- size_t*8 produces
+        // a shift of >= 32 when i==4 and len==8, which is UB on 32-bit targets
+        value |= byte << ((uint32_t)i * 8u);
+        // end modified part
     }
 
     return value;

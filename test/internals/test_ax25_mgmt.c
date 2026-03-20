@@ -67,7 +67,9 @@ static int test_default_parameters(void) {
     TEST_ASSERT(ctx.local_params.modulo128 == true, "Default modulo128 = true", 0);
     TEST_ASSERT(ctx.local_params.ifield_length == 256, "Default ifield_length = 256", 0);
     TEST_ASSERT(ctx.local_params.window_size == 32, "Default window_size = 32 (modulo-128 default per AX.25 v2.2 Table C1)", 0);
-    TEST_ASSERT(ctx.local_params.ack_timer == 3000, "Default ack_timer = 3000", 0);
+    // start modified part: ack_timer default is 10000 ms per Linux AX25_DEF_T1
+    TEST_ASSERT(ctx.local_params.ack_timer == 10000, "Default ack_timer = 10000", 0);
+    // end modified part
     TEST_ASSERT(ctx.local_params.retries == 10, "Default retries = 10", 0);
 
     return 0;
@@ -157,16 +159,17 @@ static int test_negotiation_timeout(void) {
     uint32_t current_tick = 0;
     ctx.timeout_tick = 0;
 
-    // Simulate 4 timeouts (retry_count starts at 0, fails after 3 retries)
-    current_tick += 4000;
+    // start modified part: tick increments raised from 4000 to 11000 ms
+    // tm201 = max(ack_timer=10000, 3000) = 10000; each step needs elapsed >= 10000
+    current_tick += 11000;
     ax25_mgmt_tick(&ctx, current_tick);
     TEST_ASSERT(ctx.retry_count == 1, "Retry count incremented", 0);
 
-    current_tick += 4000;
+    current_tick += 11000;
     ax25_mgmt_tick(&ctx, current_tick);
     TEST_ASSERT(ctx.retry_count == 2, "Retry count incremented", 0);
 
-    current_tick += 4000;
+    current_tick += 11000;
     ax25_mgmt_tick(&ctx, current_tick);
     TEST_ASSERT(ctx.retry_count == 3, "Retry count incremented", 0);
 
@@ -174,9 +177,10 @@ static int test_negotiation_timeout(void) {
     TEST_ASSERT(mdl_error_fired == true, "MDL-ERROR indication delivered to Layer 3", 0);
     TEST_ASSERT(mdl_error_code_received == AX25_MDL_ERROR_K, "MDL-ERROR code is K (retransmission limit)", 0);
 
-    current_tick += 4000;
+    current_tick += 11000;
     ax25_mgmt_tick(&ctx, current_tick);
     TEST_ASSERT(ctx.state == AX25_MGMT_IDLE, "State returned to IDLE after max retries", 0);
+    // end modified part
 
     return 0;
 }
