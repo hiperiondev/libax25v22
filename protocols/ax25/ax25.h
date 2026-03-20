@@ -242,6 +242,20 @@ static inline uint8_t ax25_s_subtype(uint8_t ctrl) {
 // I-frames use ax25_frame_encode() + heap (stored in tx_queue for retransmission).
 #define AX25_ENCODE_SCRATCH_LEN  80u
 
+// start modified part
+// FRMR reason bit constants per AX.25 v2.2 §4.3.3.6 Table 4.5.
+// Bit positions in Byte 2 of the FRMR information field.
+// Match Linux net/ax25/ax25_out.c and include/linux/ax25.h definitions.
+// W: Invalid or not-implemented control field received.
+// X: Information field received when not permitted in current state.
+// Y: Information field length exceeded negotiated N1 maximum.
+// Z: Invalid N(R) received (acknowledges a frame not yet sent).
+#define AX25_FRMR_W  0x01u
+#define AX25_FRMR_X  0x02u
+#define AX25_FRMR_Y  0x04u
+#define AX25_FRMR_Z  0x08u
+// end modified part
+
 /*============================================================================*/
 /* Frame Type Enumeration                                                       */
 /*============================================================================*/

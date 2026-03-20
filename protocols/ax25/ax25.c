@@ -1294,10 +1294,13 @@ ax25_frame_reject_frame_t* ax25_frame_reject_frame_decode(ax25_frame_header_t *h
 
         // Byte 4: Rejection reason flags
         uint8_t flags = data[4];
-        frame->w = (flags & 0x01) != 0;  // W: Invalid control field
-        frame->x = (flags & 0x02) != 0;  // X: Invalid information field
-        frame->y = (flags & 0x04) != 0;  // Y: Unable to recover
-        frame->z = (flags & 0x08) != 0;  // Z: Reserved
+        // start modified part
+        // Reason bit assignments per AX.25 v2.2 §4.3.3.6 Table 4.5
+        frame->w = (flags & AX25_FRMR_W) != 0;  // W: Invalid/unexpected control field
+        frame->x = (flags & AX25_FRMR_X) != 0;  // X: I-field received when not permitted
+        frame->y = (flags & AX25_FRMR_Y) != 0;  // Y: I-field length exceeded N1
+        frame->z = (flags & AX25_FRMR_Z) != 0;  // Z: Invalid N(R) received
+        // end modified part
     } else {
         // Parse 3-byte modulo-8 FRMR data field with explicit comments
         // Byte 0: Control field (8-bit)
@@ -1314,10 +1317,13 @@ ax25_frame_reject_frame_t* ax25_frame_reject_frame_decode(ax25_frame_header_t *h
 
         // Byte 2: Rejection reason flags
         uint8_t flags = data[2];
-        frame->w = (flags & 0x01) != 0;  // W: Invalid control field
-        frame->x = (flags & 0x02) != 0;  // X: Invalid information field
-        frame->y = (flags & 0x04) != 0;  // Y: Unable to recover
-        frame->z = (flags & 0x08) != 0;  // Z: Reserved
+        // start modified part
+        // Reason bit assignments per AX.25 v2.2 §4.3.3.6 Table 4.5
+        frame->w = (flags & AX25_FRMR_W) != 0;  // W: Invalid/unexpected control field
+        frame->x = (flags & AX25_FRMR_X) != 0;  // X: I-field received when not permitted
+        frame->y = (flags & AX25_FRMR_Y) != 0;  // Y: I-field length exceeded N1
+        frame->z = (flags & AX25_FRMR_Z) != 0;  // Z: Invalid N(R) received
+        // end modified part
     }
 
     return frame;
@@ -1346,14 +1352,22 @@ uint8_t* ax25_frame_reject_frame_encode(const ax25_frame_reject_frame_t *frame, 
         // and ensures no bits above the 7-bit modulo-128 sequence range bleed into the control byte
         bytes[3] = (uint8_t) (((uint8_t) (frame->vs & 0x7Fu) << 1u) | (frame->frmr_cr ? 0x01u : 0u));  // N(S) and CR
         bytes[4] = (uint8_t) ((uint8_t) (frame->vr & 0x7Fu) << 1u);        // N(R)
-        bytes[5] = (uint8_t) ((frame->w ? 0x01u : 0u) | (frame->x ? 0x02u : 0u) | (frame->y ? 0x04u : 0u) | (frame->z ? 0x08u : 0u));  // Flags
+        // start modified part
+        // Flags using named FRMR constants per AX.25 v2.2 §4.3.3.6 Table 4.5
+        bytes[5] = (uint8_t) ((frame->w ? AX25_FRMR_W : 0u) | (frame->x ? AX25_FRMR_X : 0u)
+                             | (frame->y ? AX25_FRMR_Y : 0u) | (frame->z ? AX25_FRMR_Z : 0u));
+        // end modified part
     } else {
         // Encode 3-byte data field
         bytes[1] = (uint8_t) (frame->frmr_control & 0xFFu);                // Control byte
         // explicit uint8_t cast on int fields vr/vs before shift prevents signed-int UB
         // and clamps values to the 3-bit modulo-8 sequence range before packing
         bytes[2] = (uint8_t) (((uint8_t) (frame->vr & 0x07u) << 5u) | (frame->frmr_cr ? 0x10u : 0u) | ((uint8_t) (frame->vs & 0x07u) << 1u));  // V(R), CR, V(S)
-        bytes[3] = (uint8_t) ((frame->w ? 0x01u : 0u) | (frame->x ? 0x02u : 0u) | (frame->y ? 0x04u : 0u) | (frame->z ? 0x08u : 0u));  // Flags
+        // start modified part
+        // Flags using named FRMR constants per AX.25 v2.2 §4.3.3.6 Table 4.5
+        bytes[3] = (uint8_t) ((frame->w ? AX25_FRMR_W : 0u) | (frame->x ? AX25_FRMR_X : 0u)
+                             | (frame->y ? AX25_FRMR_Y : 0u) | (frame->z ? AX25_FRMR_Z : 0u));
+        // end modified part
     }
 
     return bytes;
@@ -1859,7 +1873,10 @@ bool res1, bool res2, bool res3, bool res4, bool res5, bool res6, bool res7, uin
             | (ua ? 0x80 : 0);
     pv[1] = (frmr ? 0x01 : 0) | (ui ? 0x02 : 0) | (xid ? 0x04 : 0) | (test ? 0x08 : 0) | (modulo8 ? 0x10 : 0) | (modulo128 ? 0x20 : 0) | (res1 ? 0x40 : 0)
             | (res2 ? 0x80 : 0);
-    pv[2] = (res3 ? 0x01 : 0) | (res4 ? 0x02 : 0) | (res5 ? 0x04 : 0) | (res6 ? 0x06 : 0) | (res7 ? 0x08 : 0);
+    // start modified part
+    // Fixed res6 mask 0x06->0x08 (was erroneously two bits ORed); res7 mask 0x08->0x10 (was duplicate of res6 position).
+    pv[2] = (res3 ? 0x01 : 0) | (res4 ? 0x02 : 0) | (res5 ? 0x04 : 0) | (res6 ? 0x08 : 0) | (res7 ? 0x10 : 0);
+    // end modified part
     pv[3] = reserved | (ext ? 0x80 : 0);
 
     // AX.25 v2.2 Table 12: HDLC Optional Functions PI = 3

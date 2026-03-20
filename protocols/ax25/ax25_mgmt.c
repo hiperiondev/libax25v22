@@ -586,15 +586,18 @@ uint8_t ax25_decode_xid(const uint8_t *buf, uint16_t len, ax25_negotiated_params
     params->response_delay_timer = 3000u;  // Linux AX25_DEF_T2 = 3000 ms
     // end modified part
 
-    // GL byte: total length of the parameter group that follows
-    uint8_t gl = buf[1];
-
-    // Clamp gl to the actual remaining bytes to guard against malformed frames
-    uint16_t group_end = 2u + (uint16_t) gl;
+    // start modified part
+    // GL is a 2-byte big-endian field at buf[1..2] per ISO 8885 §4.4.1,
+    // consistent with ax25_encode_xid() which writes both bytes.
+    // The prior single-byte read always got the GL high byte (=0), making
+    // group_end=2 and leaving the PI/PL/PV parse loop permanently unreachable:
+    // every call to ax25_decode_xid() returned with only default values applied.
+    uint16_t gl = (uint16_t) (((uint16_t) buf[1] << 8) | (uint16_t) buf[2]);
+    uint16_t group_end = (uint16_t) (3u + gl);
     if (group_end > len)
         group_end = len;
-
-    uint16_t pos = 2u;
+    uint16_t pos = 3u;
+    // end modified part
 
     // Iterate over PI/PL/PV triplets
     while (pos + 2u <= group_end) {
