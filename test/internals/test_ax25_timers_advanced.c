@@ -534,11 +534,19 @@ static int test_backoff_n2_exhaustion(void) {
     DEBUG_STATE("Final state", conn.state);
     DEBUG_VAR("DL-ERROR call count", dl_error_call_count);
     DEBUG_VAR("Last DL-ERROR code", (unsigned)last_dl_error);
-    TEST_ASSERT(conn.state == AX25_STATE_DISCONNECTED, "State = DISCONNECTED after N2 exhaustion", conn.state);
-    TEST_ASSERT(dl_error_call_count >= 1, "DL-ERROR callback fired at least once", dl_error_call_count);
-    TEST_ASSERT(last_dl_error == AX25_DL_ERROR_N, "DL-ERROR code N (retry limit exceeded) raised", (unsigned )last_dl_error);
-
+    // start modified part
+    // Collect assertion results before cleanup so no path leaks addresses or tx_queue frames.
+    // Previous code called TEST_ASSERT (which does return 1) before cleanup_addresses,
+    // leaving dest/src malloc blocks and the queued I-frame unreachable on failure paths.
+    int disconnected_ok   = (conn.state == AX25_STATE_DISCONNECTED);
+    int dl_error_ok       = (dl_error_call_count >= 1);
+    int dl_error_code_ok  = (last_dl_error == AX25_DL_ERROR_N);
     cleanup_addresses(&dest, &src);
+    ax25_connection_cleanup(&conn);
+    // end modified part
+    TEST_ASSERT(disconnected_ok,  "State = DISCONNECTED after N2 exhaustion", conn.state);
+    TEST_ASSERT(dl_error_ok,      "DL-ERROR callback fired at least once", dl_error_call_count);
+    TEST_ASSERT(dl_error_code_ok, "DL-ERROR code N (retry limit exceeded) raised", (unsigned)last_dl_error);
     return 0;
 }
 
@@ -586,13 +594,19 @@ static int test_backoff_retry_counter(void) {
     }
 
     DEBUG_VAR("Final retry_count", conn.retry_count);
-    TEST_ASSERT(conn.retry_count >= 2, "retry_count >= 2 after two T1 expirations", conn.retry_count);
-    TEST_ASSERT(conn.stats.t1_expirations >= 2, "t1_expirations stat >= 2", conn.stats.t1_expirations);
-
+    // start modified part
+    // Collect results before cleanup so TEST_ASSERT early-return cannot skip
+    // cleanup_addresses or ax25_connection_cleanup, which would leak address
+    // structs (20 bytes each) and the tx_queue I-frame (17 bytes).
+    int retry_ok    = (conn.retry_count >= 2);
+    int expiry_ok   = (conn.stats.t1_expirations >= 2);
     // Drain queue to avoid leak
     send_rr_ack(&conn, conn.vars.vs, 200);
     cleanup_addresses(&dest, &src);
     ax25_connection_cleanup(&conn);
+    // end modified part
+    TEST_ASSERT(retry_ok,  "retry_count >= 2 after two T1 expirations", conn.retry_count);
+    TEST_ASSERT(expiry_ok, "t1_expirations stat >= 2", conn.stats.t1_expirations);
     return 0;
 }
 
@@ -790,10 +804,18 @@ static int test_backoff_stats_tracking(void) {
     DEBUG_VAR("iframe_retransmitted", stats->iframe_retransmitted);
     DEBUG_VAR("dl_error_call_count", dl_error_call_count);
 
-    TEST_ASSERT(stats->t1_expirations >= (uint16_t )conn.timers.n2, "t1_expirations >= N2", stats->t1_expirations);
-    TEST_ASSERT(dl_error_call_count >= 1, "DL-ERROR fired (N2 exhaustion)", dl_error_call_count);
-
+    // start modified part
+    // Collect results before cleanup to prevent TEST_ASSERT early-return from
+    // leaking address structs and the encoded I-frame in the tx_queue.
+    // ax25_connection_cleanup() added to free any frames left in the queue
+    // after N2 exhaustion drives the connection to DISCONNECTED state.
+    int t1exp_ok   = (stats->t1_expirations >= (uint16_t)conn.timers.n2);
+    int dlerr_ok   = (dl_error_call_count >= 1);
     cleanup_addresses(&dest, &src);
+    ax25_connection_cleanup(&conn);
+    // end modified part
+    TEST_ASSERT(t1exp_ok, "t1_expirations >= N2", stats->t1_expirations);
+    TEST_ASSERT(dlerr_ok, "DL-ERROR fired (N2 exhaustion)", dl_error_call_count);
     return 0;
 }
 

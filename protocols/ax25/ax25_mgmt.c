@@ -185,22 +185,34 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
         if (!param || !param->data)
             continue;
 
-        // Extract PV data from parameter
-        ax25_raw_parameter_t *raw = (ax25_raw_parameter_t*) param->data;
-        if (!raw || !raw->pv)
+        // start modified part
+        // ax25_xid_raw_parameter_new() allocates param->data as ax25_raw_param_data_t:
+        //   { size_t pv_len; uint8_t pv[]; }   (flexible array, pv_len FIRST)
+        // The previous code cast to ax25_raw_parameter_t:
+        //   { uint8_t *pv; size_t pv_len; }    (pointer FIRST)
+        // On a 64-bit host size_t is 8 bytes, so raw->pv read the 8-byte pv_len
+        // field as a pointer value, e.g. pv_len==2 gave raw->pv=(uint8_t*)2.
+        // The !raw->pv guard passed (non-NULL), then raw->pv[0] dereferenced
+        // address 0x0000000000000002 - instant segfault on every real XID frame.
+        // Fix: cast to the correct type ax25_raw_param_data_t and access pv[]
+        // directly as the flexible array member (no separate pointer needed).
+        ax25_raw_param_data_t *raw = (ax25_raw_param_data_t*) param->data;
+        if (!raw)
             continue;
 
         switch (param->pi) {
             case XID_PI_CLASS_OF_PROCEDURES:  // 2
-                if (raw->pv_len >= 2) {
+                if (raw->pv_len >= 1u) {
                     remote.full_duplex = (raw->pv[0] & XID_COP_FULL_DUPLEX) != 0;
                 }
             break;
 
             case XID_PI_HDLC_OPTIONAL_FUNCTIONS:  // 3
-                if (raw->pv_len >= 3) {
+                if (raw->pv_len >= 1u) {
                     remote.implicit_reject = (raw->pv[0] & XID_HDLC_REJ) != 0;
                     remote.selective_reject = (raw->pv[0] & XID_HDLC_SREJ) != 0;
+                }
+                if (raw->pv_len >= 2u) {
                     remote.modulo128 = (raw->pv[1] & XID_HDLC_MOD128) != 0;
                 }
             break;
@@ -208,40 +220,45 @@ uint8_t ax25_mgmt_process_xid(ax25_mgmt_context_t *ctx, ax25_exchange_identifica
             case XID_PI_IFIELD_LENGTH_RX:  // 6
                 // Wire value is in bits per AX.25 v2.2 §4.3.3.7; convert to bytes.
                 // Guard against zero to avoid a zero ifield_length in agreed params.
-                if (raw->pv_len == 2) {
-                    // start modified part: UB fix -- uint8_t left-shifted 8 bits is UB when bit 7 is set
+                // start modified part
+                // Use >= so a peer that sends extra padding bytes in PV is tolerated.
+                if (raw->pv_len >= 2u) {
                     uint16_t bits = (uint16_t)(((uint16_t)raw->pv[0] << 8) | (uint16_t)raw->pv[1]);
-                    // end modified part
-                    remote.ifield_length = (bits > 0u) ? (bits / 8u) : 256u;
+                    remote.ifield_length = (bits > 0u) ? (uint16_t)(bits / 8u) : 256u;
                 }
+                // end modified part
             break;
 
             case XID_PI_WINDOW_SIZE_RX:  // 8
-                if (raw->pv_len == 1) {
+                // start modified part
+                if (raw->pv_len >= 1u) {
                     remote.window_size = raw->pv[0];
                 }
+                // end modified part
             break;
 
             case XID_PI_ACK_TIMER:  // 9
-                if (raw->pv_len == 2) {
-                    // start modified part: UB fix
+                // start modified part
+                if (raw->pv_len >= 2u) {
                     remote.ack_timer = (uint16_t)(((uint16_t)raw->pv[0] << 8) | (uint16_t)raw->pv[1]);
-                    // end modified part
                 }
+                // end modified part
             break;
 
             case XID_PI_RETRIES:  // 10
-                if (raw->pv_len == 1) {
+                // start modified part
+                if (raw->pv_len >= 1u) {
                     remote.retries = raw->pv[0];
                 }
+                // end modified part
             break;
 
             case XID_PI_RESP_DELAY_TIMER:  // 11
-                if (raw->pv_len == 2) {
-                    // start modified part: UB fix
+                // start modified part
+                if (raw->pv_len >= 2u) {
                     remote.response_delay_timer = (uint16_t)(((uint16_t)raw->pv[0] << 8) | (uint16_t)raw->pv[1]);
-                    // end modified part
                 }
+                // end modified part
             break;
         }
     }

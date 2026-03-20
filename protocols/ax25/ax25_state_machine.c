@@ -1638,7 +1638,16 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     conn->timers.t1 = (uint16_t) (AX25_DEFAULT_T1_MS / 10u);  // 10000ms -> 1000 ticks (Linux AX25_DEF_T1)
     conn->timers.t2 = (uint16_t) (AX25_DEFAULT_T2_MS / 10u);  // 3000ms  ->  300 ticks (Linux AX25_DEF_T2)
     conn->timers.t3 = (uint16_t) (AX25_DEFAULT_T3_MS / 10u);  // 300000ms-> 30000 ticks (Linux AX25_DEF_T3)
-    conn->timers.backoff = AX25_BACKOFF_NONE;  // no backoff by default; caller may set before ax25_connect()
+    // start modified part
+    // Default to AX25_BACKOFF_LINEAR to match Linux AX25_DEF_BACKOFF = 1 in
+    // net/ax25/ax25_dev.c.  Linux ax25_calculate_t1() uses:
+    //   T1_actual = (1 + n2count) * T1_base
+    // AX25_BACKOFF_NONE fires every retry at the same fixed T1 interval,
+    // causing synchronised collisions on shared CSMA radio channels when
+    // multiple stations time out simultaneously after identical delays.
+    // Linear backoff spreads retries over time and matches the Linux peer s
+    // behaviour. Callers may override this field after ax25_connection_init().
+    conn->timers.backoff = AX25_BACKOFF_LINEAR;
     // end modified part
     conn->timers.n2 = (uint8_t) AX25_DEFAULT_N2;             // 10 retries
     conn->timers.k = (uint8_t) AX25_DEFAULT_K_MOD8;         // 7 for mod-8 default

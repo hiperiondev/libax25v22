@@ -933,7 +933,17 @@ ax25_frame_t* ax25_frame_create(ax25_frame_type_t type, const ax25_frame_header_
             iframe->nr = 0;
             iframe->ns = 0;
             iframe->pf = false;
-            iframe->pid = 0;
+            // start modified part
+            // Default PID to PID_NO_L3 (0xF0) for connected-mode plain data.
+            // Linux ax25_rx_iframe() dispatches PID 0x00 to the ROSE sub-layer;
+            // with no ROSE handler registered the kernel silently discards the
+            // frame even though the connection ACKs normally -- data loss is
+            // invisible to the sender. Always emit 0xF0 unless the caller is
+            // carrying IP (0xCC), ARP (0xCD), NET/ROM (0xCF), or segmentation
+            // fragments (0x08). Callers override this field after ax25_frame_create()
+            // when a specific layer-3 protocol is required.
+            iframe->pid = PID_NO_L3;
+            // end modified part
             iframe->payload = NULL;
             iframe->payload_len = 0;
             frame = (ax25_frame_t*) iframe;

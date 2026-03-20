@@ -221,6 +221,22 @@ static inline uint8_t ax25_s_subtype(uint8_t ctrl) {
 #define PID_NO_L3           0xF0 /**< No layer 3 protocol implemented */
 #define PID_ESCAPE          0xFF /**< Escape for extended PID (next byte contains extended PID) */
 
+// start modified part
+// AX25_PID_* canonical names aligned with Linux include/net/ax25.h constants.
+// These are aliases for the PID_* defines above and expand to identical values.
+// Use AX25_PID_LAYER3_NONE for all connected-mode plain data (BBS, terminal, etc.).
+// Linux ax25_rx_iframe() dispatches PID 0x00 to the ROSE sub-layer handler;
+// with no ROSE handler registered the kernel silently drops the I-frame even
+// though the connection appears to work (ACKs are still sent). Always use 0xF0.
+#define AX25_PID_ROSE         0x01u  // ISO 8208 / CCITT X.25 PLP
+#define AX25_PID_SEGMENT_FRAG 0x08u  // Segmentation fragment per AX.25 v2.2 Appendix C6
+#define AX25_PID_IP           0xCCu  // ARPA Internet Protocol version 4
+#define AX25_PID_ARP          0xCDu  // ARPA Address Resolution Protocol
+#define AX25_PID_NETROM       0xCFu  // NET/ROM
+#define AX25_PID_LAYER3_NONE  0xF0u  // No layer 3 - plain text / general data (use for connected mode)
+#define AX25_PID_ESCAPE       0xFFu  // Extended PID escape (next byte = actual PID)
+// end modified part
+
 // Maximum byte length of any fully-encoded AX.25 control frame (no I-field).
 // Worst-case: dest(7) + src(7) + 8 repeaters(56) + 2-byte ctrl + 5-byte FRMR = 77, +3 margin = 80.
 // I-frames use ax25_frame_encode() + heap (stored in tx_queue for retransmission).
