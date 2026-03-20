@@ -563,7 +563,7 @@ static int test_hdlc_maximum_frame_length() {
     int result = hdlc_frame_decode(hdlc_encoded, hdlc_len, hdlc_decoded, &decoded_len);
 
     printf("Decode result: %d, decoded: %d bytes\n", result, decoded_len);
-    TEST_ASSERT(decoded_len == total_len, "Large frame decoded correctly", decoded_len);
+    TEST_ASSERT((size_t)decoded_len == total_len, "Large frame decoded correctly", decoded_len);
 
     // Verify payload integrity
     bool payload_ok = true;

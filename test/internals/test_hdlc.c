@@ -70,7 +70,7 @@ int test_hdlc() {
             printf("\n");
         }
         TEST_ASSERT(decode_result == 0, "hdlc_frame_decode should succeed for UI frame", err);
-        TEST_ASSERT(decodedLen == ax25_ui_frame_len, "Decoded length should match original UI frame", err);
+        TEST_ASSERT((size_t)decodedLen == ax25_ui_frame_len, "Decoded length should match original UI frame", err);
         COMPARE_FRAME(decodedFrame, (size_t )decodedLen, ax25_ui_frame, ax25_ui_frame_len, "Decoded UI frame should match original");
         ax25_frame_t *frame = ax25_frame_decode(decodedFrame, decodedLen, 0, &err);
         TEST_ASSERT(frame != NULL, "ax25_frame_decode should succeed for UI frame", err);
@@ -117,7 +117,7 @@ int test_hdlc() {
             printf("\n");
         }
         TEST_ASSERT(decode_result == 0, "hdlc_frame_decode should succeed for I-frame", err);
-        TEST_ASSERT(decodedLen == ax25_i_frame_len, "Decoded length should match original I-frame", err);
+        TEST_ASSERT((size_t)decodedLen == ax25_i_frame_len, "Decoded length should match original I-frame", err);
         COMPARE_FRAME(decodedFrame, (size_t )decodedLen, ax25_i_frame, ax25_i_frame_len, "Decoded I-frame should match original");
         ax25_frame_t *frame = ax25_frame_decode(decodedFrame, decodedLen, 0, &err);
         TEST_ASSERT(frame != NULL, "ax25_frame_decode should succeed for I-frame", err);
@@ -167,7 +167,7 @@ int test_hdlc() {
             printf("\n");
         }
         TEST_ASSERT(decode_result == 0, "hdlc_frame_decode should succeed for bitstuff frame", err);
-        TEST_ASSERT(decodedLen == ax25_bitstuff_frame_len, "Decoded length should match original bitstuff frame", err);
+        TEST_ASSERT((size_t)decodedLen == ax25_bitstuff_frame_len, "Decoded length should match original bitstuff frame", err);
         COMPARE_FRAME(decodedFrame, (size_t )decodedLen, ax25_bitstuff_frame, ax25_bitstuff_frame_len, "Decoded bitstuff frame should match original");
     }
 
@@ -264,7 +264,7 @@ int test_hdlc() {
             printf("\n");
         }
         TEST_ASSERT(decode_result == 0, "hdlc_frame_decode should succeed for RR frame", err);
-        TEST_ASSERT(decodedLen == ax25_rr_frame_len, "Decoded length should match original RR frame", err);
+        TEST_ASSERT((size_t)decodedLen == ax25_rr_frame_len, "Decoded length should match original RR frame", err);
         COMPARE_FRAME(decodedFrame, (size_t )decodedLen, ax25_rr_frame, ax25_rr_frame_len, "Decoded RR frame should match original");
         ax25_frame_t *frame = ax25_frame_decode(decodedFrame, decodedLen, 0, &err);
         TEST_ASSERT(frame != NULL, "ax25_frame_decode should succeed for RR frame", err);
@@ -314,7 +314,7 @@ int test_hdlc() {
             printf("\n");
         }
         TEST_ASSERT(decode_result == 0, "hdlc_frame_decode should succeed with multiple flags", err);
-        TEST_ASSERT(decodedLen == ax25_ui_frame_len, "Decoded length should match original with multiple flags", err);
+        TEST_ASSERT((size_t)decodedLen == ax25_ui_frame_len, "Decoded length should match original with multiple flags", err);
         COMPARE_FRAME(decodedFrame, (size_t )decodedLen, ax25_ui_frame, ax25_ui_frame_len, "Decoded frame with multiple flags should match original");
     }
 
@@ -345,7 +345,7 @@ int test_hdlc() {
         printf("Decode result: %d (expected 0)\n", decode_result);
         printf("Decoded length: %d (expected %zu)\n", decodedLen, ax25_max_frame_len);
         TEST_ASSERT(decode_result == 0, "hdlc_frame_decode should succeed for max size frame", err);
-        TEST_ASSERT(decodedLen == ax25_max_frame_len, "Decoded length should match original max size frame", err);
+        TEST_ASSERT((size_t)decodedLen == ax25_max_frame_len, "Decoded length should match original max size frame", err);
         COMPARE_FRAME(decodedFrame, (size_t )decodedLen, ax25_max_frame, ax25_max_frame_len, "Decoded max size frame should match original");
     }
 

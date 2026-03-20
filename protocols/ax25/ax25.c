@@ -1166,7 +1166,9 @@ uint8_t* ax25_unnumbered_information_frame_encode(const ax25_unnumbered_informat
 
     bytes[0] = frame->base.modifier | (frame->base.pf ? POLL_FINAL_8BIT : 0);
     bytes[1] = frame->pid;
-    memcpy(bytes + 2, frame->payload, frame->payload_len);
+    // guard memcpy against NULL payload (UI frame may carry zero-length payload)
+    if (frame->payload && frame->payload_len > 0u)
+        memcpy(bytes + 2, frame->payload, frame->payload_len);
 
     return bytes;
 }
@@ -1268,16 +1270,20 @@ uint8_t* ax25_frame_reject_frame_encode(const ax25_frame_reject_frame_t *frame, 
 
     if (is_modulo128) {
         // Encode 5-byte data field
-        bytes[1] = frame->frmr_control & 0xFF;                // Control low byte
-        bytes[2] = (frame->frmr_control >> 8) & 0xFF;         // Control high byte
-        bytes[3] = ((frame->vs & 0x7F) << 1) | (frame->frmr_cr ? 0x01 : 0);  // N(s) and CR
-        bytes[4] = (frame->vr & 0x7F) << 1;                   // N(r)
-        bytes[5] = (frame->w ? 0x01 : 0) | (frame->x ? 0x02 : 0) | (frame->y ? 0x04 : 0) | (frame->z ? 0x08 : 0);     // Flags
+        bytes[1] = (uint8_t) (frame->frmr_control & 0xFFu);                // Control low byte
+        bytes[2] = (uint8_t) ((frame->frmr_control >> 8) & 0xFFu);         // Control high byte
+        // explicit uint8_t cast on int fields vs/vr before left-shift prevents signed-int UB
+        // and ensures no bits above the 7-bit modulo-128 sequence range bleed into the control byte
+        bytes[3] = (uint8_t) (((uint8_t) (frame->vs & 0x7Fu) << 1u) | (frame->frmr_cr ? 0x01u : 0u));  // N(S) and CR
+        bytes[4] = (uint8_t) ((uint8_t) (frame->vr & 0x7Fu) << 1u);        // N(R)
+        bytes[5] = (uint8_t) ((frame->w ? 0x01u : 0u) | (frame->x ? 0x02u : 0u) | (frame->y ? 0x04u : 0u) | (frame->z ? 0x08u : 0u));  // Flags
     } else {
         // Encode 3-byte data field
-        bytes[1] = frame->frmr_control & 0xFF;                // Control byte
-        bytes[2] = ((frame->vr & 0x07) << 5) | (frame->frmr_cr ? 0x10 : 0) | ((frame->vs & 0x07) << 1);                 // V(r), CR, V(s)
-        bytes[3] = (frame->w ? 0x01 : 0) | (frame->x ? 0x02 : 0) | (frame->y ? 0x04 : 0) | (frame->z ? 0x08 : 0);     // Flags
+        bytes[1] = (uint8_t) (frame->frmr_control & 0xFFu);                // Control byte
+        // explicit uint8_t cast on int fields vr/vs before shift prevents signed-int UB
+        // and clamps values to the 3-bit modulo-8 sequence range before packing
+        bytes[2] = (uint8_t) (((uint8_t) (frame->vr & 0x07u) << 5u) | (frame->frmr_cr ? 0x10u : 0u) | ((uint8_t) (frame->vs & 0x07u) << 1u));  // V(R), CR, V(S)
+        bytes[3] = (uint8_t) ((frame->w ? 0x01u : 0u) | (frame->x ? 0x02u : 0u) | (frame->y ? 0x04u : 0u) | (frame->z ? 0x08u : 0u));  // Flags
     }
 
     return bytes;
@@ -1361,15 +1367,28 @@ uint8_t* ax25_information_frame_encode(const ax25_information_frame_t *frame, si
     }
 
     if (is_16bit) {
-        uint16_t control = ((frame->nr << 9) & 0xFE00) | (frame->pf ? POLL_FINAL_16BIT : 0) | ((frame->ns << 1) & 0x01FE) | CONTROL_I_VAL;
-        bytes[0] = control & 0xFF;
-        bytes[1] = (control >> 8) & 0xFF;
+        // mask ns and nr to 7-bit modulo-128 range (0-127) before shifting.
+        // frame->ns and frame->nr are 'int'; without the pre-shift mask a caller that passes
+        // ns=128 or nr=128 would produce (128<<9)=65536 which, after & 0xFE00, yields 0 --
+        // an incorrect N(S)/N(R) that Linux ax25_validate_nr() rejects with FRMR Z / DM.
+        uint16_t control = (((uint16_t) ((unsigned int) frame->nr & 0x7Fu) << 9u) & 0xFE00u) | (frame->pf ? POLL_FINAL_16BIT : 0u)
+                | (((uint16_t) ((unsigned int) frame->ns & 0x7Fu) << 1u) & 0x01FEu) | CONTROL_I_VAL;
+        bytes[0] = (uint8_t) (control & 0xFFu);
+        bytes[1] = (uint8_t) ((control >> 8u) & 0xFFu);
         bytes[2] = frame->pid;
-        memcpy(bytes + 3, frame->payload, frame->payload_len);
+        // guard memcpy against NULL payload pointer
+        if (frame->payload && frame->payload_len > 0u)
+            memcpy(bytes + 3, frame->payload, frame->payload_len);
     } else {
-        bytes[0] = ((frame->nr << 5) & 0xE0) | (frame->pf ? POLL_FINAL_8BIT : 0) | ((frame->ns << 1) & 0x0E) | CONTROL_I_VAL;
+        // mask ns and nr to 3-bit modulo-8 range (0-7) before shifting.
+        // Same reasoning as the mod-128 path above: prevents int overflow from corrupting
+        // the control byte when callers do not enforce the sequence number range themselves.
+        bytes[0] = (uint8_t) ((((uint8_t) ((unsigned int) frame->nr & 0x07u)) << 5u) & 0xE0u) | (uint8_t) (frame->pf ? POLL_FINAL_8BIT : 0u)
+                | (uint8_t) ((((uint8_t) ((unsigned int) frame->ns & 0x07u)) << 1u) & 0x0Eu) | CONTROL_I_VAL;
         bytes[1] = frame->pid;
-        memcpy(bytes + 2, frame->payload, frame->payload_len);
+        // guard memcpy against NULL payload pointer
+        if (frame->payload && frame->payload_len > 0u)
+            memcpy(bytes + 2, frame->payload, frame->payload_len);
     }
 
     return bytes;
@@ -1392,13 +1411,17 @@ uint8_t* ax25_supervisory_frame_encode(const ax25_supervisory_frame_t *frame, si
     uint8_t code_bits = (frame->code << 2) & 0x0C;
 
     if (is_16bit) {
-        // Modulo-128: N(R) in bits 9-15, code in bits 2-3, P/F in bit 8
-        uint16_t control = ((frame->nr << 9) & 0xFE00) | (frame->pf ? POLL_FINAL_16BIT : 0) | code_bits | CONTROL_S_VAL;
-        bytes[0] = control & 0xFF;
-        bytes[1] = (control >> 8) & 0xFF;
+        // mask nr to 7-bit modulo-128 range before shifting.
+        // frame->nr is 'int'; without the pre-shift mask a stale or out-of-range value
+        // produces (nr<<9) overflow that Linux ax25_validate_nr() rejects as FRMR Z.
+        uint16_t control = (((uint16_t) ((unsigned int) frame->nr & 0x7Fu) << 9u) & 0xFE00u) | (uint16_t) (frame->pf ? POLL_FINAL_16BIT : 0u)
+                | (uint16_t) code_bits | CONTROL_S_VAL;
+        bytes[0] = (uint8_t) (control & 0xFFu);
+        bytes[1] = (uint8_t) ((control >> 8u) & 0xFFu);
     } else {
-        // Modulo-8: N(R) in bits 5-7, code in bits 2-3, P/F in bit 4
-        bytes[0] = ((frame->nr << 5) & 0xE0) | (frame->pf ? POLL_FINAL_8BIT : 0) | code_bits | CONTROL_S_VAL;
+        // mask nr to 3-bit modulo-8 range before shifting.
+        bytes[0] = (uint8_t) ((((uint8_t) ((unsigned int) frame->nr & 0x07u)) << 5u) & 0xE0u) | (uint8_t) (frame->pf ? POLL_FINAL_8BIT : 0u) | code_bits
+                | CONTROL_S_VAL;
     }
 
     return bytes;
@@ -2560,7 +2583,9 @@ uint8_t ax25_encode_frame_to_buf(const ax25_frame_t *frame, uint8_t *buf, size_t
                 return 2;
             const ax25_supervisory_frame_t *sf = (const ax25_supervisory_frame_t*) frame;
             uint8_t code_bits = (uint8_t) ((sf->code << 2) & 0x0Cu);
-            pbuf[0] = (uint8_t) (((sf->nr << 5) & 0xE0u) | (sf->pf ? POLL_FINAL_8BIT : 0u) | code_bits | CONTROL_S_VAL);
+            // mask nr to 3-bit range before shift -- mirrors ax25_supervisory_frame_encode fix
+            pbuf[0] = (uint8_t) ((((uint8_t) ((unsigned int) sf->nr & 0x07u)) << 5u) & 0xE0u) | (uint8_t) (sf->pf ? POLL_FINAL_8BIT : 0u) | code_bits
+                    | CONTROL_S_VAL;
             plen = 1u;
             break;
         }
@@ -2572,7 +2597,10 @@ uint8_t ax25_encode_frame_to_buf(const ax25_frame_t *frame, uint8_t *buf, size_t
                 return 2;
             const ax25_supervisory_frame_t *sf = (const ax25_supervisory_frame_t*) frame;
             uint8_t code_bits = (uint8_t) ((sf->code << 2) & 0x0Cu);
-            uint16_t ctrl = (uint16_t) (((sf->nr << 9) & 0xFE00u) | (sf->pf ? POLL_FINAL_16BIT : 0u) | code_bits | CONTROL_S_VAL);
+            // mask nr to 7-bit range before shift -- mirrors ax25_supervisory_frame_encode fix
+            uint16_t ctrl = (((uint16_t) ((unsigned int) sf->nr & 0x7Fu) << 9u) & 0xFE00u) | (uint16_t) (sf->pf ? POLL_FINAL_16BIT : 0u) | (uint16_t) code_bits
+                    | CONTROL_S_VAL;
+
             pbuf[0] = (uint8_t) (ctrl & 0xFFu);
             pbuf[1] = (uint8_t) ((ctrl >> 8) & 0xFFu);
             plen = 2u;

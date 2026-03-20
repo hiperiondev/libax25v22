@@ -172,7 +172,7 @@ uint8_t ax25_mux_classify_priority(const uint8_t *frame, size_t len) {
 
     uint8_t ctrl = frame[pos];
 
-    // start modified part: use canonical helpers for frame classification
+    // use canonical helpers for frame classification
     // Previous code used a hardcoded literal table with two bugs:
     //   1. 0xE1 was listed as "TEST rsp F=0" but is not a valid AX.25 frame;
     //      TEST P/F=0 = 0xE3, TEST P/F=1 = 0xE3|0x10 = 0xF3. The value 0xE1
@@ -203,7 +203,6 @@ uint8_t ax25_mux_classify_priority(const uint8_t *frame, size_t len) {
         // SABM, SABME, DISC, DM, UA, FRMR: urgent connection-control frames
         return AX25_MUX_PRI_URGENT;
     }
-    // end modified part: use canonical helpers for frame classification
 }
 
 void ax25_mux_transmit_adapter(void *user_data, uint8_t *frame, size_t len) {

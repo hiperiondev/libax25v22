@@ -70,7 +70,7 @@
 #define CONTROL_S_VAL   0x01 /**< Value indicating S-frame type (binary 01) */
 #define CONTROL_U_VAL   0x03 /**< Value indicating U-frame type (binary 11) */
 
-// start modified part: ax25_frame_class_t enum and canonical classification helpers
+// ax25_frame_class_t enum and canonical classification helpers
 // Canonical frame class mirroring the three categories used by Linux ax25_decode()
 // in net/ax25/ax25_in.c.  Distinct from ax25_frame_type_t which carries full
 // per-subtype resolution needed by the state machine.
@@ -85,45 +85,42 @@ typedef enum {
 // Priority: I first (bit 0 == 0), then S (bits[1:0]==01), then U (bits[1:0]==11).
 // This prevents UI (0x03, bits[1:0]==11) from ever being misidentified as an
 // I-frame because 0x03 & 0x01 == 1 (not 0).
-static inline ax25_frame_class_t ax25_frame_class(uint8_t ctrl)
-{
-    if ((ctrl & 0x01u) == 0x00u) return AX25_FRAME_CLASS_I;
-    if ((ctrl & 0x03u) == 0x01u) return AX25_FRAME_CLASS_S;
-    if ((ctrl & 0x03u) == 0x03u) return AX25_FRAME_CLASS_U;
-    return AX25_FRAME_CLASS_UNKNOWN; // unreachable: covers all 2-bit patterns
+static inline ax25_frame_class_t ax25_frame_class(uint8_t ctrl) {
+    if ((ctrl & 0x01u) == 0x00u)
+        return AX25_FRAME_CLASS_I;
+    if ((ctrl & 0x03u) == 0x01u)
+        return AX25_FRAME_CLASS_S;
+    if ((ctrl & 0x03u) == 0x03u)
+        return AX25_FRAME_CLASS_U;
+    return AX25_FRAME_CLASS_UNKNOWN;  // unreachable: covers all 2-bit patterns
 }
 
 // ax25_get_pf_mod8: extract P/F bit from a mod-8 (1-byte) control field.
 // P/F occupies bit 4 (0x10) for I, S, and U frames in 8-bit mode.
-static inline uint8_t ax25_get_pf_mod8(uint8_t ctrl)
-{
+static inline uint8_t ax25_get_pf_mod8(uint8_t ctrl) {
     return (ctrl >> 4u) & 0x01u;  // bit 4 per AX.25 v2.2 tables 4, 5, 6
 }
 
 // ax25_get_pf_mod128: extract P/F bit from the SECOND byte of a mod-128
 // (2-byte) control field (I or S frames only).
 // In the 16-bit control word the P/F bit is bit 8, i.e. bit 0 of byte 1.
-static inline uint8_t ax25_get_pf_mod128(uint8_t ctrl_byte1)
-{
+static inline uint8_t ax25_get_pf_mod128(uint8_t ctrl_byte1) {
     return ctrl_byte1 & 0x01u;  // bit 0 of second byte == bit 8 of 16-bit word
 }
 
 // ax25_u_subtype: return canonical U-frame opcode with P/F stripped.
 // Masking bit 4 removes the Poll/Final bit, giving the modifier that can be
 // compared directly against AX25_U_* constants (e.g. AX25_U_UI == 0x03).
-static inline uint8_t ax25_u_subtype(uint8_t ctrl)
-{
-    return (uint8_t)(ctrl & 0xEFu);  // clear bit 4 (P/F), keep modifier bits
+static inline uint8_t ax25_u_subtype(uint8_t ctrl) {
+    return (uint8_t) (ctrl & 0xEFu);  // clear bit 4 (P/F), keep modifier bits
 }
 
 // ax25_s_subtype: return supervisory sub-command code (0-3) from control byte.
 // Bits 3:2 carry the code (0=RR, 1=RNR, 2=REJ, 3=SREJ).
 // Bits 1:0 are always 0b01 for S-frames; P/F is bit 4.
-static inline uint8_t ax25_s_subtype(uint8_t ctrl)
-{
-    return (uint8_t)((ctrl >> 2u) & 0x03u);  // bits 3:2, normalised to 0-3
+static inline uint8_t ax25_s_subtype(uint8_t ctrl) {
+    return (uint8_t) ((ctrl >> 2u) & 0x03u);  // bits 3:2, normalised to 0-3
 }
-// end modified part: ax25_frame_class_t enum and canonical classification helpers
 
 /*============================================================================*/
 /* Poll/Final Bit Positions                                                     */

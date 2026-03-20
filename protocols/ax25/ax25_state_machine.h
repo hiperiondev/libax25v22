@@ -740,12 +740,10 @@ typedef struct {
 
     /* SREJ frame buffering per Section 6.4.4.2 */
     uint8_t srej_buffer[AX25_MAX_QUEUE_SIZE][AX25_SREJ_BUFFER_SIZE];  // Buffered out-of-seq frames (was magic literal 256)
-    // start modified part
     // srej_buffer_len widened from uint8_t to uint16_t so a full-size N1=256 payload
     // (AX25_DEFAULT_N1) is stored without silent truncation to 255 bytes.
     // uint16_t covers [0, 65535], comfortably exceeding AX25_SREJ_BUFFER_SIZE (max 256).
     uint16_t srej_buffer_len[AX25_MAX_QUEUE_SIZE]; /**< Buffered frame lengths */
-    // end modified part
     uint8_t srej_buffer_ns[AX25_MAX_QUEUE_SIZE]; /**< Buffered frame N(S) values */
     uint8_t srej_buffer_pid[AX25_MAX_QUEUE_SIZE]; /**< Buffered frame PID values - required for correct DL-DATA indication on reorder */
     uint8_t srej_buffer_count; /**< Number of buffered frames */

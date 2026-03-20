@@ -353,7 +353,7 @@ static int test_rs(void) {
     {
         uint8_t block[IL2P_RS_PAY_MAX_DATA + IL2P_RS_PAY_PARITY];
         uint8_t orig[IL2P_RS_PAY_MAX_DATA];
-        for (int i = 0; i < IL2P_RS_PAY_MAX_DATA; i++)
+        for (unsigned int i = 0u; i < IL2P_RS_PAY_MAX_DATA; i++)
             orig[i] = (uint8_t) (i ^ 0x5A);
         memcpy(block, orig, IL2P_RS_PAY_MAX_DATA);
         bool enc = il2p_rs_encode(block, IL2P_RS_PAY_MAX_DATA, IL2P_RS_PAY_PARITY);

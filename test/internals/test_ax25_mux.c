@@ -292,9 +292,9 @@ static int test_mux_register_unregister(void) {
     init_connected_conn(&conn0, &h0, "N0CALL", 0, "W1AW  ", 0);
     init_connected_conn(&conn1, &h1, "N0CALL", 1, "W1AW  ", 0);
 
-    ax25_address_t la0 = { "N0CALL", 0, false, false };
-    ax25_address_t pa0 = { "W1AW  ", 0, false, false };
-    ax25_address_t la1 = { "N0CALL", 1, false, false };
+    ax25_address_t la0 = { .callsign = "N0CALL", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa0 = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t la1 = { .callsign = "N0CALL", .ssid = 1, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
 
     uint8_t id0 = 0xFF, id1 = 0xFF;
 
@@ -365,8 +365,8 @@ static int test_mux_slot_exhaustion(void) {
         char call[7];
         snprintf(call, sizeof(call), "N%dCALL", i);
         init_connected_conn(&conns[i], &hs[i], call, (uint8_t) i, "W1AW  ", 0);
-        ax25_address_t la = { { 0 }, (uint8_t) i, false, false };
-        ax25_address_t pa = { "W1AW  ", 0, false, false };
+        ax25_address_t la = { .callsign = {0}, .ssid = (int)((uint8_t) i), .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init // end modified part
+        ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
         memcpy(la.callsign, call, 6);
         uint8_t rc = ax25_mux_register_link(&mux, &conns[i], &la, &pa, &ids[i]);
         TEST_ASSERT(rc == 0, "fill slot succeeds", rc);DEBUG_VAR("Registered slot", ids[i]);
@@ -376,8 +376,8 @@ static int test_mux_slot_exhaustion(void) {
 
     /* 9th registration must fail with 'no free slots' */
     init_connected_conn(&conns[AX25_MUX_MAX_LINKS], &hs[AX25_MUX_MAX_LINKS], "XTRA  ", 0, "W1AW  ", 0);
-    ax25_address_t la_extra = { "XTRA  ", 0, false, false };
-    ax25_address_t pa_extra = { "W1AW  ", 0, false, false };
+    ax25_address_t la_extra = { .callsign = "XTRA  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa_extra = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
     uint8_t rc = ax25_mux_register_link(&mux, &conns[AX25_MUX_MAX_LINKS], &la_extra, &pa_extra, &ids[AX25_MUX_MAX_LINKS]);
     TEST_ASSERT(rc == 2, "9th registration returns 2 (no free slots)", rc);
     DEBUG_PRINT("Slot exhaustion: 9th register returned rc=%u (expected 2)", rc);
@@ -505,8 +505,8 @@ static int test_mux_lm_seize_tick(void) {
     memset(&h0, 0, sizeof(h0));
     init_connected_conn(&conn0, &h0, "N0CALL", 0, "W1AW  ", 0);
 
-    ax25_address_t la = { "N0CALL", 0, false, false };
-    ax25_address_t pa = { "W1AW  ", 0, false, false };
+    ax25_address_t la = { .callsign = "N0CALL", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
     uint8_t link_id = 0xFF;
 
     ax25_mux_register_link(&mux, &conn0, &la, &pa, &link_id);
@@ -581,10 +581,10 @@ static int test_mux_priority_ordering(void) {
     init_connected_conn(&conn1, &h1, "N0CAL1", 0, "W1AW  ", 0);
     init_connected_conn(&conn2, &h2, "N0CAL2", 0, "W1AW  ", 0);
 
-    ax25_address_t la0 = { "N0CAL0", 0, false, false };
-    ax25_address_t la1 = { "N0CAL1", 0, false, false };
-    ax25_address_t la2 = { "N0CAL2", 0, false, false };
-    ax25_address_t pa = { "W1AW  ", 0, false, false };
+    ax25_address_t la0 = { .callsign = "N0CAL0", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t la1 = { .callsign = "N0CAL1", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t la2 = { .callsign = "N0CAL2", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
 
     uint8_t id0, id1, id2;
     ax25_mux_register_link(&mux, &conn0, &la0, &pa, &id0);
@@ -663,8 +663,8 @@ static int test_mux_round_robin(void) {
         char call[7];
         snprintf(call, sizeof(call), "N0RR%02d", i);
         init_connected_conn(&conns[i], &hs[i], call, (uint8_t) i, "W1AW  ", 0);
-        ax25_address_t la = { { 0 }, (uint8_t) i, false, false };
-        ax25_address_t pa = { "W1AW  ", 0, false, false };
+        ax25_address_t la = { .callsign = {0}, .ssid = (int)((uint8_t) i), .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init // end modified part
+        ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
         memcpy(la.callsign, call, 6);
         ax25_mux_register_link(&mux, &conns[i], &la, &pa, &ids[i]);
         ax25_mux_set_lm_seize_confirm(&mux, ids[i], lm_seize_confirm_cb, &hs[i]);
@@ -728,9 +728,9 @@ static int test_mux_get_next_to_serve(void) {
     init_connected_conn(&conn0, &h0, "N0GNS0", 0, "W1AW  ", 0);
     init_connected_conn(&conn1, &h1, "N0GNS1", 0, "W1AW  ", 0);
 
-    ax25_address_t la0 = { "N0GNS0", 0, false, false };
-    ax25_address_t la1 = { "N0GNS1", 0, false, false };
-    ax25_address_t pa = { "W1AW  ", 0, false, false };
+    ax25_address_t la0 = { .callsign = "N0GNS0", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t la1 = { .callsign = "N0GNS1", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
 
     uint8_t id0, id1;
     ax25_mux_register_link(&mux, &conn0, &la0, &pa, &id0);
@@ -788,8 +788,8 @@ static int test_mux_seize_validation(void) {
     memset(&h, 0, sizeof(h));
     init_connected_conn(&conn, &h, "N0VAL ", 0, "W1AW  ", 0);
 
-    ax25_address_t la = { "N0VAL ", 0, false, false };
-    ax25_address_t pa = { "W1AW  ", 0, false, false };
+    ax25_address_t la = { .callsign = "N0VAL ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
     uint8_t link_id;
     ax25_mux_register_link(&mux, &conn, &la, &pa, &link_id);
 
@@ -851,9 +851,9 @@ static int test_mux_burst_on_release(void) {
     init_connected_conn(&conn0, &h0, "N0BST0", 0, "W1AW  ", 0);
     init_connected_conn(&conn1, &h1, "N0BST1", 0, "W1AW  ", 0);
 
-    ax25_address_t la0 = { "N0BST0", 0, false, false };
-    ax25_address_t la1 = { "N0BST1", 0, false, false };
-    ax25_address_t pa = { "W1AW  ", 0, false, false };
+    ax25_address_t la0 = { .callsign = "N0BST0", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t la1 = { .callsign = "N0BST1", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
 
     uint8_t id0, id1;
     ax25_mux_register_link(&mux, &conn0, &la0, &pa, &id0);
@@ -918,9 +918,9 @@ static int test_mux_receive_point_to_point(void) {
     init_connected_conn(&connA, &hA, "N0AAA ", 0, "W1AW  ", 0);
     init_connected_conn(&connB, &hB, "N0BBB ", 0, "W1AW  ", 0);
 
-    ax25_address_t laA = { "N0AAA ", 0, false, false };
-    ax25_address_t laB = { "N0BBB ", 0, false, false };
-    ax25_address_t pa = { "W1AW  ", 0, false, false };
+    ax25_address_t laA = { .callsign = "N0AAA ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t laB = { .callsign = "N0BBB ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
 
     uint8_t idA, idB;
     ax25_mux_register_link(&mux, &connA, &laA, &pa, &idA);
@@ -989,10 +989,10 @@ static int test_mux_ui_broadcast(void) {
     init_connected_conn(&conn1, &h1, "N0BC1 ", 0, "W1AW  ", 0);
     init_connected_conn(&conn2, &h2, "N0BC2 ", 0, "W1AW  ", 0);
 
-    ax25_address_t la0 = { "N0BC0 ", 0, false, false };
-    ax25_address_t la1 = { "N0BC1 ", 0, false, false };
-    ax25_address_t la2 = { "N0BC2 ", 0, false, false };
-    ax25_address_t pa = { "W1AW  ", 0, false, false };
+    ax25_address_t la0 = { .callsign = "N0BC0 ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t la1 = { .callsign = "N0BC1 ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t la2 = { .callsign = "N0BC2 ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
 
     uint8_t id0, id1, id2;
     ax25_mux_register_link(&mux, &conn0, &la0, &pa, &id0);
@@ -1071,8 +1071,8 @@ static int test_mux_transmit_adapter(void) {
     memset(&h, 0, sizeof(h));
     init_connected_conn(&conn, &h, "N0ADP ", 0, "W1AW  ", 0);
 
-    ax25_address_t la = { "N0ADP ", 0, false, false };
-    ax25_address_t pa = { "W1AW  ", 0, false, false };
+    ax25_address_t la = { .callsign = "N0ADP ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
     uint8_t link_id;
     ax25_mux_register_link(&mux, &conn, &la, &pa, &link_id);
     ax25_mux_set_lm_seize_confirm(&mux, link_id, lm_seize_confirm_cb, &h);
@@ -1136,8 +1136,8 @@ static int test_mux_release_safety(void) {
     mux_link_harness_t h;
     memset(&h, 0, sizeof(h));
     init_connected_conn(&conn, &h, "N0REL ", 0, "W1AW  ", 0);
-    ax25_address_t la = { "N0REL ", 0, false, false };
-    ax25_address_t pa = { "W1AW  ", 0, false, false };
+    ax25_address_t la = { .callsign = "N0REL ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
     uint8_t link_id;
     ax25_mux_register_link(&mux, &conn, &la, &pa, &link_id);
 
@@ -1165,8 +1165,8 @@ static int test_mux_seized_stable(void) {
     memset(&h, 0, sizeof(h));
     init_connected_conn(&conn, &h, "N0SZD ", 0, "W1AW  ", 0);
 
-    ax25_address_t la = { "N0SZD ", 0, false, false };
-    ax25_address_t pa = { "W1AW  ", 0, false, false };
+    ax25_address_t la = { .callsign = "N0SZD ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
     uint8_t link_id;
     ax25_mux_register_link(&mux, &conn, &la, &pa, &link_id);
     ax25_mux_set_lm_seize_confirm(&mux, link_id, lm_seize_confirm_cb, &h);
@@ -1241,8 +1241,8 @@ static int test_mux_set_confirm_safety(void) {
     mux_link_harness_t h;
     memset(&h, 0, sizeof(h));
     init_connected_conn(&conn, &h, "N0CFM ", 0, "W1AW  ", 0);
-    ax25_address_t la = { "N0CFM ", 0, false, false };
-    ax25_address_t pa = { "W1AW  ", 0, false, false };
+    ax25_address_t la = { .callsign = "N0CFM ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
     uint8_t link_id;
     ax25_mux_register_link(&mux, &conn, &la, &pa, &link_id);
 
@@ -1282,9 +1282,9 @@ static int test_mux_full_integration(void) {
     memset(&hB, 0, sizeof(hB));
     init_connected_conn(&connB, &hB, "N0FIB ", 0, "W1AW  ", 0);
 
-    ax25_address_t laA = { "N0FIA ", 0, false, false };
-    ax25_address_t laB = { "N0FIB ", 0, false, false };
-    ax25_address_t pa = { "W1AW  ", 0, false, false };
+    ax25_address_t laA = { .callsign = "N0FIA ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t laB = { .callsign = "N0FIB ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
 
     uint8_t idA, idB;
     ax25_mux_register_link(&mux, &connA, &laA, &pa, &idA);
@@ -1363,8 +1363,8 @@ static int test_mux_broadcast_identifiers(void) {
     memset(&h, 0, sizeof(h));
     init_connected_conn(&conn, &h, "N0BCT ", 0, "W1AW  ", 0);
 
-    ax25_address_t la = { "N0BCT ", 0, false, false };
-    ax25_address_t pa = { "W1AW  ", 0, false, false };
+    ax25_address_t la = { .callsign = "N0BCT ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
     uint8_t link_id;
     ax25_mux_register_link(&mux, &conn, &la, &pa, &link_id);
 
@@ -1407,8 +1407,8 @@ static int test_mux_no_confirm_without_frame(void) {
     memset(&h, 0, sizeof(h));
     init_connected_conn(&conn, &h, "N0NCF ", 0, "W1AW  ", 0);
 
-    ax25_address_t la = { "N0NCF ", 0, false, false };
-    ax25_address_t pa = { "W1AW  ", 0, false, false };
+    ax25_address_t la = { .callsign = "N0NCF ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
+    ax25_address_t pa = { .callsign = "W1AW  ", .ssid = 0, .ch = false, .res0 = true, .res1 = true, .mod8_legacy = true, .extension = false }; // start modified part: complete designated init (res0=true per AX.25 spec §3.12.2) // end modified part
     uint8_t link_id;
     ax25_mux_register_link(&mux, &conn, &la, &pa, &link_id);
     ax25_mux_set_lm_seize_confirm(&mux, link_id, lm_seize_confirm_cb, &h);

@@ -17559,7 +17559,6 @@ static int sec_y_fx25_fec(void) {
             TEST_ASSERT(fx25_len > 0, "Y.18.a Encode small payload with Tag_04", fx25_len);
 
             if (fx25_len > 0) {
-                // start modified part
                 // Codeblock at fx25_frame[4+8=12].
                 // Layout: [0..9]=raw data [10..31]=0x7E pad (FX.25 spec §4.3)
                 //          [32..47]=RS parity
@@ -17578,7 +17577,6 @@ static int sec_y_fx25_fec(void) {
                         break;
                     }
                 TEST_ASSERT(pad_ok, "Y.18.d Pad bytes [10..31] are all 0x7E (FX.25 spec §4.3, fx25.c memset)", pad_ok);
-                // end modified part
                 DEBUG_PRINT("Y.18 Pad verification: data[0]=%02X data[9]=%02X pad[10]=%02X", fx25_frame[cb], fx25_frame[cb+9], fx25_frame[cb+10]);
             }
         } else {
