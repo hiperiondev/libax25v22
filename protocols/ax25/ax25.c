@@ -1008,7 +1008,12 @@ uint8_t* ax25_raw_frame_encode(const ax25_raw_frame_t *frame, size_t *len, uint8
         return NULL;
     }
     bytes[0] = frame->control;
-    memcpy(bytes + 1, frame->payload, frame->payload_len);
+    // start modified part
+    // guard memcpy against NULL payload (payload_len may be 0 for control-only raw
+    // frames; memcpy with a NULL source is UB even when n==0 per C11 s7.1.4 p1)
+    if (frame->payload && frame->payload_len > 0u)
+        memcpy(bytes + 1, frame->payload, frame->payload_len);
+    // end modified part
     return bytes;
 }
 
@@ -1823,7 +1828,13 @@ uint8_t* ax25_test_frame_encode(const ax25_test_frame_t *frame, size_t *len, uin
     }
 
     bytes[0] = frame->base.modifier | (frame->base.pf ? POLL_FINAL_8BIT : 0);
-    memcpy(bytes + 1, frame->payload, frame->payload_len);
+    // start modified part
+    // guard memcpy against NULL payload -- mirrors the guard already present in
+    // ax25_unnumbered_information_frame_encode() and ax25_information_frame_encode().
+    // memcpy(dst, NULL, 0) is UB in C11 s7.1.4 p1 even when count is zero.
+    if (frame->payload && frame->payload_len > 0u)
+        memcpy(bytes + 1, frame->payload, frame->payload_len);
+    // end modified part
 
     return bytes;
 }

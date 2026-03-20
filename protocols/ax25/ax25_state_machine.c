@@ -731,14 +731,17 @@ static void handle_test_frame(ax25_connection_t *conn, ax25_test_frame_t *test, 
         size_t len;
         uint8_t err;
         uint8_t *encoded = ax25_test_frame_encode(&response, &len, &err);
-        if (encoded && conn->callbacks.transmit) {
-            conn->callbacks.transmit(conn->user_data, encoded, len);
-
-            if (encoded != NULL) {
-                hal_mem_free(encoded);
-                encoded = NULL;
-            }
+        // start modified part
+        // Always free encoded regardless of transmit callback presence.
+        // The original code leaked the allocation when callbacks.transmit was NULL.
+        // The inner "if (encoded != NULL)" was a tautology: encoded is guaranteed
+        // non-NULL inside the "if (encoded && ...)" block -- removed for clarity.
+        if (encoded) {
+            if (conn->callbacks.transmit)
+                conn->callbacks.transmit(conn->user_data, encoded, len);
+            hal_mem_free(encoded);
         }
+        // end modified part
     } else {
         // Received TEST response - update statistics
         if (conn->test_stats.last_test_tick != 0) {

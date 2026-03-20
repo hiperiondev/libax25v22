@@ -1544,17 +1544,22 @@ static int sec_a_libax25_address(void) {
     }
 
     // A.2: ax25_ntoa round-trip
+    // start modified part
     {
         char ntoa_copy[MAX_CALLSIGN_LEN];
-        ax25_aton_entry("N0CALL-5", (char*) &addr);
-        result = ax25_ntoa(&addr);
-        TEST_ASSERT(result != NULL, "A.2 ax25_ntoa returns non-NULL", 0);
-        if (result) {
-            safe_strlcpy(ntoa_copy, result, sizeof(ntoa_copy));
+        ax25_aton_entry("N0CALL-5", (char *)&addr);
+        // IMPORTANT: ax25_ntoa() returns a pointer to a static internal buffer.
+        // Capture it immediately into a local const pointer, then copy before any
+        // further libax25 call — a subsequent call (including DEBUG_PRINT callbacks
+        // that invoke libax25) can silently overwrite the shared static buffer.
+        const char *ntoa_raw = ax25_ntoa(&addr);
+        TEST_ASSERT(ntoa_raw != NULL, "A.2 ax25_ntoa returns non-NULL", 0);
+        if (ntoa_raw) {
+            safe_strlcpy(ntoa_copy, ntoa_raw, sizeof(ntoa_copy));
             TEST_ASSERT(strcmp(ntoa_copy, "N0CALL-5") == 0, "A.2 ax25_ntoa N0CALL-5 round-trip", 0);
-            DEBUG_PRINT("ax25_ntoa result: %s", ntoa_copy);
         }
     }
+    // end modified part
 
     // A.3: ax25_cmp identical
     {
@@ -1597,40 +1602,53 @@ static int sec_a_libax25_address(void) {
     //
     // Problem A-1 (audit): Some old libax25 versions (Debian Buster era) accept SSID-16
     // with silent truncation to SSID-0 because (16 & 0x0F) << 1 == 0.  The previous test
-    // only printed a warning and asserted 0 only if rc==0, which is correct, but the
-    // assertion message was misleading.  The new logic is:
-    //   • If libax25 rejects  (rc != 0) → PASS.
-    //   • If libax25 accepts  (rc == 0):
-    //       – Extract the encoded SSID nibble.
-    //       – If nibble == 0 the library silently truncated 16 → 0: FAIL unconditionally
-    //         because callers relying on a 4-bit SSID field will silently corrupt SSID.
-    //       – If nibble != 0 (impossible by arithmetic but handled defensively): FAIL too,
-    //         because SSID-16 is outside the 0–15 range mandated by AX.25 v2.2 §3.12.1.
+    // had an asymmetric assertion structure: in the rejection branch TEST_ASSERT was called
+    // with a condition that is trivially true (rc16 != 0 is the branch entry condition),
+    // producing misleading output.  In the acceptance branch the second TEST_ASSERT always
+    // fired on rc16 != 0 which is always false there, making the dual-failure path unclear.
+    // The corrected logic is:
+    //   If libax25 rejects (rc16 != 0): PASS via unconditional TEST_ASSERT(1,...).
+    //   If libax25 accepts (rc16 == 0):
+    //     Extract the encoded SSID nibble from the 7th byte (index 6).
+    //     If nibble == 0 the library silently truncated 16 to 0: FAIL.
+    //     If nibble != 0 (impossible by arithmetic but handled defensively): also FAIL
+    //       because SSID-16 is outside the 0-15 range mandated by AX.25 v2.2 s3.12.1.
     //
     // Cross-stack relevance: Linux kernel ax25_setcall() rejects SSID > 15 with EINVAL.
-    // libax25v22 address encoder also enforces 0–15.  Both stacks agree: SSID-16 is invalid.
+    // libax25v22 address encoder also enforces 0-15.  Both stacks agree: SSID-16 is invalid.
+    // start modified part
     {
         ax25_address ssid16_addr;
         memset(&ssid16_addr, 0, sizeof(ssid16_addr));
-        int rc16 = ax25_aton_entry("W1AW-16", (char*) &ssid16_addr);
-        if (rc16 == 0) {
-            /* libax25 accepted — inspect the encoded SSID nibble */
-            uint8_t ssid16_byte = (uint8_t) ssid16_addr.ax25_call[6];
-            uint8_t ssid16_nibble = (ssid16_byte >> 1) & 0x0F;
-            DEBUG_PRINT("A.8 WARN: ax25_aton_entry accepted SSID-16 " "(raw byte=0x%02X encoded_ssid=%u)", ssid16_byte, ssid16_nibble);
-            /* Nibble == 0 → silent truncation 16 → 0.  Nibble != 0 is impossible
-             * (16 mod 16 == 0) but we assert both paths to be defensive. */
-            TEST_ASSERT(ssid16_nibble != 0, "A.8 SSID-16 not silently truncated to SSID-0 by libax25 "
-                    "(truncation corrupts caller's address silently)", (int ) ssid16_nibble);
-            /* Even if nibble were non-zero, accepting SSID-16 is still wrong */
-            TEST_ASSERT(rc16 != 0, "A.8 ax25_aton_entry must reject out-of-range SSID 16 "
-                    "(AX.25 v2.2 §3.12.1: SSID range is 0–15)", rc16);
-        } else {
-            /* Correct behaviour: rejection */
-            TEST_ASSERT(rc16 != 0, "A.8 ax25_aton_entry correctly rejects SSID 16", rc16);
+        int rc16 = ax25_aton_entry("W1AW-16", (char *)&ssid16_addr);
+        if (rc16 != 0) {
+            // Correct behaviour: libax25 rejected SSID-16 as required by AX.25 v2.2 s3.12.1.
+            // TEST_ASSERT(1,...) is an explicit unconditional PASS — avoids the
+            // asymmetry where the old code asserted (rc16 != 0) inside the rc16!=0 branch,
+            // which is a tautology and produces a misleading assertion value display.
+            TEST_ASSERT(1, "A.8 ax25_aton_entry correctly rejects SSID-16 (AX.25 v2.2 s3.12.1)", 1);
             DEBUG_PRINT("A.8 PASS: ax25_aton_entry rejected SSID-16 (rc=%d)", rc16);
+        } else {
+            // libax25 accepted SSID-16 — inspect the encoded SSID nibble in byte index 6.
+            uint8_t raw_byte = (uint8_t)ssid16_addr.ax25_call[6];
+            uint8_t nibble   = (raw_byte >> 1) & 0x0Fu;
+            DEBUG_PRINT("A.8 WARN: libax25 accepted SSID-16: raw_byte=0x%02X nibble=%u", raw_byte, nibble);
+            // nibble == 0 means silent truncation 16->0. Corrupts callers silently.
+            // This is the primary failure path for pre-2018 Debian Buster libax25 builds.
+            TEST_ASSERT(nibble != 0,
+                    "A.8 FAIL: libax25 accepted SSID-16 and silently truncated to SSID-0 "
+                    "(AX.25 v2.2 s3.12.1 mandates 0-15). Upgrade libax25 (>= 0.0.12-rc4).",
+                    (int)nibble);
+            // nibble != 0 is arithmetically impossible (16 mod 16 == 0) but if it
+            // somehow occurs the library still accepted an out-of-range SSID: FAIL.
+            if (nibble != 0)
+                TEST_ASSERT(0,
+                        "A.8 FAIL: libax25 accepted SSID-16 without truncation "
+                        "(still violates AX.25 v2.2 s3.12.1 SSID range 0-15).",
+                        (int)nibble);
         }
     }
+    // end modified part
 
     // A.9: Short callsign
     {
