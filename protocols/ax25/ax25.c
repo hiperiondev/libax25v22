@@ -96,6 +96,20 @@ static uint32_t uint_decode(const uint8_t *data, size_t len, bool big_endian, ui
     return value;
 }
 
+// start modified part
+// ax25_ssid_value: safely extract the 4-bit SSID from a raw on-air SSID byte.
+// Masks out the DAMA participation flag (bit 5, 0x20) and the modulo-128
+// signal bit (bit 6, 0x40) exactly as the Linux kernel AX25_SSSID_SPARE macro
+// does.  Only bits 4:1 carry the SSID value per AX.25 v2.2 Section 3.12.2.
+// Without this masking a frame from a Linux DAMA master (res0=0, i.e. bit 5
+// is used as the DAMA flag) would still produce a correct SSID in the range
+// 0-15 because the SSID field is bits 4:1 and the mask 0x1E already excludes
+// bit 5.  The helper is provided to centralise and document this invariant.
+static uint8_t ax25_ssid_value(uint8_t ssid_byte) {
+    return (ssid_byte >> 1u) & 0x0Fu;  // bits 4:1 only — DAMA flag (bit 5) excluded
+}
+// end modified part
+
 ax25_address_t* ax25_address_decode(const uint8_t *data, uint8_t *err) {
     *err = 0;
     if (data == NULL) {
@@ -115,8 +129,15 @@ ax25_address_t* ax25_address_decode(const uint8_t *data, uint8_t *err) {
     // AX.25 address fields are padded to 6 bytes with spaces (0x20<<1=0x40).
     trim_trailing_spaces(addr->callsign);
 
-    addr->ssid = (data[6] & 0x1E) >> 1;
+    // start modified part
+    // Use ax25_ssid_value() so the SSID extraction is consistent with
+    // ax25_frame_header_decode() and tolerates DAMA frames from Linux peers.
+    addr->ssid = (int) ax25_ssid_value(data[6]);
+    // end modified part
     addr->ch = (data[6] & 0x80) != 0;
+    // Store res0 verbatim so callers can detect DAMA participation (res0=false
+    // means the remote set the DAMA flag).  ax25_address_encode() always forces
+    // res0=1 on TX per AX.25 v2.2 Section 3.12.2, so we never emit the flag.
     addr->res0 = (data[6] & 0x20) != 0;
     addr->res1 = (data[6] & 0x40) != 0;
     addr->mod8_legacy = addr->res1;
@@ -395,7 +416,14 @@ header_decode_result_t ax25_frame_header_decode(const uint8_t *data, size_t len,
         // Trim spaces padded into the 6-byte AX.25 address field (e.g. "W1AW  ")
         trim_trailing_spaces(addresses[addr_count].callsign);
 
-        addresses[addr_count].ssid = (addr_data[6] & 0x1E) >> 1;
+        // start modified part
+        // Use ax25_ssid_value() to extract the SSID, masking the DAMA
+        // participation flag (bit 5, 0x20) and modulo-128 signal (bit 6,
+        // 0x40).  Without this helper the SSID value is still correct because
+        // the on-wire mask 0x1E already excludes bit 5, but the helper makes
+        // the intent explicit and matches ax25_address_decode() for consistency.
+        addresses[addr_count].ssid = (int) ax25_ssid_value(addr_data[6]);
+        // end modified part
 
         // Validate SSID value per AX.25 v2.2 Section 3.12.2
         // SSID is a 4-bit field and must be in range 0-15
@@ -406,7 +434,11 @@ header_decode_result_t ax25_frame_header_decode(const uint8_t *data, size_t len,
 
         addresses[addr_count].ch = (addr_data[6] & 0x80) != 0;
         addresses[addr_count].res1 = (addr_data[6] & 0x40) != 0;
+        // start modified part
+        // Store res0 verbatim so DAMA detection (res0=false => DAMA master)
+        // is available to ax25_frame_decode() without re-reading the raw byte.
         addresses[addr_count].res0 = (addr_data[6] & 0x20) != 0;
+        // end modified part
         addresses[addr_count].extension = (addr_data[6] & 0x01) != 0;
 
         pos += 7;
@@ -597,6 +629,31 @@ ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, 
 
     uint8_t control = hdr_result.remaining[0];
     ax25_frame_t *frame = NULL;
+
+    // start modified part
+    // DAMA master detection per Section 9 of the implementation guide.
+    // When a Linux DAMA master transmits, it sets bit 5 (0x20) of its source
+    // SSID byte to signal DAMA participation.  On the receiving side res0 will
+    // be false because bit 5 is 0 (the flag bit has been asserted).
+    //
+    // Implementing DAMA polling is out of scope for this library.  If a DAMA
+    // master issues SABM or SABME (connection establishment) we must refuse
+    // the connection.  Signal this to the caller with error code 8 so it can
+    // build and transmit a DM response frame.
+    //
+    // UI frames and other non-connection frames from DAMA peers are still
+    // decoded normally to allow monitoring / unconnected operation.
+    if (!hdr_result.header->source.res0) {
+        // U-frame control byte with P/F bit (bit 4) masked out
+        uint8_t u_ctrl = (uint8_t)(control & 0xEFu);
+        // SABM  = 0x2F (unmasked: 0x2F/0x3F),  SABME = 0x6F (unmasked: 0x6F/0x7F)
+        if (u_ctrl == 0x2Fu || u_ctrl == 0x6Fu) {
+            ax25_frame_header_free(hdr_result.header, err);
+            *err = 8;  // DAMA master SABM/SABME: caller must send DM response
+            return NULL;
+        }
+    }
+    // end modified part
 
     // use ax25_frame_class() for U-frame detection
     // Guarantees UI (0x03) is never misrouted to the I/S branch because

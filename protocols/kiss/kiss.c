@@ -628,6 +628,21 @@ void ax25_kiss_receive_byte(ax25_kiss_ctx_t *ctx, uint8_t byte) {
                 unescaped = KISS_FEND;
             } else if (byte == KISS_TFESC) {
                 unescaped = KISS_FESC;
+            } else if (byte == KISS_FESC) {
+                // start modified part
+                // Double-FESC (0xDB 0xDB) is a protocol violation that signals
+                // an aborted transmission.  Per the KISS specification all data
+                // received up to and including the next FEND must be discarded.
+                // Transition to KISS_RX_ABORT and discard the partial frame.
+                ctx->rx_state = KISS_RX_ABORT;
+                ctx->rx_double_fesc = true;
+                ctx->rx_len = 0u;
+                ctx->rx_got_type = false;
+                ctx->rx_type = 0u;
+                ctx->stats.rx_aborted++;
+                ctx->stats.rx_dropped++;
+                // end modified part
+                return;
             } else {
                 // Per spec: any other byte after FESC is an error;
                 // no action taken, frame assembly continues unchanged.
@@ -652,6 +667,24 @@ void ax25_kiss_receive_byte(ax25_kiss_ctx_t *ctx, uint8_t byte) {
             }
         }
         break;
+
+        // start modified part
+        case KISS_RX_ABORT:
+            // Double-FESC abort state: discard all bytes until the next FEND.
+            // On FEND receipt the abort is cleared and normal reception resumes.
+            // This implements the KISS spec requirement: "the receiver must
+            // discard all data up to and including the following FEND".
+            if (byte == KISS_FEND) {
+                ctx->rx_double_fesc = false;
+                ctx->rx_len = 0u;
+                ctx->rx_got_type = false;
+                ctx->rx_type = 0u;
+                ctx->rx_at_frame_start = true;
+                ctx->rx_state = KISS_RX_IN_FRAME;
+            }
+            // All non-FEND bytes in ABORT state are silently discarded
+        break;
+        // end modified part
 
         default:
             // Should never reach here; reset to safe state
