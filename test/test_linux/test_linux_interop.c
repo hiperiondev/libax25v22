@@ -2501,31 +2501,52 @@ static int sec_c_frame_encode_decode(void) {
              *   The frame type bits are still I-frame (bit 0 = 0), so the
              *   decoder should produce type == AX25_FRAME_INFORMATION_16BIT.
              */
+            // start modified part — C-1 fix: payload-shift documentation assertion
             dec = ax25_frame_decode(enc, enc_len, MODULO128_TRUE, &err);
             TEST_ASSERT(dec != NULL, "C.8 Mod-mismatch decode: decoder returns non-NULL (no crash)", 0);
             if (dec) {
-                /*
-                 * Frame type must be either 8BIT or 16BIT I-frame — not
-                 * a supervisory or unnumbered type, which would indicate
-                 * the decoder misidentified the control byte completely.
-                 */
-                int c8_type_ok = (dec->type == AX25_FRAME_INFORMATION_8BIT || dec->type == AX25_FRAME_INFORMATION_16BIT);
-                TEST_ASSERT(c8_type_ok, "C.8 Mod-mismatch decode: frame type is 8bit or 16bit I-frame (not corrupt)", dec->type);
+                // Frame type must be either 8BIT or 16BIT I-frame — not
+                // a supervisory or unnumbered type, which would indicate
+                // the decoder misidentified the control byte completely.
+                int c8_type_ok = (dec->type == AX25_FRAME_INFORMATION_8BIT ||
+                                  dec->type == AX25_FRAME_INFORMATION_16BIT);
+                TEST_ASSERT(c8_type_ok,
+                    "C.8 Mod-mismatch decode: frame type is 8bit or 16bit I-frame (not corrupt)",
+                    dec->type);
 
-                DEBUG_PRINT("C.8 mod-mismatch decode: type=%d (expected %d for mod-8 I-frame; " "type=%d means misdecode as mod-128 — known incompatibility)",
+                DEBUG_PRINT("C.8 mod-mismatch decode: type=%d (expected %d for mod-8 I-frame; "
+                        "type=%d means misdecode as mod-128 — known incompatibility)",
                         dec->type, AX25_FRAME_INFORMATION_8BIT, AX25_FRAME_INFORMATION_16BIT);
 
                 if (dec->type == AX25_FRAME_INFORMATION_8BIT) {
                     printf("  NOTE C.8: mod-mismatch decode returned mod-8 type "
-                            "(decoder may be tolerant of 1-byte control with MODULO128_TRUE)\n");
+                           "(decoder may be tolerant of 1-byte control with MODULO128_TRUE)\n");
                 } else if (dec->type == AX25_FRAME_INFORMATION_16BIT) {
-                    ax25_information_frame_t *di = (ax25_information_frame_t*) dec;
+                    ax25_information_frame_t *di16 = (ax25_information_frame_t *)dec;
                     printf("  NOTE C.8: mod-mismatch misdecode as mod-128 I-frame "
-                            "N(S)=%d N(R)=%d — expected N(R)=120 (0xF0>>1) "
-                            "(known boundary-shift; Linux kernel would reject this frame)\n", di->ns, di->nr);
+                           "N(S)=%d N(R)=%d — expected N(R)=120 (0xF0>>1) "
+                           "(known boundary-shift; Linux kernel would reject this frame)\n",
+                           di16->ns, di16->nr);
+
+                    // C-1 fix: document and assert the payload-shift side-effect.
+                    // A mod-8 I-frame has a 1-byte control field.  The mod-128
+                    // decoder reads 2 bytes for the control field.  The second byte
+                    // consumed is the PID byte (0xF0).  The payload pointer therefore
+                    // advances one byte past the real user data — the first byte is
+                    // silently lost.  Callers MUST NOT mix modulo modes.
+                    // orig_payload[0] == 'I' (first byte of "I-FRAME DATA").
+                    const uint8_t *orig_payload = (const uint8_t *)"I-FRAME DATA";
+                    int payload_shifted = (di16->payload_len > 0 &&
+                                          di16->payload != NULL &&
+                                          di16->payload[0] != orig_payload[0]);
+                    TEST_ASSERT(payload_shifted,
+                        "C.8 Mismatch decode: payload IS shifted by 1 byte "
+                        "(PID consumed as ctrl2 — caller must not mix modulo modes)",
+                        payload_shifted);
                 }
                 ax25_frame_free(dec, &err);
             }
+            // end modified part — C-1 fix
             free(enc);
         }
     }
@@ -2714,6 +2735,90 @@ static int sec_c_frame_encode_decode(void) {
         }
     }
 
+    // start modified part — C.NEW: C-bit (command/response) cross-validation (C-2 fix)
+    // AX.25 v2.2 §3.12: Command frames  → dest C-bit=1, src C-bit=0
+    //                   Response frames → dest C-bit=0, src C-bit=1
+    // The Linux kernel ax25_addr_parse() derives command/response sense directly
+    // from these wire bits.  If they are wrong the kernel misclassifies every frame.
+    {
+        // --- C.NEW.1-3: Command UI frame ---
+        // hdr.cr == true, hdr.src_cr == false (set at shared-header init above)
+        // ax25_frame_header_encode maps (cr=1,src_cr=0) → dest.ch=1, src.ch=0
+        ax25_unnumbered_information_frame_t cmd_ui;
+        memset(&cmd_ui, 0, sizeof(cmd_ui));
+        cmd_ui.base.base.type   = AX25_FRAME_UNNUMBERED_INFORMATION;
+        cmd_ui.base.base.header = hdr;
+        cmd_ui.base.pf          = false;
+        cmd_ui.base.modifier    = AX25_U_UI;
+        cmd_ui.pid              = PID_NO_L3;
+        uint8_t cmd_pl[]        = "CMD";
+        cmd_ui.payload          = cmd_pl;
+        cmd_ui.payload_len      = 3;
+
+        size_t cmd_len = 0;
+        uint8_t *cmd_enc = NULL;
+        if (validate_frame_for_encoding((ax25_frame_t *)&cmd_ui, &err) == 0)
+            cmd_enc = ax25_frame_encode((ax25_frame_t *)&cmd_ui, &cmd_len, &err);
+        else
+            err = 1;
+
+        TEST_ASSERT(cmd_enc != NULL && cmd_len >= 14u && err == 0,
+            "C.NEW.1 Command UI frame encodes successfully (len>=14)", err);
+        if (cmd_enc) {
+            // enc[6]  = destination SSID byte; bit 7 is the C-bit
+            // enc[13] = source SSID byte;      bit 7 is the C-bit
+            // Command: dest C-bit must be 1 (AX.25 v2.2 §3.12)
+            TEST_ASSERT((cmd_enc[6]  & 0x80u) != 0,
+                "C.NEW.2 Command frame: destination C-bit == 1 (AX.25 §3.12)",
+                cmd_enc[6]);
+            // Command: source C-bit must be 0 (AX.25 v2.2 §3.12)
+            TEST_ASSERT((cmd_enc[13] & 0x80u) == 0,
+                "C.NEW.3 Command frame: source C-bit == 0 (AX.25 §3.12)",
+                cmd_enc[13]);
+            free(cmd_enc);
+        }
+
+        // --- C.NEW.4-6: Response UI frame ---
+        // cr=false, src_cr=true
+        // ax25_frame_header_encode maps (cr=0,src_cr=1) → dest.ch=0, src.ch=1
+        ax25_frame_header_t resp_hdr = hdr;
+        resp_hdr.cr     = false;
+        resp_hdr.src_cr = true;
+
+        ax25_unnumbered_information_frame_t resp_ui;
+        memset(&resp_ui, 0, sizeof(resp_ui));
+        resp_ui.base.base.type   = AX25_FRAME_UNNUMBERED_INFORMATION;
+        resp_ui.base.base.header = resp_hdr;
+        resp_ui.base.pf          = false;
+        resp_ui.base.modifier    = AX25_U_UI;
+        resp_ui.pid              = PID_NO_L3;
+        uint8_t resp_pl[]        = "RESP";
+        resp_ui.payload          = resp_pl;
+        resp_ui.payload_len      = 4;
+
+        size_t resp_len = 0;
+        uint8_t *resp_enc = NULL;
+        if (validate_frame_for_encoding((ax25_frame_t *)&resp_ui, &err) == 0)
+            resp_enc = ax25_frame_encode((ax25_frame_t *)&resp_ui, &resp_len, &err);
+        else
+            err = 1;
+
+        TEST_ASSERT(resp_enc != NULL && resp_len >= 14u && err == 0,
+            "C.NEW.4 Response UI frame encodes successfully (len>=14)", err);
+        if (resp_enc) {
+            // Response: dest C-bit must be 0 (AX.25 v2.2 §3.12)
+            TEST_ASSERT((resp_enc[6]  & 0x80u) == 0,
+                "C.NEW.5 Response frame: destination C-bit == 0 (AX.25 §3.12)",
+                resp_enc[6]);
+            // Response: source C-bit must be 1 (AX.25 v2.2 §3.12)
+            TEST_ASSERT((resp_enc[13] & 0x80u) != 0,
+                "C.NEW.6 Response frame: source C-bit == 1 (AX.25 §3.12)",
+                resp_enc[13]);
+            free(resp_enc);
+        }
+    }
+    // end modified part — C.NEW C-bit cross-validation
+
     printf("\n  SEC-C Frame Encode/Decode Summary:\n");
     printf("    C.2   UI frame encode: length >= 14+1+1+payload (§3.8 minimum)\n");
     printf("    C.3   SABM encode: length >= 15 bytes (14 addr + 1 ctrl)\n");
@@ -2725,14 +2830,14 @@ static int sec_c_frame_encode_decode(void) {
     printf("          (libax25v22 dest encoding matches Linux libax25 wire format)\n");
     printf("    C.8   Mod-mismatch: 8-bit I-frame decoded with MODULO128_TRUE\n");
     printf("          — decoder must not crash; type must be I-frame variant\n");
-    printf("          — misdecode diagnosed and printed (known incompatibility)\n");
-    printf("          (Problem C-1 fix: frame type assertion, not just NULL check)\n");
+    printf("          — misdecode + payload shift diagnosed (Problem C-1 fix)\n");
     printf("    C.9   Empty-payload UI frame: enc/dec succeeds, payload_len==0\n");
     printf("    C.10  256-byte payload: enc_len <= 274 (kernel AX25_MAX_PACKET_LEN)\n");
     printf("          payload bytes preserved in round-trip\n");
-    printf("          (Problem C-2 fix: AX25_MAX_PACKET_LEN cross-check added)\n");
     printf("    C.11  PID byte position: enc[14]==ctrl(0x03), enc[15]==PID\n");
     printf("          Verified for PID_NO_L3(0xF0), PID_IP(0xCC), PID_ARP(0xCD)\n");
+    printf("    C.NEW C-bit cross-validation: cmd dest=1/src=0, resp dest=0/src=1\n");
+    printf("          (Problem C-2 fix: AX.25 §3.12 wire-level C-bit encoding)\n");
 
     return 0;
 }
