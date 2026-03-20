@@ -42,7 +42,6 @@
 //   - Section: Error codes - NULL, no-serial, port range, frame size
 //   - Section: Kiss mode flag - transitions on enter/return
 //   - Section: Round-trip - encode then decode a frame
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1547,7 +1546,6 @@ static int test_kiss_rx_unknown_cmd(void) {
 // ==========================================================================
 // TEST 36: RX - double-FESC abort discards frame, next frame still received
 // ==========================================================================
-// start modified part
 static int test_kiss_rx_double_fesc_abort(void) {
     printf("\n--- test_kiss_rx_double_fesc_abort ---\n");
     printf("Verify double-FESC (0xDB 0xDB) aborts frame; next valid frame received\n");
@@ -1560,35 +1558,33 @@ static int test_kiss_rx_double_fesc_abort(void) {
     // Per KISS spec everything up to and including the closing FEND is discarded.
     // The second valid frame following it must still be received normally.
     uint8_t aborted[] = {
-        KISS_FEND, KISS_TYPE_BYTE(0, KISS_CMD_DATA), 0xAA, 0xBB,
-        KISS_FESC, KISS_FESC,  // double-FESC abort signal
-        0xCC, KISS_FEND        // remainder discarded
-    };
+    KISS_FEND, KISS_TYPE_BYTE(0, KISS_CMD_DATA), 0xAA, 0xBB,
+    KISS_FESC, KISS_FESC,  // double-FESC abort signal
+            0xCC, KISS_FEND        // remainder discarded
+            };
     uint8_t valid[] = {
-        KISS_FEND, KISS_TYPE_BYTE(0, KISS_CMD_DATA), 0x11, 0x22, KISS_FEND
-    };
+    KISS_FEND, KISS_TYPE_BYTE(0, KISS_CMD_DATA), 0x11, 0x22, KISS_FEND };
 
     inject(&ctx, aborted, sizeof(aborted));
 
     // Aborted frame must NOT reach on_frame
     TEST_ASSERT(h.rx_count == 0, "Aborted frame not delivered to on_frame", h.rx_count);
     // Statistics must record the abort and drop
-    TEST_ASSERT(ctx.stats.rx_aborted == 1, "rx_aborted counter incremented", (unsigned)ctx.stats.rx_aborted);
-    TEST_ASSERT(ctx.stats.rx_dropped >= 1, "rx_dropped counter incremented", (unsigned)ctx.stats.rx_dropped);
+    TEST_ASSERT(ctx.stats.rx_aborted == 1, "rx_aborted counter incremented", (unsigned )ctx.stats.rx_aborted);
+    TEST_ASSERT(ctx.stats.rx_dropped >= 1, "rx_dropped counter incremented", (unsigned )ctx.stats.rx_dropped);
 
     inject(&ctx, valid, sizeof(valid));
 
     // Valid frame after the abort must be received correctly
     TEST_ASSERT(h.rx_count == 1, "Valid frame after abort delivered to on_frame", h.rx_count);
     if (h.rx_count > 0) {
-        TEST_ASSERT(h.rx_lens[0] == 2, "Valid frame payload length = 2", (unsigned)h.rx_lens[0]);
+        TEST_ASSERT(h.rx_lens[0] == 2, "Valid frame payload length = 2", (unsigned )h.rx_lens[0]);
         TEST_ASSERT(h.rx_frames[0][0] == 0x11, "Valid frame byte[0] = 0x11", h.rx_frames[0][0]);
         TEST_ASSERT(h.rx_frames[0][1] == 0x22, "Valid frame byte[1] = 0x22", h.rx_frames[0][1]);
     }
 
     return 0;
 }
-// end modified part
 
 // ==========================================================================
 // Main entry point
@@ -1637,7 +1633,7 @@ int test_ax25_kiss_main(void) {
     result |= test_kiss_type_byte_macros();
     result |= test_kiss_sethardware_max();
     result |= test_kiss_rx_unknown_cmd();
-    result |= test_kiss_rx_double_fesc_abort(); // start modified part
+    result |= test_kiss_rx_double_fesc_abort();
 
     printf("\n==================================================================================\n");
     printf("KISS Tests Completed.  Total assertions: %u. %s\n", assert_count,

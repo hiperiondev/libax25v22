@@ -400,14 +400,13 @@ static inline int fx25_decode_compat(const uint8_t *in, size_t in_len, uint8_t *
 #define MAX_PORT_NAME_LEN     32
 #define MAX_UI_PAYLOAD_SIZE   256
 #define MAX_INFO_PAYLOAD_SIZE 256
-// start modified part
+
 // AX25_TIMER_TICK_MS: Linux kernel sysctl unit — each count = 100 ms (centiseconds).
 // AX25_LIB_TICK_MS:   libax25v22 internal timer tick — each tick = 10 ms.
 // These are DIFFERENT quanta; use AX25_LIB_TICK_MS when converting library
 // ax25_timers_t fields (t1, t2, t3) to milliseconds.
 #define AX25_TIMER_TICK_MS    100  // kernel /proc t1_timeout unit: 100 ms per count
 #define AX25_LIB_TICK_MS       10  // library ax25_timers_t unit:   10 ms per tick
-// end modified part
 
 // ---------------------------------------------------------------------------
 // Symmetric modulo guards (fix 2.1)
@@ -1424,7 +1423,6 @@ static int validate_connection_timers(const ax25_connection_t *conn, ax25_timer_
     config->t2_ticks = conn->timers.t2;
     config->t3_ticks = conn->timers.t3;
     config->n2_retries = conn->timers.n2;
-    // start modified part
     // Library ticks are 10 ms each (AX25_LIB_TICK_MS), NOT 100 ms.
     // Using AX25_TIMER_TICK_MS (100 ms) here produced t1_ms = 10x too large
     // (e.g. 1000 ticks * 100 = 100000 ms instead of 10000 ms), causing the
@@ -1432,7 +1430,6 @@ static int validate_connection_timers(const ax25_connection_t *conn, ax25_timer_
     config->t1_ms = config->t1_ticks * AX25_LIB_TICK_MS;
     config->t2_ms = config->t2_ticks * AX25_LIB_TICK_MS;
     config->t3_ms = config->t3_ticks * AX25_LIB_TICK_MS;
-    // end modified part
 
     if (config->t3_ticks > 0 && config->t1_ticks >= config->t3_ticks) {
         *err = 2;

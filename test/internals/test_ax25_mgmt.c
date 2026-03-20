@@ -67,9 +67,8 @@ static int test_default_parameters(void) {
     TEST_ASSERT(ctx.local_params.modulo128 == true, "Default modulo128 = true", 0);
     TEST_ASSERT(ctx.local_params.ifield_length == 256, "Default ifield_length = 256", 0);
     TEST_ASSERT(ctx.local_params.window_size == 32, "Default window_size = 32 (modulo-128 default per AX.25 v2.2 Table C1)", 0);
-    // start modified part: ack_timer default is 10000 ms per Linux AX25_DEF_T1
+    // ack_timer default is 10000 ms per Linux AX25_DEF_T1
     TEST_ASSERT(ctx.local_params.ack_timer == 10000, "Default ack_timer = 10000", 0);
-    // end modified part
     TEST_ASSERT(ctx.local_params.retries == 10, "Default retries = 10", 0);
 
     return 0;
@@ -83,7 +82,6 @@ static int test_start_negotiation(void) {
     ax25_mgmt_init(&ctx);
 
     uint8_t err = 0;
-    // start modified part
     // Allocate both before any TEST_ASSERT so both are freed on any early-return path.
     // ax25_mgmt_start_negotiation copies addresses by value; free immediately after.
     ax25_address_t *dest = ax25_address_from_string("DEST-0", &err);
@@ -93,7 +91,6 @@ static int test_start_negotiation(void) {
         free(src);
         TEST_ASSERT(false, "Parsed dest and src addresses", err);
     }
-    // end modified part
 
     // Modify some parameters to ensure XID frame is non-empty
     ctx.local_params.ifield_length = 512;
@@ -102,13 +99,11 @@ static int test_start_negotiation(void) {
 
     captured_len = 0;
     uint8_t res = ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
-    // start modified part
     // Free immediately — addresses copied into ctx by value above.
     free(dest);
     free(src);
     dest = NULL;
     src = NULL;
-    // end modified part
     TEST_ASSERT(res == 0, "ax25_mgmt_start_negotiation returns success", res);
     TEST_ASSERT(ctx.state == AX25_MGMT_AWAITING_RESPONSE, "State changed to AWAITING_RESPONSE", 0);
     TEST_ASSERT(captured_len > 20, "XID command frame transmitted (reasonable length)", 0);
@@ -130,7 +125,6 @@ static int test_negotiation_timeout(void) {
     ctx.on_mdl_error = test_on_mdl_error;
 
     uint8_t err = 0;
-    // start modified part
     // Allocate both addresses before any TEST_ASSERT so a single cleanup path covers both.
     // ax25_mgmt_start_negotiation copies addresses by value (ctx->peer = *dest),
     // so dest and src can be freed immediately after the call without affecting ctx.
@@ -141,25 +135,22 @@ static int test_negotiation_timeout(void) {
         free(src);
         TEST_ASSERT(false, "Parsed dest and src addresses", err);
     }
-    // end modified part
 
     captured_len = 0;
     uint8_t res = ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
-    // start modified part
     // Free immediately after start_negotiation — addresses are copied into ctx by value.
     // All subsequent TEST_ASSERT paths are now leak-free.
     free(dest);
     free(src);
     dest = NULL;
     src = NULL;
-    // end modified part
     TEST_ASSERT(res == 0, "ax25_mgmt_start_negotiation succeeded", res);
     TEST_ASSERT(ctx.state == AX25_MGMT_AWAITING_RESPONSE, "State is AWAITING_RESPONSE", 0);
 
     uint32_t current_tick = 0;
     ctx.timeout_tick = 0;
 
-    // start modified part: tick increments raised from 4000 to 11000 ms
+    // tick increments raised from 4000 to 11000 ms
     // tm201 = max(ack_timer=10000, 3000) = 10000; each step needs elapsed >= 10000
     current_tick += 11000;
     ax25_mgmt_tick(&ctx, current_tick);
@@ -180,7 +171,6 @@ static int test_negotiation_timeout(void) {
     current_tick += 11000;
     ax25_mgmt_tick(&ctx, current_tick);
     TEST_ASSERT(ctx.state == AX25_MGMT_IDLE, "State returned to IDLE after max retries", 0);
-    // end modified part
 
     return 0;
 }

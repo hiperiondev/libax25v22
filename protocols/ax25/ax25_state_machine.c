@@ -36,7 +36,6 @@
             (conn)->callbacks.on_dl_error((conn)->user_data, (code)); \
     } while (0)
 
-// start modified part
 // ax25_t1_backed_off_ms: compute backed-off T1 duration in milliseconds.
 // All arithmetic is 32-bit unsigned — no uint16_t overflow even with 32x exponential factor.
 // Max value: 2^5 * 3000 ticks * 10ms = 960,000ms, well within uint32_t range.
@@ -62,12 +61,10 @@ static uint32_t ax25_t1_backed_off_ms(uint16_t base_ticks, uint8_t backoff, uint
     // Convert 10ms ticks to milliseconds; 96000 * 10 = 960,000ms << UINT32_MAX
     return t * 10u;
 }
-// end modified part
 
 // Convenience wrappers so every call site uses the connection's cached
 // last_tick_10ms rather than carrying a raw tick through every helper.
 // TICKS_TO_MS converts 10ms ticks to milliseconds for ax25_timer_t.
-// start modified part
 // T1_START: arm T1 with backoff-adjusted duration returned as uint32_t milliseconds.
 // ax25_t1_backed_off_ms applies NONE/LINEAR/EXPONENTIAL per timers.backoff,
 // capped at 5 doublings to prevent overflow. retry_count is read at arm-time.
@@ -75,7 +72,6 @@ static uint32_t ax25_t1_backed_off_ms(uint16_t base_ticks, uint8_t backoff, uint
     ax25_timer_start(&(conn)->t1, \
                      ax25_t1_backed_off_ms((conn)->timers.t1, (conn)->timers.backoff, (conn)->retry_count), \
                      (conn)->last_tick_10ms * 10u)
-// end modified part
 #define T1_STOP(conn)    ax25_timer_stop(&(conn)->t1)
 #define T1_RUNNING(conn) ((conn)->t1.running)
 
@@ -236,24 +232,24 @@ static void ax25_send_xid_response_defaults(ax25_connection_t *conn, const ax25_
     XID_PI_WINDOW_SIZE_RX, (uint32_t) conn->timers.k, 1, &err);
 
     // PI=9: Acknowledgment timer - T1 is in 10 ms ticks; wire value is ms
-    // start modified part: clamp to 65535 ms -- PI=9 PL=2 max per AX.25 v2.2 §4.3.3.7
-    uint32_t t1_wire_ms = (uint32_t)conn->timers.t1 * 10u;
-    if (t1_wire_ms > 65535u) t1_wire_ms = 65535u;
+    // clamp to 65535 ms -- PI=9 PL=2 max per AX.25 v2.2 §4.3.3.7
+    uint32_t t1_wire_ms = (uint32_t) conn->timers.t1 * 10u;
+    if (t1_wire_ms > 65535u)
+        t1_wire_ms = 65535u;
     params[num_params++] = ax25_xid_big_endian_new(
     XID_PI_ACK_TIMER, t1_wire_ms, 2, &err);
-    // end modified part
 
     // PI=10: Maximum retries
     params[num_params++] = ax25_xid_big_endian_new(
     XID_PI_RETRIES, (uint32_t) conn->timers.n2, 1, &err);
 
     // PI=11: Response delay timer - T2 is in 10 ms ticks; wire value is ms
-    // start modified part: clamp to 65535 ms -- PI=11 PL=2 max per AX.25 v2.2 §4.3.3.7
-    uint32_t t2_wire_ms = (uint32_t)conn->timers.t2 * 10u;
-    if (t2_wire_ms > 65535u) t2_wire_ms = 65535u;
+    // clamp to 65535 ms -- PI=11 PL=2 max per AX.25 v2.2 §4.3.3.7
+    uint32_t t2_wire_ms = (uint32_t) conn->timers.t2 * 10u;
+    if (t2_wire_ms > 65535u)
+        t2_wire_ms = 65535u;
     params[num_params++] = ax25_xid_big_endian_new(
     XID_PI_RESP_DELAY_TIMER, t2_wire_ms, 2, &err);
-    // end modified part
 
     resp.parameters = params;
     resp.param_count = num_params;
@@ -756,13 +752,11 @@ static void handle_test_frame(ax25_connection_t *conn, ax25_test_frame_t *test, 
             } else {
                 conn->test_stats.ema_rtt = conn->test_stats.ema_rtt - (conn->test_stats.ema_rtt >> 3u) + (rtt >> 3u);
             }
-            // start modified part
             // 1-tick floor: prevent ema_rtt converging to zero after seeding.
             // A zero EMA would make ax25_adjust_t1_adaptive produce T1 = margin only,
             // ignoring measured channel latency and violating AX.25 v2.2 §6.7.1.1.
             if (conn->test_stats.ema_rtt < 1u)
                 conn->test_stats.ema_rtt = 1u;
-            // end modified part
             conn->test_stats.test_received++;
 
             // Clear pending test
@@ -1201,7 +1195,7 @@ static bool ax25_process_nr(ax25_connection_t *conn, uint8_t nr, uint8_t raw_ctr
         if (head_ns == nr) {
             break;  // This frame not yet acknowledged
         }
-        hal_mem_free(conn->tx_queue.frames[conn->tx_queue.head]);  // start modified part: use HAL free for HAL-allocated I-frame // end modified part
+        hal_mem_free(conn->tx_queue.frames[conn->tx_queue.head]);
         conn->tx_queue.frames[conn->tx_queue.head] = NULL;
         conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
         conn->tx_queue.count--;
@@ -1406,7 +1400,6 @@ static void handle_received_rr(ax25_connection_t *conn, ax25_supervisory_frame_t
         }
     }
 
-    // start modified part
     // State 4 (TIMER_RECOVERY) RR handling per Linux ax25_std_frame_in.c:
     //   F=1: peer responded to our poll — decide whether to return to CONNECTED or retransmit.
     //   F=0: ack already processed by ax25_process_nr; do NOT send response, stay in recovery.
@@ -1439,7 +1432,6 @@ static void handle_received_rr(ax25_connection_t *conn, ax25_supervisory_frame_t
         // Never respond with RR/RNR in TIMER_RECOVERY state.
         return;
     }
-    // end modified part
 
     // CONNECTED and other states
     conn->retry_count = 0;
@@ -1478,7 +1470,7 @@ static void handle_received_frmr(ax25_connection_t *conn, ax25_frame_reject_fram
 
 // Clear all pending frames
     while (conn->tx_queue.count > 0) {
-        hal_mem_free(conn->tx_queue.frames[conn->tx_queue.head]);  // start modified part: use HAL free for HAL-allocated I-frame // end modified part
+        hal_mem_free(conn->tx_queue.frames[conn->tx_queue.head]);
         conn->tx_queue.head = (conn->tx_queue.head + 1) % AX25_MAX_QUEUE_SIZE;
         conn->tx_queue.count--;
     }
@@ -1538,10 +1530,8 @@ static uint8_t ax25_send_data_raw(ax25_connection_t *conn, uint8_t *data, size_t
     if (conn->callbacks.transmit)
         conn->callbacks.transmit(conn->user_data, encoded, frame_len);
 
-// start modified part
 // I-frames are not S-frames; the erroneous sframe_sent increment is removed.
 // sframe_sent is updated only in send_rr(), send_rnr(), send_rej(), send_srej().
-// end modified part
 
 // Update statistics - I-frame sent
     conn->stats.iframe_sent++;
@@ -1634,11 +1624,10 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     memset(conn, 0, sizeof(ax25_connection_t));
     conn->state = AX25_STATE_DISCONNECTED;  //
     conn->vars.mod = 8;                    // Default to modulo 8
-    // start modified part
     conn->timers.t1 = (uint16_t) (AX25_DEFAULT_T1_MS / 10u);  // 10000ms -> 1000 ticks (Linux AX25_DEF_T1)
     conn->timers.t2 = (uint16_t) (AX25_DEFAULT_T2_MS / 10u);  // 3000ms  ->  300 ticks (Linux AX25_DEF_T2)
     conn->timers.t3 = (uint16_t) (AX25_DEFAULT_T3_MS / 10u);  // 300000ms-> 30000 ticks (Linux AX25_DEF_T3)
-    // start modified part
+
     // Default to AX25_BACKOFF_LINEAR to match Linux AX25_DEF_BACKOFF = 1 in
     // net/ax25/ax25_dev.c.  Linux ax25_calculate_t1() uses:
     //   T1_actual = (1 + n2count) * T1_base
@@ -1648,7 +1637,6 @@ uint8_t ax25_connection_init(ax25_connection_t *conn, ax25_callbacks_t *cb, void
     // Linear backoff spreads retries over time and matches the Linux peer s
     // behaviour. Callers may override this field after ax25_connection_init().
     conn->timers.backoff = AX25_BACKOFF_LINEAR;
-    // end modified part
     conn->timers.n2 = (uint8_t) AX25_DEFAULT_N2;             // 10 retries
     conn->timers.k = (uint8_t) AX25_DEFAULT_K_MOD8;         // 7 for mod-8 default
     conn->timers.n1 = (uint16_t) AX25_DEFAULT_N1;             // 256 octets
@@ -1885,7 +1873,6 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
                 // Do NOT transition to TIMER_RECOVERY: stay in AWAITING_RELEASE.
                 send_disc(conn);
                 T1_START(conn);
-                // start modified part
             } else if (conn->state == AX25_STATE_TIMER_RECOVERY) {
                 // State 4 T1 expiry: send RR P=1 enquiry, do NOT retransmit I-frames.
                 // Per Linux ax25_std_t1timer_expiry() State 4: only poll, let peer's
@@ -1902,7 +1889,6 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
                 // per AX.25 v2.2 Section 4.4.5.  Do NOT enter TIMER_RECOVERY.
                 resend_stored_frmr(conn);
                 T1_START(conn);
-                // end modified part
             } else {
                 // CONNECTED: enter timer recovery, retransmit per AX.25 v2.2 Section 6.7.1.1
                 conn->state = AX25_STATE_TIMER_RECOVERY;
@@ -1984,7 +1970,6 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
         // our local receive state: send RNR P=1 when locally busy so the peer knows we
         // are still flow-controlled while we solicit its F=1 status response; send RR P=1
         // in all other cases (idle poll or recovery while peer was busy)
-        // start modified part
         // T3 expiry in State 3 (CONNECTED): send RR/RNR P=1 and move to State 4
         // (TIMER_RECOVERY) per Linux ax25_std_t3timer_expiry().  The Linux peer
         // drives its own N2 counter only via T1 retries in State 4; staying in
@@ -2001,7 +1986,6 @@ void ax25_tick(ax25_connection_t *conn, uint32_t current_tick_10ms) {
             conn->retry_count = 0;
             conn->state = AX25_STATE_TIMER_RECOVERY;
         }
-        // end modified part
         T1_START(conn);  // Start T1 for poll response
     }
 }
@@ -2141,7 +2125,6 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                 if (conn->callbacks.on_connect) {
                     conn->callbacks.on_connect(conn->user_data, true);
                 }
-                // start modified part
             } else if (conn->state == AX25_STATE_TIMER_RECOVERY) {
                 // UA unexpected in State 4 (TIMER_RECOVERY): we never sent SABM/SABME
                 // so this UA is unsolicited.  Linux ax25_std_frame_in State 4 treats it
@@ -2161,7 +2144,6 @@ void ax25_process_frame(ax25_connection_t *conn, ax25_frame_t *frame, uint32_t c
                 }
                 if (conn->callbacks.on_disconnect)
                     conn->callbacks.on_disconnect(conn->user_data, 1);
-                // end modified part
             }
             // UA frames in other states are ignored per AX.25 v2.2
             break;
@@ -3060,14 +3042,12 @@ void ax25_adjust_t1_adaptive(ax25_connection_t *conn) {
         // FD: 100ms margin (10 ticks), HD: 300ms (30 ticks)
         uint32_t margin = conn->full_duplex ? 10u : 30u;
         uint32_t new_t1 = (avg_rtt * 2u) + margin;
-        // start modified part
         // Use named clamp constants — mirrors Linux AX25_T1CLAMPLO / AX25_T1CLAMPHI
         // from net/ax25/ax25_subr.c to prevent T1 going below 100ms or above 30s.
         if (new_t1 < AX25_T1CLAMPLO_TICKS)
             new_t1 = AX25_T1CLAMPLO_TICKS;
         if (new_t1 > AX25_T1CLAMPHI_TICKS)
             new_t1 = AX25_T1CLAMPHI_TICKS;
-        // end modified part
         conn->timers.t1 = (uint16_t) new_t1;
     }
 }

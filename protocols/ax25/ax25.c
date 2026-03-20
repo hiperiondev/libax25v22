@@ -90,16 +90,14 @@ static uint32_t uint_decode(const uint8_t *data, size_t len, bool big_endian, ui
 
     for (size_t i = 0; i < len; i++) {
         uint32_t byte = (uint32_t) data[big_endian ? (len - 1u - i) : i];
-        // start modified part: cast i to uint32_t before multiply -- size_t*8 produces
+        // cast i to uint32_t before multiply -- size_t*8 produces
         // a shift of >= 32 when i==4 and len==8, which is UB on 32-bit targets
-        value |= byte << ((uint32_t)i * 8u);
-        // end modified part
+        value |= byte << ((uint32_t) i * 8u);
     }
 
     return value;
 }
 
-// start modified part
 // ax25_ssid_value: safely extract the 4-bit SSID from a raw on-air SSID byte.
 // Masks out the DAMA participation flag (bit 5, 0x20) and the modulo-128
 // signal bit (bit 6, 0x40) exactly as the Linux kernel AX25_SSSID_SPARE macro
@@ -111,7 +109,6 @@ static uint32_t uint_decode(const uint8_t *data, size_t len, bool big_endian, ui
 static uint8_t ax25_ssid_value(uint8_t ssid_byte) {
     return (ssid_byte >> 1u) & 0x0Fu;  // bits 4:1 only — DAMA flag (bit 5) excluded
 }
-// end modified part
 
 ax25_address_t* ax25_address_decode(const uint8_t *data, uint8_t *err) {
     *err = 0;
@@ -132,11 +129,9 @@ ax25_address_t* ax25_address_decode(const uint8_t *data, uint8_t *err) {
     // AX.25 address fields are padded to 6 bytes with spaces (0x20<<1=0x40).
     trim_trailing_spaces(addr->callsign);
 
-    // start modified part
     // Use ax25_ssid_value() so the SSID extraction is consistent with
     // ax25_frame_header_decode() and tolerates DAMA frames from Linux peers.
     addr->ssid = (int) ax25_ssid_value(data[6]);
-    // end modified part
     addr->ch = (data[6] & 0x80) != 0;
     // Store res0 verbatim so callers can detect DAMA participation (res0=false
     // means the remote set the DAMA flag).  ax25_address_encode() always forces
@@ -419,14 +414,12 @@ header_decode_result_t ax25_frame_header_decode(const uint8_t *data, size_t len,
         // Trim spaces padded into the 6-byte AX.25 address field (e.g. "W1AW  ")
         trim_trailing_spaces(addresses[addr_count].callsign);
 
-        // start modified part
         // Use ax25_ssid_value() to extract the SSID, masking the DAMA
         // participation flag (bit 5, 0x20) and modulo-128 signal (bit 6,
         // 0x40).  Without this helper the SSID value is still correct because
         // the on-wire mask 0x1E already excludes bit 5, but the helper makes
         // the intent explicit and matches ax25_address_decode() for consistency.
         addresses[addr_count].ssid = (int) ax25_ssid_value(addr_data[6]);
-        // end modified part
 
         // Validate SSID value per AX.25 v2.2 Section 3.12.2
         // SSID is a 4-bit field and must be in range 0-15
@@ -437,11 +430,9 @@ header_decode_result_t ax25_frame_header_decode(const uint8_t *data, size_t len,
 
         addresses[addr_count].ch = (addr_data[6] & 0x80) != 0;
         addresses[addr_count].res1 = (addr_data[6] & 0x40) != 0;
-        // start modified part
         // Store res0 verbatim so DAMA detection (res0=false => DAMA master)
         // is available to ax25_frame_decode() without re-reading the raw byte.
         addresses[addr_count].res0 = (addr_data[6] & 0x20) != 0;
-        // end modified part
         addresses[addr_count].extension = (addr_data[6] & 0x01) != 0;
 
         pos += 7;
@@ -633,7 +624,6 @@ ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, 
     uint8_t control = hdr_result.remaining[0];
     ax25_frame_t *frame = NULL;
 
-    // start modified part
     // DAMA master detection per Section 9 of the implementation guide.
     // When a Linux DAMA master transmits, it sets bit 5 (0x20) of its source
     // SSID byte to signal DAMA participation.  On the receiving side res0 will
@@ -648,7 +638,7 @@ ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, 
     // decoded normally to allow monitoring / unconnected operation.
     if (!hdr_result.header->source.res0) {
         // U-frame control byte with P/F bit (bit 4) masked out
-        uint8_t u_ctrl = (uint8_t)(control & 0xEFu);
+        uint8_t u_ctrl = (uint8_t) (control & 0xEFu);
         // SABM  = 0x2F (unmasked: 0x2F/0x3F),  SABME = 0x6F (unmasked: 0x6F/0x7F)
         if (u_ctrl == 0x2Fu || u_ctrl == 0x6Fu) {
             ax25_frame_header_free(hdr_result.header, err);
@@ -656,7 +646,6 @@ ax25_frame_t* ax25_frame_decode(const uint8_t *data, size_t len, int modulo128, 
             return NULL;
         }
     }
-    // end modified part
 
     // use ax25_frame_class() for U-frame detection
     // Guarantees UI (0x03) is never misrouted to the I/S branch because
@@ -933,7 +922,6 @@ ax25_frame_t* ax25_frame_create(ax25_frame_type_t type, const ax25_frame_header_
             iframe->nr = 0;
             iframe->ns = 0;
             iframe->pf = false;
-            // start modified part
             // Default PID to PID_NO_L3 (0xF0) for connected-mode plain data.
             // Linux ax25_rx_iframe() dispatches PID 0x00 to the ROSE sub-layer;
             // with no ROSE handler registered the kernel silently discards the
@@ -943,7 +931,6 @@ ax25_frame_t* ax25_frame_create(ax25_frame_type_t type, const ax25_frame_header_
             // fragments (0x08). Callers override this field after ax25_frame_create()
             // when a specific layer-3 protocol is required.
             iframe->pid = PID_NO_L3;
-            // end modified part
             iframe->payload = NULL;
             iframe->payload_len = 0;
             frame = (ax25_frame_t*) iframe;
@@ -1294,13 +1281,11 @@ ax25_frame_reject_frame_t* ax25_frame_reject_frame_decode(ax25_frame_header_t *h
 
         // Byte 4: Rejection reason flags
         uint8_t flags = data[4];
-        // start modified part
         // Reason bit assignments per AX.25 v2.2 §4.3.3.6 Table 4.5
         frame->w = (flags & AX25_FRMR_W) != 0;  // W: Invalid/unexpected control field
         frame->x = (flags & AX25_FRMR_X) != 0;  // X: I-field received when not permitted
         frame->y = (flags & AX25_FRMR_Y) != 0;  // Y: I-field length exceeded N1
         frame->z = (flags & AX25_FRMR_Z) != 0;  // Z: Invalid N(R) received
-        // end modified part
     } else {
         // Parse 3-byte modulo-8 FRMR data field with explicit comments
         // Byte 0: Control field (8-bit)
@@ -1317,13 +1302,11 @@ ax25_frame_reject_frame_t* ax25_frame_reject_frame_decode(ax25_frame_header_t *h
 
         // Byte 2: Rejection reason flags
         uint8_t flags = data[2];
-        // start modified part
         // Reason bit assignments per AX.25 v2.2 §4.3.3.6 Table 4.5
         frame->w = (flags & AX25_FRMR_W) != 0;  // W: Invalid/unexpected control field
         frame->x = (flags & AX25_FRMR_X) != 0;  // X: I-field received when not permitted
         frame->y = (flags & AX25_FRMR_Y) != 0;  // Y: I-field length exceeded N1
         frame->z = (flags & AX25_FRMR_Z) != 0;  // Z: Invalid N(R) received
-        // end modified part
     }
 
     return frame;
@@ -1352,22 +1335,16 @@ uint8_t* ax25_frame_reject_frame_encode(const ax25_frame_reject_frame_t *frame, 
         // and ensures no bits above the 7-bit modulo-128 sequence range bleed into the control byte
         bytes[3] = (uint8_t) (((uint8_t) (frame->vs & 0x7Fu) << 1u) | (frame->frmr_cr ? 0x01u : 0u));  // N(S) and CR
         bytes[4] = (uint8_t) ((uint8_t) (frame->vr & 0x7Fu) << 1u);        // N(R)
-        // start modified part
         // Flags using named FRMR constants per AX.25 v2.2 §4.3.3.6 Table 4.5
-        bytes[5] = (uint8_t) ((frame->w ? AX25_FRMR_W : 0u) | (frame->x ? AX25_FRMR_X : 0u)
-                             | (frame->y ? AX25_FRMR_Y : 0u) | (frame->z ? AX25_FRMR_Z : 0u));
-        // end modified part
+        bytes[5] = (uint8_t) ((frame->w ? AX25_FRMR_W : 0u) | (frame->x ? AX25_FRMR_X : 0u) | (frame->y ? AX25_FRMR_Y : 0u) | (frame->z ? AX25_FRMR_Z : 0u));
     } else {
         // Encode 3-byte data field
         bytes[1] = (uint8_t) (frame->frmr_control & 0xFFu);                // Control byte
         // explicit uint8_t cast on int fields vr/vs before shift prevents signed-int UB
         // and clamps values to the 3-bit modulo-8 sequence range before packing
         bytes[2] = (uint8_t) (((uint8_t) (frame->vr & 0x07u) << 5u) | (frame->frmr_cr ? 0x10u : 0u) | ((uint8_t) (frame->vs & 0x07u) << 1u));  // V(R), CR, V(S)
-        // start modified part
         // Flags using named FRMR constants per AX.25 v2.2 §4.3.3.6 Table 4.5
-        bytes[3] = (uint8_t) ((frame->w ? AX25_FRMR_W : 0u) | (frame->x ? AX25_FRMR_X : 0u)
-                             | (frame->y ? AX25_FRMR_Y : 0u) | (frame->z ? AX25_FRMR_Z : 0u));
-        // end modified part
+        bytes[3] = (uint8_t) ((frame->w ? AX25_FRMR_W : 0u) | (frame->x ? AX25_FRMR_X : 0u) | (frame->y ? AX25_FRMR_Y : 0u) | (frame->z ? AX25_FRMR_Z : 0u));
     }
 
     return bytes;
@@ -1873,10 +1850,7 @@ bool res1, bool res2, bool res3, bool res4, bool res5, bool res6, bool res7, uin
             | (ua ? 0x80 : 0);
     pv[1] = (frmr ? 0x01 : 0) | (ui ? 0x02 : 0) | (xid ? 0x04 : 0) | (test ? 0x08 : 0) | (modulo8 ? 0x10 : 0) | (modulo128 ? 0x20 : 0) | (res1 ? 0x40 : 0)
             | (res2 ? 0x80 : 0);
-    // start modified part
-    // Fixed res6 mask 0x06->0x08 (was erroneously two bits ORed); res7 mask 0x08->0x10 (was duplicate of res6 position).
     pv[2] = (res3 ? 0x01 : 0) | (res4 ? 0x02 : 0) | (res5 ? 0x04 : 0) | (res6 ? 0x08 : 0) | (res7 ? 0x10 : 0);
-    // end modified part
     pv[3] = reserved | (ext ? 0x80 : 0);
 
     // AX.25 v2.2 Table 12: HDLC Optional Functions PI = 3
@@ -1911,13 +1885,11 @@ void ax25_xid_init_defaults(uint8_t *err) {
     AX25_22_DEFAULT_XID_IFIELDRX = ax25_xid_big_endian_new(6, 2048, 2, err);
     AX25_20_DEFAULT_XID_WINDOWSZRX = ax25_xid_big_endian_new(8, 7, 1, err);
     AX25_22_DEFAULT_XID_WINDOWSZRX = ax25_xid_big_endian_new(8, 7, 1, err);
-    // start modified part
     // XID ACK timer defaults aligned with Linux AX25_DEF_T1 = 10000 ms.
     // Using 3000 caused Linux peers to time out their own T1 and send RR
     // polls before libax25v22 expected any response, reducing throughput.
     AX25_20_DEFAULT_XID_ACKTIMER = ax25_xid_big_endian_new(9, 10000, 2, err);
     AX25_22_DEFAULT_XID_ACKTIMER = ax25_xid_big_endian_new(9, 10000, 2, err);
-    // end modified part
     AX25_20_DEFAULT_XID_RETRIES = ax25_xid_big_endian_new(10, 10, 2, err);
     AX25_22_DEFAULT_XID_RETRIES = ax25_xid_big_endian_new(10, 10, 2, err);
 }

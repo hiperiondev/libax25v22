@@ -629,7 +629,6 @@ void ax25_kiss_receive_byte(ax25_kiss_ctx_t *ctx, uint8_t byte) {
             } else if (byte == KISS_TFESC) {
                 unescaped = KISS_FESC;
             } else if (byte == KISS_FESC) {
-                // start modified part
                 // Double-FESC (0xDB 0xDB) is a protocol violation that signals
                 // an aborted transmission.  Per the KISS specification all data
                 // received up to and including the next FEND must be discarded.
@@ -641,7 +640,6 @@ void ax25_kiss_receive_byte(ax25_kiss_ctx_t *ctx, uint8_t byte) {
                 ctx->rx_type = 0u;
                 ctx->stats.rx_aborted++;
                 ctx->stats.rx_dropped++;
-                // end modified part
                 return;
             } else {
                 // Per spec: any other byte after FESC is an error;
@@ -668,7 +666,6 @@ void ax25_kiss_receive_byte(ax25_kiss_ctx_t *ctx, uint8_t byte) {
         }
         break;
 
-        // start modified part
         case KISS_RX_ABORT:
             // Double-FESC abort state: discard all bytes until the next FEND.
             // On FEND receipt the abort is cleared and normal reception resumes.
@@ -684,7 +681,6 @@ void ax25_kiss_receive_byte(ax25_kiss_ctx_t *ctx, uint8_t byte) {
             }
             // All non-FEND bytes in ABORT state are silently discarded
         break;
-        // end modified part
 
         default:
             // Should never reach here; reset to safe state

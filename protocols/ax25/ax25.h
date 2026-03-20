@@ -221,7 +221,6 @@ static inline uint8_t ax25_s_subtype(uint8_t ctrl) {
 #define PID_NO_L3           0xF0 /**< No layer 3 protocol implemented */
 #define PID_ESCAPE          0xFF /**< Escape for extended PID (next byte contains extended PID) */
 
-// start modified part
 // AX25_PID_* canonical names aligned with Linux include/net/ax25.h constants.
 // These are aliases for the PID_* defines above and expand to identical values.
 // Use AX25_PID_LAYER3_NONE for all connected-mode plain data (BBS, terminal, etc.).
@@ -235,14 +234,12 @@ static inline uint8_t ax25_s_subtype(uint8_t ctrl) {
 #define AX25_PID_NETROM       0xCFu  // NET/ROM
 #define AX25_PID_LAYER3_NONE  0xF0u  // No layer 3 - plain text / general data (use for connected mode)
 #define AX25_PID_ESCAPE       0xFFu  // Extended PID escape (next byte = actual PID)
-// end modified part
 
 // Maximum byte length of any fully-encoded AX.25 control frame (no I-field).
 // Worst-case: dest(7) + src(7) + 8 repeaters(56) + 2-byte ctrl + 5-byte FRMR = 77, +3 margin = 80.
 // I-frames use ax25_frame_encode() + heap (stored in tx_queue for retransmission).
 #define AX25_ENCODE_SCRATCH_LEN  80u
 
-// start modified part
 // FRMR reason bit constants per AX.25 v2.2 §4.3.3.6 Table 4.5.
 // Bit positions in Byte 2 of the FRMR information field.
 // Match Linux net/ax25/ax25_out.c and include/linux/ax25.h definitions.
@@ -254,7 +251,6 @@ static inline uint8_t ax25_s_subtype(uint8_t ctrl) {
 #define AX25_FRMR_X  0x02u
 #define AX25_FRMR_Y  0x04u
 #define AX25_FRMR_Z  0x08u
-// end modified part
 
 /*============================================================================*/
 /* Frame Type Enumeration                                                       */

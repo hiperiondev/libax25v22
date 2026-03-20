@@ -170,9 +170,8 @@ hdlc_error_t hdlc_frame_decode(unsigned char *encodedFrame, int encodedLen, unsi
 
             // Assemble byte LSB-first
             if (bit) {
-                // start modified part: use unsigned 1u to avoid signed-int shift UB on all targets
-                byte |= (unsigned char)(1u << bitIndex);
-                // end modified part
+                // use unsigned 1u to avoid signed-int shift UB on all targets
+                byte |= (unsigned char) (1u << bitIndex);
             }
             bitIndex++;
 
@@ -190,10 +189,8 @@ hdlc_error_t hdlc_frame_decode(unsigned char *encodedFrame, int encodedLen, unsi
         return HDLC_ERR_TOO_SHORT;
 
     // Extract and verify CRC
-    // start modified part: UB fix -- unsigned char left-shifted 8 bits is UB when bit 7 set
-    uint16_t frameCRC = (uint16_t)((uint16_t)decodedFrame[decodedIndex - 2]
-                      | ((uint16_t)decodedFrame[decodedIndex - 1] << 8));
-    // end modified part
+    // UB fix -- unsigned char left-shifted 8 bits is UB when bit 7 set
+    uint16_t frameCRC = (uint16_t) ((uint16_t) decodedFrame[decodedIndex - 2] | ((uint16_t) decodedFrame[decodedIndex - 1] << 8));
     decodedIndex -= 2;
 
     uint16_t crc = hal_crc16_buf((const uint8_t*) decodedFrame, (uint16_t) decodedIndex);

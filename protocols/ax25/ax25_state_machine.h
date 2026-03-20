@@ -60,7 +60,6 @@
  * @brief Special values for timer state management
  */
 
-// start modified part
 // All defaults match Linux kernel ax25_dev.c AX25_DEF_T* values so that
 // libax25v22 interoperates correctly with Linux AX.25 peers.  Using smaller
 // values causes the Linux peer to retransmit (via its own T1=10000 ms) before
@@ -82,9 +81,7 @@
 #ifndef AX25_DEFAULT_T3_MS
 #define AX25_DEFAULT_T3_MS  300000u
 #endif
-// end modified part
 
-// start modified part
 // Backoff mode constants for ax25_timers_t.backoff.
 // Mirror Linux ax25_calculate_t1() backoff modes in net/ax25/ax25_subr.c.
 // 0 = none (default), 1 = linear multiplier, 2 = exponential doubling.
@@ -104,7 +101,6 @@
 // AX25_T1CLAMPHI_TICKS: maximum T1 for RTT adaptive path (3000 ticks = 30s).
 // Mirrors Linux AX25_T1CLAMPHI = 30 * HZ (at HZ=100 -> 3000 jiffies -> 30000ms).
 #define AX25_T1CLAMPHI_TICKS 3000u
-// end modified part
 
 // N1: Maximum I-field length in octets (§6.7.2).
 #ifndef AX25_DEFAULT_N1
@@ -434,7 +430,6 @@ typedef struct {
  * - k: 7 (modulo-8) or 32 (modulo-128)
  * - N1: 256 bytes
  */
-// start modified part
 typedef struct {
     uint16_t t1;      // T1: Acknowledgment timer (10ms units)
     uint16_t t2;      // T2: Response delay timer (10ms units)
@@ -444,7 +439,6 @@ typedef struct {
     uint8_t backoff;  // Backoff mode: AX25_BACKOFF_NONE / LINEAR / EXPONENTIAL
     uint16_t n1;      // N1: Maximum I-field length (octets)
 } ax25_timers_t;
-// end modified part
 
 /*============================================================================*/
 /* Retransmission Queue                                                       */
