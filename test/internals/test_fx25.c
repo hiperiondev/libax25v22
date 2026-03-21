@@ -729,6 +729,145 @@ static int test_fx25_invalid_inputs(void) {
     return 0;
 }
 
+// start modified part
+// Y-1: Local tag table for cross-validation against libax25v22's fx25_modes[].
+// This struct is intentionally independent of fx25_mode_t so that a divergence
+// between the two tables is detected at test time rather than silently hidden.
+typedef struct {
+    uint8_t tag_id;
+    uint8_t tag_bytes[8];
+    const char *name;
+} y_fx25_tag_t;
+
+// Hardcoded expected 8-byte correlation tags per FX.25 v01.06 specification.
+// Any mismatch against fx25_encode() output means library and spec have diverged.
+static const y_fx25_tag_t y_fx25_local_tags[] = {
+    { 0x01, { 0xB7, 0x4D, 0xB7, 0xDF, 0x8A, 0x53, 0x2F, 0x3E }, "Tag_01 RS(255,239)" },
+    { 0x02, { 0x26, 0xFF, 0x60, 0xA6, 0x00, 0xCC, 0x8F, 0xDE }, "Tag_02 RS(144,128)" },
+    { 0x03, { 0xC7, 0xDC, 0x05, 0x08, 0xF3, 0xD9, 0xB0, 0x9E }, "Tag_03 RS(80,64)"   },
+    { 0x04, { 0x8F, 0x05, 0x6E, 0xB4, 0x36, 0x96, 0x60, 0xEE }, "Tag_04 RS(48,32)"   },
+    { 0x05, { 0x6E, 0x26, 0x0B, 0x1A, 0xC5, 0x83, 0x5F, 0xAE }, "Tag_05 RS(255,223)" },
+    { 0x06, { 0xFF, 0x94, 0xDC, 0x63, 0x4F, 0x1C, 0xFF, 0x4E }, "Tag_06 RS(160,128)" },
+    { 0x07, { 0x1E, 0xB7, 0xB9, 0xCD, 0xBC, 0x09, 0xC0, 0x0E }, "Tag_07 RS(96,64)"   },
+    { 0x08, { 0xDB, 0xF8, 0x69, 0xBD, 0x2D, 0xBB, 0x17, 0x76 }, "Tag_08 RS(64,32)"   },
+    { 0x09, { 0x3A, 0xDB, 0x0C, 0x13, 0xDE, 0xAE, 0x28, 0x36 }, "Tag_09 RS(255,191)" },
+    { 0x0A, { 0xAB, 0x69, 0xDB, 0x6A, 0x54, 0x31, 0x88, 0xD6 }, "Tag_0A RS(192,128)" },
+    { 0x0B, { 0x4A, 0x4A, 0xBE, 0xC4, 0xA7, 0x24, 0xB7, 0x96 }, "Tag_0B RS(128,64)"  },
+    { 0,    { 0, 0, 0, 0, 0, 0, 0, 0 },                          NULL                  },
+};
+
+// Y-1: Look up a correlation tag by its raw 8-byte wire value in the local table.
+// Returns pointer to matching entry, or NULL if not found.
+static const y_fx25_tag_t *y_fx25_find_tag(const uint8_t *tag_bytes) {
+    int i;
+    for (i = 0; y_fx25_local_tags[i].tag_id != 0; i++) {
+        if (memcmp(y_fx25_local_tags[i].tag_bytes, tag_bytes, 8) == 0)
+            return &y_fx25_local_tags[i];
+    }
+    return NULL;
+}
+
+// Y.NEW: FX.25 tag table cross-verification: libax25v22 fx25_modes[] vs local test table.
+// For each sampled tag ID: encode a dummy frame with fx25_encode(), extract the
+// 8 correlation tag bytes from fx25_frame_t.correlation_tag[], and look them up
+// in the local test table above.  A mismatch means the two tables use different
+// correlation tags and will never interoperate correctly on-air.
+// NOTE: fx25_encode() fills fx25_frame_t.correlation_tag[8] directly; there is
+// no wire preamble offset to skip (unlike a raw-buffer API).
+static int test_fx25_tag_table_cross_validation(void) {
+    assert_count = 0;
+    printf("\n--- test_fx25_tag_table_cross_validation (Y.NEW) ---\n");
+
+    static const struct {
+        uint8_t tag_id;
+        uint8_t data_size;
+        const char *name;
+    } check_tags[] = {
+        { 0x01, 32, "Tag_01 RS(255,239)" },
+        { 0x04, 32, "Tag_04 RS(48,32)"   },
+        { 0x08, 32, "Tag_08 RS(64,32)"   },
+    };
+
+    int ntags = (int)(sizeof(check_tags) / sizeof(check_tags[0]));
+    uint8_t dummy[32];
+    int i;
+    for (i = 0; i < 32; i++)
+        dummy[i] = (uint8_t)i;
+
+    for (i = 0; i < ntags; i++) {
+        fx25_frame_t frame;
+        uint8_t enc_rc = fx25_encode(dummy, check_tags[i].data_size, check_tags[i].tag_id, &frame);
+
+        char msg[128];
+        snprintf(msg, sizeof(msg), "Y.NEW.%da tag_id=0x%02X encode ok (%s)", i, check_tags[i].tag_id, check_tags[i].name);
+        TEST_ASSERT(enc_rc == 0, msg, (int)enc_rc);
+        if (enc_rc != 0)
+            continue;
+
+        // correlation_tag is directly in frame.correlation_tag[8], no preamble offset
+        const y_fx25_tag_t *found = y_fx25_find_tag(frame.correlation_tag);
+        snprintf(msg, sizeof(msg), "Y.NEW.%db tag bytes from fx25_encode() recognised by local table (%s)", i, check_tags[i].name);
+        TEST_ASSERT(found != NULL, msg, (int)check_tags[i].tag_id);
+
+        if (found) {
+            snprintf(msg, sizeof(msg), "Y.NEW.%dc tag_id match: library=0x%02X local=0x%02X (%s)", i, check_tags[i].tag_id, found->tag_id, check_tags[i].name);
+            TEST_ASSERT(found->tag_id == check_tags[i].tag_id, msg, (int)found->tag_id);
+        }
+    }
+
+    return 0;
+}
+
+// Y.NEW2: Payload ending with 0x7E must survive a bare FX.25 encode/decode round-trip.
+// The FX.25 spec pads unused codeword bytes with 0x7E (HDLC idle fill per sec. 4.3).
+// If a decoder stripped ALL trailing 0x7E bytes from the data region it would silently
+// corrupt binary payloads whose last byte legitimately equals 0x7E.
+// NOTE: fx25_decode() fills rs_codeword[0..data_bytes-1]; the original frame length is
+// not separately signalled at this layer, so we verify the byte at the known offset
+// (index 19 for a 20-byte payload) rather than checking a returned length field.
+static int test_fx25_trailing_0x7e_round_trip(void) {
+    assert_count = 0;
+    printf("\n--- test_fx25_trailing_0x7e_round_trip (Y.NEW2) ---\n");
+
+    uint8_t payload[20];
+    int i;
+    for (i = 0; i < 19; i++)
+        payload[i] = (uint8_t)(0x41 + i);  // 'A'..'S'
+    payload[19] = 0x7E;                     // last byte is HDLC flag value
+
+    // Encode 20 bytes into mode 0x04 (32-byte data capacity, 16 parity bytes)
+    fx25_frame_t tx_frame;
+    uint8_t enc_rc = fx25_encode(payload, 20, FX25_MODE_32_16, &tx_frame);
+    TEST_ASSERT(enc_rc == 0, "Y.NEW2.a fx25_encode payload ending with 0x7E", (int)enc_rc);
+    if (enc_rc != 0)
+        return 1;
+
+    // Build RX buffer: correlation tag (8 bytes) followed by codeword (data+parity)
+    uint8_t rx_buf[256];
+    memcpy(rx_buf, tx_frame.correlation_tag, 8);
+    memcpy(rx_buf + 8, tx_frame.rs_codeword, tx_frame.codeword_len);
+    size_t rx_len = 8 + (size_t)tx_frame.codeword_len;
+
+    // Decode
+    fx25_frame_t rx_frame;
+    uint8_t corrected_errors = 0;
+    uint8_t dec_rc = fx25_decode(rx_buf, rx_len, &rx_frame, &corrected_errors);
+    TEST_ASSERT(dec_rc == 0, "Y.NEW2.b fx25_decode payload ending with 0x7E", (int)dec_rc);
+    if (dec_rc != 0)
+        return 1;
+
+    // Verify trailing 0x7E at index 19 was NOT trimmed by the decoder
+    TEST_ASSERT(rx_frame.rs_codeword[19] == 0x7E,
+        "Y.NEW2.c rs_codeword[19] == 0x7E (trailing 0x7E not stripped)", (int)rx_frame.rs_codeword[19]);
+
+    // Verify the preceding 19 bytes also survived intact
+    int match = memcmp(rx_frame.rs_codeword, payload, 19);
+    TEST_ASSERT(match == 0, "Y.NEW2.d rs_codeword[0..18] match original payload", match);
+
+    return 0;
+}
+// end modified part
+
 int test_fx25_main(void) {
     int result = 0;
 
@@ -754,6 +893,10 @@ int test_fx25_main(void) {
     result |= test_fx25_hdlc_round_trip();
     result |= test_fx25_all_modes();
     result |= test_fx25_invalid_inputs();
+    // start modified part
+    result |= test_fx25_tag_table_cross_validation();  // Y.NEW:  tag table cross-check
+    result |= test_fx25_trailing_0x7e_round_trip();    // Y.NEW2: trailing 0x7E preserved
+    // end modified part
 
     printf("\n==================================================================================\n");
     printf("FX.25 Tests Completed. %s\n", result == 0 ? "All tests passed" : "Some tests failed");
