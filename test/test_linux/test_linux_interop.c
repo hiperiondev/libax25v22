@@ -7703,11 +7703,113 @@ static int sec_n_sock_dgram_ui_frames(void) {
             ax25_address_free(nf_src, &nf_err);
     }
 
-    /* -----------------------------------------------------------------------
-     * N.1–N.4: Socket API tests — guarded by kernel / bind availability
-     * (unchanged from original; the guard is now at the top of each sub-test
-     *  rather than a single early return so N.FORMAT above always executes)
-     * ----------------------------------------------------------------------- */
+    // -----------------------------------------------------------------------
+    // N.NEW: UI frame byte-level cross-validation (no live interface needed).
+    //
+    // Encodes a UI frame with libax25v22 and compares the raw callsign bytes
+    // and SSID nibble against ax25_aton_entry() reference bytes produced by
+    // the Linux libax25 library.  Proves cross-stack address encoding
+    // compatibility at bit level without requiring a live kernel AX.25
+    // interface.  Fix for Problem N-1: the frame-encoding path was never
+    // exercised against a libax25 reference when no live interface existed.
+    //
+    // Test IDs: N.NEW.1 through N.NEW.7.
+    // -----------------------------------------------------------------------
+    // start modified part
+    {
+        const char *n_dest = g_test_ctx.local_call[0] ? g_test_ctx.local_call : "N0CALL-0";
+        const char *n_src  = "LIBV22-0";
+        uint8_t n_err = 0;
+        ax25_address_t *ndest = ax25_address_from_string(n_dest, &n_err);
+        ax25_address_t *nsrc  = ax25_address_from_string(n_src,  &n_err);
+        TEST_ASSERT(ndest && nsrc,
+            "N.NEW.1 Address allocation for byte-level cross-stack check", n_err);
+
+        if (ndest && nsrc) {
+            ax25_frame_header_t nhdr;
+            memset(&nhdr, 0, sizeof(nhdr));
+            nhdr.destination             = *ndest;
+            nhdr.source                  = *nsrc;
+            nhdr.cr                      = false;
+            nhdr.repeaters.num_repeaters = 0;
+
+            ax25_unnumbered_information_frame_t nui;
+            memset(&nui, 0, sizeof(nui));
+            nui.base.base.type   = AX25_FRAME_UNNUMBERED_INFORMATION;
+            nui.base.base.header = nhdr;
+            nui.base.modifier    = AX25_U_UI;
+            nui.pid              = PID_NO_L3;
+            uint8_t npl[] = "CROSSVAL";
+            nui.payload     = npl;
+            nui.payload_len = 8;
+
+            size_t nenc_len = 0;
+            uint8_t *nenc = ax25_frame_encode((ax25_frame_t *)&nui, &nenc_len, &n_err);
+            // Minimum: 7 dest + 7 src = 14 address bytes required for the comparison
+            TEST_ASSERT(nenc != NULL && nenc_len >= 14,
+                "N.NEW.2 libax25v22 UI encode for byte-level check succeeds (len >= 14)",
+                n_err);
+
+            if (nenc) {
+                ax25_address ref_dest_lin, ref_src_lin;
+                memset(&ref_dest_lin, 0, sizeof(ref_dest_lin));
+                memset(&ref_src_lin,  0, sizeof(ref_src_lin));
+                int rd = ax25_aton_entry(n_dest, (char *)&ref_dest_lin);
+                int rs = ax25_aton_entry(n_src,  (char *)&ref_src_lin);
+                TEST_ASSERT(rd == 0 && rs == 0,
+                    "N.NEW.3 libax25 ax25_aton_entry() reference encoding succeeds", rd);
+
+                if (rd == 0 && rs == 0) {
+                    // N.NEW.4/N.NEW.5: compare callsign bytes (6 bytes, each = ASCII << 1)
+                    int dest_ok = 1, src_ok = 1, ni;
+                    for (ni = 0; ni < 6; ni++) {
+                        if (nenc[ni]      != ((uint8_t *)&ref_dest_lin)[ni])
+                            dest_ok = 0;
+                        if (nenc[7 + ni]  != ((uint8_t *)&ref_src_lin)[ni])
+                            src_ok  = 0;
+                    }
+                    TEST_ASSERT(dest_ok,
+                        "N.NEW.4 Dest callsign bytes[0..5] == libax25 ax25_aton_entry ref",
+                        dest_ok);
+                    TEST_ASSERT(src_ok,
+                        "N.NEW.5 Src callsign bytes[7..12] == libax25 ax25_aton_entry ref",
+                        src_ok);
+
+                    // N.NEW.6/N.NEW.7: compare SSID nibble only (bits [4:1]).
+                    // Mask 0x1E covers only the SSID value bits; C/H (bit7),
+                    // RES bits, and EXT (bit0) are intentionally excluded
+                    // because they may legitimately differ between libax25v22
+                    // (cr flag controlled by caller) and libax25 (kernel-side
+                    // conventions set by ax25_aton_entry).
+                    TEST_ASSERT(
+                        (nenc[6]  & 0x1Eu) == (((uint8_t *)&ref_dest_lin)[6] & 0x1Eu),
+                        "N.NEW.6 Dest SSID nibble (bits[4:1]) == libax25 ref (ax25_aton_entry)",
+                        (int)(nenc[6] & 0x1E));
+                    TEST_ASSERT(
+                        (nenc[13] & 0x1Eu) == (((uint8_t *)&ref_src_lin)[6]  & 0x1Eu),
+                        "N.NEW.7 Src SSID nibble (bits[4:1]) == libax25 ref (ax25_aton_entry)",
+                        (int)(nenc[13] & 0x1E));
+
+                    DEBUG_PRINT("N.NEW cross-val PASS: dest_ok=%d src_ok=%d "
+                                "enc[6]=0x%02X ref_dest[6]=0x%02X "
+                                "enc[13]=0x%02X ref_src[6]=0x%02X",
+                                dest_ok, src_ok,
+                                nenc[6],  ((uint8_t *)&ref_dest_lin)[6],
+                                nenc[13], ((uint8_t *)&ref_src_lin)[6]);
+                }
+                free(nenc);
+            }
+        }
+        if (ndest) ax25_address_free(ndest, &n_err);
+        if (nsrc)  ax25_address_free(nsrc,  &n_err);
+    }
+    // end modified part
+
+    // -----------------------------------------------------------------------
+    // N.1–N.4: Socket API tests — guarded by kernel / bind availability
+    // (unchanged from original; the guard is now at the top of each sub-test
+    //  rather than a single early return so N.FORMAT above always executes)
+    // -----------------------------------------------------------------------
     if (!g_test_ctx.kernel_ax25_available) {
         printf("SKIP: N.1–N.4 (no kernel AF_AX25 support)\n");
         return 0;
@@ -8332,12 +8434,46 @@ static int sec_p_full_sockaddr_digipeater(void) {
     }
 
     // -----------------------------------------------------------------------
+    // P.GUARD: AX25_MAX_DIGIS / AX25_MAX_REPEATERS synchronisation guard.
+    //
+    // Asserts that libax25v22's AX25_MAX_REPEATERS does not exceed the Linux
+    // kernel's AX25_MAX_DIGIS (8).  If a future libax25v22 release expanded
+    // AX25_MAX_REPEATERS beyond 8, struct assignments and memcpy operations
+    // into fsa_digipeater[] (which has exactly AX25_MAX_DIGIS slots) would
+    // silently overflow.  Fix for Problem P-1.
+    //
+    // Note: SEC-J test J.5 already asserts strict equality (==).  This guard
+    // uses <= so that it remains semantically valid as an overflow prevention
+    // check even if the two constants are intentionally decoupled later.
+    // -----------------------------------------------------------------------
+    // start modified part
+    {
+        TEST_ASSERT((int)AX25_MAX_REPEATERS <= (int)AX25_MAX_DIGIS,
+            "P.GUARD.1 libax25v22 AX25_MAX_REPEATERS <= Linux AX25_MAX_DIGIS "
+            "(mismatch would overflow fsa_digipeater[] on struct assignment)",
+            (int)AX25_MAX_REPEATERS);
+        DEBUG_PRINT("P.GUARD: libax25v22 AX25_MAX_REPEATERS=%d  kernel AX25_MAX_DIGIS=%d",
+                    (int)AX25_MAX_REPEATERS, (int)AX25_MAX_DIGIS);
+    }
+    // end modified part
+
+    // -----------------------------------------------------------------------
     // P.1: Build full_sockaddr_ax25 with one digipeater via ax25_aton_entry()
     // -----------------------------------------------------------------------
     {
         memset(&faddr, 0, sizeof(faddr));
         faddr.fsa_ax25.sax25_family = AF_AX25;
-        faddr.fsa_ax25.sax25_ndigis = 1;
+        // start modified part - ndigis bounds check before assignment (Problem P-1)
+        {
+            int p1_ndigis = 1;
+            if (p1_ndigis > AX25_MAX_DIGIS) {
+                printf("  P.FAIL: ndigis=%d exceeds AX25_MAX_DIGIS=%d\n",
+                       p1_ndigis, AX25_MAX_DIGIS);
+                goto p_done;
+            }
+            faddr.fsa_ax25.sax25_ndigis = p1_ndigis;
+        }
+        // end modified part
 
         rc = ax25_aton_entry(g_test_ctx.local_call, (char*) &faddr.fsa_ax25.sax25_call);
         TEST_ASSERT(rc == 0, "P.1 ax25_aton_entry into fsa_ax25.sax25_call", rc);
@@ -9712,6 +9848,7 @@ static int sec_p_full_sockaddr_digipeater(void) {
     }
 
     printf("\n  SEC-P full_sockaddr_ax25 Digipeater Summary:\n");
+    printf("    P.GUARD  AX25_MAX_REPEATERS <= AX25_MAX_DIGIS (overflow guard)\n"); // start modified part
     printf("    P.1   ax25_aton_entry() manual struct fill (1 digi)\n");
     printf("    P.2   sizeof(full_sockaddr_ax25) > sizeof(sockaddr_ax25)\n");
     printf("    P.3   connect() with full_sockaddr_ax25: no EFAULT\n");
@@ -9733,7 +9870,9 @@ static int sec_p_full_sockaddr_digipeater(void) {
     printf("    P.14  sendto() ax25_aton()-built sockaddr: no EFAULT/EINVAL\n");
     printf("    P.15  Cross-stack ax25_cmp: ax25_aton == libax25v22 bridge\n");
 
+    p_done: // start modified part - target for P.GUARD ndigis overflow goto
     return 0;
+    // end modified part
 }
 
 // ===========================================================================
