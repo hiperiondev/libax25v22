@@ -1443,6 +1443,22 @@ static int validate_connection_timers(const ax25_connection_t *conn, ax25_timer_
     config->t2_ms = config->t2_ticks * AX25_LIB_TICK_MS;
     config->t3_ms = config->t3_ticks * AX25_LIB_TICK_MS;
 
+    // start modified part — E-2 fix: uninitialised connection timer guard
+    // Problem: ax25_connection_init() may rely on zero-initialisation rather
+    // than explicit defaults. If so, all timer ticks remain 0 after init and
+    // the t1_ticks >= t3_ticks check below never fires on zero values, silently
+    // masking misconfiguration and causing validate_connection_timers() to
+    // report success on a connection that has never been properly initialised.
+    // Fix: reject t1_ticks == 0 explicitly with error code 3.
+    if (config->t1_ticks == 0) {
+        *err = 3;
+        DEBUG_PRINT("validate_connection_timers: t1_ticks == 0 "
+                    "(uninitialised — ax25_connection_init() not called or "
+                    "timer defaults not set by library)");
+        return -1;
+    }
+    // end modified part — E-2 fix
+
     if (config->t3_ticks > 0 && config->t1_ticks >= config->t3_ticks) {
         *err = 2;
         return -1;
@@ -1527,6 +1543,12 @@ static int find_kissattach_pty(char *out, size_t outsz);
 static int find_socat_slave_pty(const char *ka_pty, char *out, size_t outsz);
 static int find_ka_master_proc_path(const char *ka_pty, char *out_proc_path, size_t outsz);
 static int open_ka_master_fd(const char *ka_pty);
+// start modified part — forward declaration required by E.NEW (E-1 fix):
+// z_read_sysctl is defined near the end of the file (SEC-Z helpers) but is
+// called by sec_e_connection_state_machine() which appears much earlier.
+// Adding the forward declaration here, next to the other late-defined helpers.
+static int z_read_sysctl(const char *port, const char *key);
+// end modified part — E-1 forward declaration
 
 static int run_test_section(const char *section_name, test_section_fn_t fn) {
     printf("\n%s\n", section_name);
@@ -3539,6 +3561,71 @@ static int sec_e_connection_state_machine(void) {
                         "configured — kernel/libax25v22 T1 cross-check skipped\n");
             }
 
+            // -----------------------------------------------------------------
+            // E.NEW: T1 timer unit-mismatch cross-validation (Problem E-1 fix).
+            //
+            // BACKGROUND
+            // ----------
+            // There are TWO different timer quanta in play:
+            //   AX25_LIB_TICK_MS  = 10 ms  — libax25v22 internal tick unit
+            //   AX25_TIMER_TICK_MS = 100 ms — Linux kernel sysctl unit (centiseconds)
+            //
+            // Earlier inline comparisons in this section read t1_timeout from
+            // /proc/sys/net/ax25/<port>/t1_timeout and compared the raw sysctl
+            // value directly to conn->timers.t1 WITHOUT any unit conversion,
+            // producing a 10× error (e.g. sysctl=100 centisec vs t1=1000 ticks,
+            // both meaning 10 s but comparing as 100 != 1000).
+            //
+            // This E.NEW block performs a CORRECT cross-stack T1 comparison:
+            //   1. Read the kernel sysctl (centiseconds) and convert to ms.
+            //   2. Use timer_cfg.t1_ms (already in ms via AX25_LIB_TICK_MS).
+            //   3. Assert that the ratio between the two ms values is ≤ 3:1.
+            //
+            // A ratio > 3:1 causes systematic connection failures because the
+            // two stacks retransmit on incompatible schedules:
+            //   - The faster stack re-sends before the slower stack's T1 fires.
+            //   - The slower stack treats the duplicate as a protocol error.
+            //   - Repeated FRMR / link reset cycles follow.
+            // -----------------------------------------------------------------
+            // start modified part — E-1 fix: T1 cross-validation (ratio check)
+            if (g_test_ctx.socket_bind_available) {
+                char enew_sysctl_port[MAX_PORT_NAME_LEN];
+                safe_strlcpy(enew_sysctl_port, g_test_ctx.port_name,
+                             sizeof(enew_sysctl_port));
+                int enew_kernel_t1_cs = z_read_sysctl(enew_sysctl_port,
+                                                       "t1_timeout");
+                if (enew_kernel_t1_cs >= 1) {
+                    int enew_kernel_t1_ms = enew_kernel_t1_cs * AX25_TIMER_TICK_MS;
+                    int enew_lib_t1_ms    = timer_cfg.t1_ms;
+                    int enew_ratio_ok;
+                    if (enew_lib_t1_ms >= enew_kernel_t1_ms)
+                        enew_ratio_ok = (enew_lib_t1_ms / enew_kernel_t1_ms <= 3);
+                    else
+                        enew_ratio_ok = (enew_kernel_t1_ms / enew_lib_t1_ms <= 3);
+                    TEST_ASSERT(enew_ratio_ok,
+                        "E.NEW libax25v22 T1 and kernel T1 within 3:1 ratio "
+                        "(incompatible T1 values cause systematic connection "
+                        "failures: retransmit storms and FRMR cascades)",
+                        enew_lib_t1_ms);
+                    DEBUG_PRINT("E.NEW T1 cross-validation: "
+                                "kernel=%d ms (sysctl=%d centisec)  "
+                                "lib=%d ms  ratio=%s",
+                                enew_kernel_t1_ms, enew_kernel_t1_cs,
+                                enew_lib_t1_ms,
+                                enew_ratio_ok ? "OK (≤3:1)" : "WARN (>3:1)");
+                } else {
+                    printf("  E.NEW SKIP: t1_timeout sysctl not readable for "
+                           "port '%s' (z_read_sysctl returned %d) — "
+                           "kernel T1 cross-validation skipped\n",
+                           enew_sysctl_port, enew_kernel_t1_cs);
+                }
+            } else {
+                printf("  E.NEW SKIP: socket_bind_available == false — "
+                       "kernel T1 cross-validation requires a live AX.25 "
+                       "port with readable /proc/sys/net/ax25/ entries\n");
+            }
+            // end modified part — E-1 fix
+
         } else {
             printf("  E.2–E.5 SKIP: validate_connection_timers() failed "
                     "(err=%u)\n", (unsigned) err);
@@ -5174,6 +5261,114 @@ static int sec_h_address_bridge_roundtrip(void) {
     }
 
     // -----------------------------------------------------------------------
+    // H.NEW: H-bit (has-been-repeated) round-trip preservation (H-1 fix).
+    //
+    // AX.25 v2.2 §3.12 — the H-bit (bit 7 of the digipeater SSID byte)
+    // indicates that a digipeater has already forwarded the frame.  The
+    // Linux kernel's ax25_addr_parse() inspects this bit: if it is clear,
+    // the digipeater re-forwards the frame.  If libax25v22's bridge path
+    // strips the H-bit, the frame is re-digipeated infinitely.
+    //
+    // WHAT IS TESTED
+    // --------------
+    // Full encode → bridge → decode → encode round-trip for an address with
+    // H-bit set:
+    //   H.NEW.1  ax25_address_encode succeeds for WB6YMH-3 with ch=true.
+    //   H.NEW.2  The encoded SSID byte (enc[6]) has bit 7 == 1.
+    //   H.NEW.3  bridge_linux_to_libax25v22() succeeds on the encoded bytes.
+    //   H.NEW.4  The bridged ax25_address_t has ch == true after bridging.
+    //   H.NEW.5  SSID value (3) is preserved alongside the H-bit.
+    //   H.NEW.6  Re-encoding the bridged address still has enc[6] bit 7 == 1.
+    //
+    // WHY THIS MATTERS
+    // ----------------
+    // bridge_linux_to_libax25v22() maps all SSID byte bits, including ch
+    // (H-bit, bit 7), res0, res1, and extension.  If the bit-mask or shift
+    // arithmetic is wrong, ch survives the raw byte copy but is lost when the
+    // ax25_address_t is re-encoded — silently producing frames that tell every
+    // digipeater on the network to re-forward a packet that has already been
+    // repeated, causing an infinite digipeater loop on the air.
+    // -----------------------------------------------------------------------
+    // start modified part — H-1 fix: H-bit (C/H bit) round-trip preservation
+    {
+        uint8_t hberr = 0;
+        ax25_address_t v22_with_hbit;
+        memset(&v22_with_hbit, 0, sizeof(v22_with_hbit));
+        safe_strlcpy(v22_with_hbit.callsign, "WB6YMH",
+                     sizeof(v22_with_hbit.callsign));
+        v22_with_hbit.ssid      = 3;
+        v22_with_hbit.ch        = true;   /* H-bit: has-been-repeated */
+        v22_with_hbit.res0      = true;   /* reserved bit 0, should be 1 */
+        v22_with_hbit.res1      = true;   /* reserved bit 1, mod-8 indicator */
+        v22_with_hbit.extension = false;  /* not last address */
+        v22_with_hbit.mod8_legacy = true;
+
+        size_t hbelen = 0;
+        uint8_t *enc7 = ax25_address_encode(&v22_with_hbit, &hbelen, &hberr);
+        TEST_ASSERT(enc7 != NULL && hbelen == 7,
+            "H.NEW.1 ax25_address_encode WB6YMH-3 ch=true succeeds "
+            "(7 bytes produced)",
+            (int)hberr);
+
+        if (enc7) {
+            /* H-bit is bit 7 (0x80) of enc7[6] — the SSID byte.
+             * ax25_address_encode() must set it when addr->ch == true. */
+            TEST_ASSERT((enc7[6] & 0x80u) != 0,
+                "H.NEW.2 H-bit set in encoded SSID byte (enc7[6] bit 7 == 1) "
+                "— confirms ax25_address_encode preserves ch flag on-wire",
+                (int)enc7[6]);
+
+            /* Bridge: copy the 7 encoded bytes into a Linux ax25_address,
+             * then convert with bridge_linux_to_libax25v22(). */
+            ax25_address lin_addr;
+            memset(&lin_addr, 0, sizeof(lin_addr));
+            memcpy(lin_addr.ax25_call, enc7, 7);
+
+            ax25_address_t back;
+            memset(&back, 0, sizeof(back));
+            hberr = 0;
+            int hbrc = bridge_linux_to_libax25v22(&lin_addr, &back, &hberr);
+            TEST_ASSERT(hbrc == 0,
+                "H.NEW.3 bridge_linux_to_libax25v22() succeeds for H-bit "
+                "address (WB6YMH-3 ch=true)",
+                (int)hberr);
+
+            /* H-bit must survive the bridge: back.ch must still be true. */
+            TEST_ASSERT(back.ch == true,
+                "H.NEW.4 H-bit (ch) preserved after Linux→libax25v22 bridge "
+                "(H-bit loss → kernel re-digipeats already-repeated frames → "
+                "infinite digipeater loop on RF)",
+                (int)back.ch);
+
+            /* SSID value must also survive intact. */
+            TEST_ASSERT(back.ssid == 3,
+                "H.NEW.5 SSID (3) preserved alongside H-bit after bridge",
+                back.ssid);
+
+            /* Re-encode the bridged address and verify H-bit is still set. */
+            size_t hbrelen = 0;
+            hberr = 0;
+            uint8_t *reenc = ax25_address_encode(&back, &hbrelen, &hberr);
+            TEST_ASSERT(reenc != NULL && hbrelen == 7 &&
+                        (reenc[6] & 0x80u) != 0,
+                "H.NEW.6 H-bit survives full "
+                "encode→bridge→decode→encode round-trip "
+                "(reenc[6] bit 7 == 1 confirms no H-bit loss at any stage)",
+                (int)hberr);
+            DEBUG_PRINT("H.NEW enc7[6]=0x%02X reenc[6]=0x%02X ch_back=%d "
+                        "ssid_back=%d",
+                        enc7[6],
+                        reenc ? reenc[6] : 0xFF,
+                        (int)back.ch,
+                        back.ssid);
+            if (reenc)
+                free(reenc);
+            free(enc7);
+        }
+    }
+    // end modified part — H-1 fix
+
+    // -----------------------------------------------------------------------
     // Summary
     // -----------------------------------------------------------------------
     printf("\n  SEC-H Cross-Stack Address Encoding Summary:\n");
@@ -5189,6 +5384,8 @@ static int sec_h_address_bridge_roundtrip(void) {
     printf("    H.7  Extension bit: enc[6] bit0==0, enc[13] bit0==1, ntoa correct\n");
     printf("    H.8  H-bit (command): enc[6] bit7==1, SSID nibble preserved, "
             "ax25_ntoa correct\n");
+    printf("    H.NEW H-bit round-trip: encode→bridge→decode→encode preserves "
+            "ch=true (H-1 fix)\n");
 
     return 0;
 }
