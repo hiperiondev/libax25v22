@@ -515,9 +515,16 @@ static int test_backoff_n2_exhaustion(void) {
     dl_error_call_count = 0;
     last_dl_error = (ax25_dl_error_t) 0xFF;
 
-    // Drive ticks: let T1 expire N2+1 times (N2 retries + final disconnect)
-    // Each expiry is separated by timers.t1 ticks; run enough ticks to cover all
-    uint32_t max_ticks = (uint32_t) (conn.timers.t1 + 2) * (conn.timers.n2 + 2) + 10;
+    // start modified part — backoff exhaustion tick budget fix.
+    // Default backoff is AX25_BACKOFF_LINEAR: T1_k = (1 + k) * t1 ticks for
+    // retry k = 0 .. n2.  The total ticks to disconnect is the triangular sum:
+    //   sum_{k=0}^{n2} (1+k)*t1 = t1 * (n2+1)*(n2+2)/2
+    // The old formula (t1+2)*(n2+2)+10 did not account for backoff growth and
+    // was consistently too small, leaving the connection in TIMER_RECOVERY.
+    uint32_t max_ticks = (uint32_t)conn.timers.t1 *
+                         (uint32_t)(conn.timers.n2 + 1u) *
+                         (uint32_t)(conn.timers.n2 + 2u) / 2u + 20u;
+    // end modified part — backoff exhaustion tick budget fix
     DEBUG_VAR("Driving ticks", max_ticks);
     for (uint32_t i = 1; i <= max_ticks; i++) {
         global_tick = i;
@@ -579,8 +586,14 @@ static int test_backoff_retry_counter(void) {
     uint8_t prev_retry = conn.retry_count;
     DEBUG_VAR("Initial retry_count", prev_retry);
 
-    // Let T1 expire twice: drive 2 * (t1+1) ticks
-    for (uint32_t i = 1; i <= 2 * (uint32_t) (conn.timers.t1 + 2); i++) {
+    // start modified part — retry counter tick budget fix.
+    // With AX25_BACKOFF_LINEAR the first expiry fires after t1*1 ticks and the
+    // second after t1*2 more ticks (total t1*3 = 15 for t1=5).
+    // The old loop 2*(t1+2) = 14 ticks stopped one tick short of the second
+    // expiry, leaving retry_count at 1.  Use 3*t1 + extra to guarantee two.
+    uint32_t two_expiry_ticks = 3u * (uint32_t) conn.timers.t1 + 10u;
+    for (uint32_t i = 1; i <= two_expiry_ticks; i++) {
+    // end modified part — retry counter tick budget fix
         global_tick = i;
         ax25_tick(&conn, i);
         if (conn.retry_count > prev_retry) {
@@ -784,8 +797,13 @@ static int test_backoff_stats_tracking(void) {
     dl_error_call_count = 0;
     ax25_send_data(&conn, (uint8_t*) payload, sizeof(payload), 0xF0);
 
-    // Run until disconnect or max iterations
-    uint32_t max_ticks = (uint32_t) (conn.timers.t1 + 2) * (conn.timers.n2 + 2) + 20;
+    // start modified part — stats_tracking tick budget fix.
+    // Same linear-backoff triangular-sum formula as test_backoff_n2_exhaustion.
+    // t1=5, n2=4: 5*5*6/2+20 = 75+20 = 95 ticks — enough for all 5 intervals.
+    uint32_t max_ticks = (uint32_t)conn.timers.t1 *
+                         (uint32_t)(conn.timers.n2 + 1u) *
+                         (uint32_t)(conn.timers.n2 + 2u) / 2u + 20u;
+    // end modified part — stats_tracking tick budget fix
     for (uint32_t i = 1; i <= max_ticks; i++) {
         global_tick = i;
         ax25_tick(&conn, i);

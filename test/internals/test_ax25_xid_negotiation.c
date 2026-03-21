@@ -80,6 +80,23 @@ static void init_ctx(ax25_mgmt_context_t *ctx) {
  * ---------------------------------------------------------------------- */
 #define LOCAL_MAX_PARAMS 32
 
+// start modified part — XID layout fix: local struct matching ax25_raw_param_data_t.
+// ax25_raw_parameter_t layout: { uint8_t *pv; size_t pv_len } (pointer first).
+// ax25_raw_param_data_t layout: { size_t pv_len; uint8_t pv[] } (length first).
+// On a 64-bit host the mismatch caused ax25_mgmt_process_xid to read the pv
+// pointer value as pv_len and offset 8 (the pv_len field) as pv[0], silently
+// producing wrong negotiated parameters for every test in Battery 2.
+// Fix: declare a local struct with the same memory layout as ax25_raw_param_data_t
+// (size_t pv_len first, then a fixed-size byte array) and cast to void* when
+// assigning to param->data.  ax25_mgmt_process_xid casts param->data back to
+// ax25_raw_param_data_t*, so the layouts must match exactly.
+#define LOCAL_PV_MAX 16  // covers all standard XID PI value lengths (max 3 bytes)
+typedef struct {
+    size_t pv_len;           // MUST be first — matches ax25_raw_param_data_t
+    uint8_t pv[LOCAL_PV_MAX]; // embedded bytes — matches ax25_raw_param_data_t pv[]
+} local_raw_param_t;
+// end modified part — local_raw_param_t definition
+
 static uint8_t local_process_xid_response(ax25_mgmt_context_t *ctx, const uint8_t *buf, size_t len) {
     if (!ctx || !buf || len < 4u)
         return 1;
@@ -92,7 +109,8 @@ static uint8_t local_process_xid_response(ax25_mgmt_context_t *ctx, const uint8_
     if ((size_t) gl > (len - 4u))
         return 4;
 
-    ax25_raw_parameter_t raw_data[LOCAL_MAX_PARAMS];
+    // start modified part — use layout-compatible local_raw_param_t instead of ax25_raw_parameter_t
+    local_raw_param_t raw_data[LOCAL_MAX_PARAMS];
     ax25_xid_parameter_t params_arr[LOCAL_MAX_PARAMS];
     ax25_xid_parameter_t *param_ptrs[LOCAL_MAX_PARAMS];
     uint8_t num_params = 0;
@@ -107,11 +125,18 @@ static uint8_t local_process_xid_response(ax25_mgmt_context_t *ctx, const uint8_
         if ((size_t) (end - p) < (size_t) pl)
             break;
 
-        raw_data[num_params].pv = (uint8_t*) (uintptr_t) p;
+        // Copy PV bytes into the embedded array so ax25_mgmt_process_xid
+        // can safely read raw->pv[0..pl-1] without chasing a stale pointer.
         raw_data[num_params].pv_len = (size_t) pl;
+        if ((size_t) pl <= LOCAL_PV_MAX)
+            memcpy(raw_data[num_params].pv, p, (size_t) pl);
+        else
+            memcpy(raw_data[num_params].pv, p, LOCAL_PV_MAX); // clamp oversized PI
 
+        // Cast to void* — ax25_mgmt_process_xid casts back to ax25_raw_param_data_t*
+        // which has identical layout (size_t pv_len first, uint8_t pv[] after).
         params_arr[num_params].pi = (int) pi;
-        params_arr[num_params].data = &raw_data[num_params];
+        params_arr[num_params].data = (void*) &raw_data[num_params];
         params_arr[num_params].encode = NULL;
         params_arr[num_params].copy = NULL;
         params_arr[num_params].free = NULL;
@@ -120,6 +145,7 @@ static uint8_t local_process_xid_response(ax25_mgmt_context_t *ctx, const uint8_
 
         p += (size_t) pl;
     }
+    // end modified part — layout-compatible local_raw_param_t fill loop
 
     ax25_exchange_identification_frame_t xid;
     memset(&xid, 0, sizeof(xid));
@@ -1216,10 +1242,24 @@ static int test_xid_retry_count_resets_on_restart(void) {
     TEST_ASSERT(ctx.state == AX25_MGMT_IDLE, "state=IDLE after error K", 0);
 
     reset_capture();
+    // start modified part — test 75: re-allocate dest/src before second call.
+    // After the first ax25_mgmt_start_negotiation the addresses were freed and
+    // set to NULL (lines above).  Passing NULL to the second call causes
+    // ax25_mgmt_start_negotiation to return 1 (NULL guard), not 0.
+    dest = ax25_address_from_string("DEST-0", &err);
+    src  = ax25_address_from_string("SRC-0",  &err);
+    if (!dest || !src) {
+        free(dest);
+        free(src);
+        TEST_ASSERT(false, "second addresses parsed", err);
+    }
     uint8_t res = ax25_mgmt_start_negotiation(&ctx, dest, src, capture_transmit);
-    // Free immediately after the last call that uses dest/src — copied by value.
+    // Free immediately — addresses copied into ctx by value above.
+    free(dest);
+    free(src);
     dest = NULL;
-    src = NULL;
+    src  = NULL;
+    // end modified part — test 75 re-allocate dest/src
     TEST_ASSERT(res == 0, "second start_negotiation returns 0", res);
     TEST_ASSERT(ctx.retry_count == 0u, "retry_count=0 after restart", 0);
     TEST_ASSERT(ctx.state == AX25_MGMT_AWAITING_RESPONSE, "state=AWAITING_RESPONSE after restart", 0);
