@@ -686,6 +686,36 @@ static int kiss_decode_frame(const uint8_t *data, int data_len, uint8_t *out, in
     *out_len = n;
     return 0;
 }
+// start modified part — K-1 fix: tolerant KISS decoder for real-TNC frames
+// kiss_decode_frame_tolerant: accepts frames with a missing leading FEND byte,
+// as emitted by MFJ-1270 and early Kenwood TNCs when the channel was idle
+// between frames.  The Linux N_AX25 line discipline (drivers/net/hamradio/
+// mkiss.c, ax25_kiss_rcv()) accepts both the strict (leading-FEND present) and
+// the tolerant (leading-FEND absent) forms.  This function bridges the gap:
+//   mode == 0: identical to kiss_decode_frame() (strict, FEND required).
+//   mode == 1: if data[0] != FEND, prepend a synthetic FEND into a local
+//              stack buffer and forward to kiss_decode_frame() so only one
+//              decode implementation exists.
+// Returns 0 on success, -1 on error (same contract as kiss_decode_frame).
+static int kiss_decode_frame_tolerant(const uint8_t *data, int data_len,
+                                      uint8_t *out, int *out_len, int mode) {
+    if (!data || !out || !out_len || data_len < 2)
+        return -1;
+    if (mode == 1 && data[0] != KISS_FEND) {
+        // synthesise the missing leading FEND into a stack buffer;
+        // MAX_UI_PAYLOAD_SIZE + 3 covers the worst-case fully-escaped frame.
+        uint8_t synthetic[MAX_UI_PAYLOAD_SIZE + 3];
+        if (data_len + 1 > (int)sizeof(synthetic))
+            return -1;
+        synthetic[0] = KISS_FEND;
+        memcpy(synthetic + 1, data, (size_t)data_len);
+        return kiss_decode_frame(synthetic, data_len + 1, out, out_len);
+    }
+    // mode == 0 or data already starts with FEND: forward to strict decoder.
+    return kiss_decode_frame(data, data_len, out, out_len);
+}
+// end modified part — K-1 fix: tolerant KISS decoder for real-TNC frames
+
 
 // ---------------------------------------------------------------------------
 // SSID byte validation
@@ -6891,6 +6921,88 @@ static int sec_k_kiss_framing(void) {
         k8_done:
         ;
     }
+
+    // start modified part — K-1 fix: strict-vs-tolerant decoder behaviour tests
+    // K.NEW.K1: Verifies and documents the strict / tolerant decoder behaviour
+    // split described in Problem K-1.  Some real TNC firmware (MFJ-1270, early
+    // Kenwood TNCs) omits the leading FEND byte when the channel was idle.  The
+    // Linux N_AX25 line discipline (drivers/net/hamradio/mkiss.c) accepts both
+    // forms; the strict kiss_decode_frame() only accepts the standard form.
+    //
+    // Four sub-tests run unconditionally, guarded only by the setup encode step:
+    //   K.NEW.K1.1 — Strict decoder accepts a well-formed frame (FEND present).
+    //   K.NEW.K1.2 — Strict decoder REJECTS a frame with missing leading FEND
+    //                (documents the known limitation; strict is correct per spec).
+    //   K.NEW.K1.3 — Tolerant decoder ACCEPTS missing leading FEND (mode==1),
+    //                providing the real-TNC compat path without altering
+    //                kiss_decode_frame() itself.
+    //   K.NEW.K1.4 — Both decoders produce byte-identical payload output,
+    //                confirming the tolerant path is transparent.
+    {
+        uint8_t kp_k1[] = "NOFEND";
+        int kp_k1_len = 6;
+        uint8_t normal_kiss[64];
+        int normal_len = 0;
+
+        // Encode a standard KISS frame around the test payload.
+        int enc_k1 = kiss_encode_frame(kp_k1, kp_k1_len, 0, 0, normal_kiss, &normal_len);
+        TEST_ASSERT(enc_k1 == 0,
+            "K.NEW.K1 setup: kiss_encode_frame produces well-formed KISS frame",
+            enc_k1);
+
+        if (enc_k1 == 0 && normal_len >= 4) {
+            // K.NEW.K1.1: strict decoder must succeed on the well-formed frame.
+            uint8_t dec_s[64];
+            int dec_s_len = 0;
+            int rc_s = kiss_decode_frame(normal_kiss, normal_len, dec_s, &dec_s_len);
+            TEST_ASSERT(rc_s == 0,
+                "K.NEW.K1.1 Strict decoder handles well-formed KISS frame "
+                "(leading FEND present — standard TNC output path)",
+                rc_s);
+
+            // K.NEW.K1.2: strict decoder must REJECT the frame when the leading
+            // FEND is stripped.  normal_kiss+1 advances past the 0xC0 delimiter;
+            // the first byte seen is then the command byte, not FEND.
+            uint8_t dec_r[64];
+            int dec_r_len = 0;
+            int rc_r = kiss_decode_frame(normal_kiss + 1, normal_len - 1,
+                                         dec_r, &dec_r_len);
+            TEST_ASSERT(rc_r != 0,
+                "K.NEW.K1.2 Strict decoder rejects missing leading FEND "
+                "(MFJ-1270 / Kenwood TNC behaviour — strict is correct per spec)",
+                rc_r);
+
+            // K.NEW.K1.3: tolerant decoder (mode==1) must accept the same input
+            // that the strict decoder rejected.
+            uint8_t dec_t[64];
+            int dec_t_len = 0;
+            int rc_t = kiss_decode_frame_tolerant(normal_kiss + 1, normal_len - 1,
+                                                  dec_t, &dec_t_len, 1);
+            TEST_ASSERT(rc_t == 0,
+                "K.NEW.K1.3 Tolerant decoder (mode=1) accepts no-leading-FEND "
+                "frame (real-TNC compat path for MFJ-1270 / Kenwood hardware)",
+                rc_t);
+
+            // K.NEW.K1.4: both decoders must produce the same payload bytes.
+            if (rc_s == 0 && rc_t == 0) {
+                TEST_ASSERT(dec_s_len == dec_t_len,
+                    "K.NEW.K1.4 Strict and tolerant decoders produce same "
+                    "decoded length",
+                    dec_s_len);
+                if (dec_s_len == dec_t_len && dec_s_len > 0) {
+                    TEST_ASSERT(memcmp(dec_s, dec_t, (size_t)dec_s_len) == 0,
+                        "K.NEW.K1.4 Strict and tolerant decoder payloads are "
+                        "byte-identical (tolerant path is transparent: only "
+                        "the missing FEND is synthesised, data is unaltered)",
+                        dec_s_len);
+                }
+            }
+            DEBUG_PRINT("K.NEW.K1 rc_s=%d rc_r=%d rc_t=%d "
+                        "strict_len=%d tolerant_len=%d",
+                        rc_s, rc_r, rc_t, dec_s_len, dec_t_len);
+        }
+    }
+    // end modified part — K-1 fix: strict-vs-tolerant decoder behaviour tests
 
     return 0;
 }
