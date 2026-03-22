@@ -160,10 +160,20 @@
 #define XID_GID_PARAMS  0x80u
 
 // Maximum byte length of the XID info field produced by ax25_encode_xid.
-// updated for 2-byte GL per ISO 8885 §4.4.1
-// 3(FI+GL_hi+GL_lo) + 4(PI=2 COP) + 5(PI=3 HOF) + 4(PI=6 N1) + 3(PI=8 k)
-// + 4(PI=9 T1) + 3(PI=10 N2) + 4(PI=11 T2) = 30 bytes maximum
-#define XID_INFO_MAX_LEN 32u
+// start modified part
+// AX.25 v2.2 §4.3.3.7 / ISO 8885 §4.4.1 XID info-field layout:
+//   FI(1) + GI(1) + GL_hi(1) + GL_lo(1) = 4 header bytes
+//   + PI=2  COP:  PI(1)+PL(1)+PV(2) = 4 bytes
+//   + PI=3  HOF:  PI(1)+PL(1)+PV(3) = 5 bytes
+//   + PI=6  N1:   PI(1)+PL(1)+PV(2) = 4 bytes
+//   + PI=8  k:    PI(1)+PL(1)+PV(1) = 3 bytes
+//   + PI=9  T1:   PI(1)+PL(1)+PV(2) = 4 bytes
+//   + PI=10 N2:   PI(1)+PL(1)+PV(1) = 3 bytes
+//   + PI=11 T2:   PI(1)+PL(1)+PV(2) = 4 bytes
+//   = 4 + 4+5+4+3+4+3+4 = 31 bytes maximum
+// Set to 33 to maintain a small safety margin above the computed maximum.
+#define XID_INFO_MAX_LEN 33u
+// end modified part
 
 /** @} *//* end of XID_Parameter_Identifiers */
 

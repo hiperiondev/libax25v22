@@ -443,10 +443,14 @@ void ax25_mgmt_notify_frmr_received(ax25_mgmt_context_t *ctx) {
 }
 
 // ax25_encode_xid: allocation-free XID info-field encoder.
-// Produces FI + GL + PI/PL/PV parameter list into buf[buf_size].
+// start modified part
+// Produces FI + GI + GL + PI/PL/PV parameter list into buf[buf_size].
+// AX.25 v2.2 §4.3.3.7 / ISO 8885 §4.4.1 XID info-field layout:
+//   FI(1) = 0x82 Format Identifier
+//   GI(1) = 0x80 Group Identifier (was missing in previous version)
+//   GL(2) = Group Length big-endian (bytes of PI/PL/PV only, excludes FI+GI+GL)
+//   PI/PL/PV... = parameters
 // Uses the correct PI values from ax25_mgmt.h (2,3,6,8,9,10,11).
-// The proposal used wrong PI values (0x06 for HDLC opts, 0x19/0x1A/0x11/0x13
-// for window/timer/retries); this implementation uses the correct constants.
 // Returns number of bytes written, or 0 on buffer overflow.
 uint16_t ax25_encode_xid(uint8_t *buf, uint16_t buf_size, uint16_t n1_rx, uint8_t k_rx, uint16_t t1_ms, uint8_t n2, uint16_t t2_ms,
 bool mod128, bool full_duplex) {
@@ -458,6 +462,14 @@ bool mod128, bool full_duplex) {
 
     // FI: Format Identifier = 0x82 (parameter negotiation per ISO 8885)
     buf[pos++] = XID_FI_GFI;
+
+    // GI: Group Identifier = 0x80 (general group per ISO 8885 §4.4.1)
+    // Previously missing: ax25_exchange_identification_frame_encode() in ax25.c
+    // writes bytes[2]=gi and ax25_exchange_identification_frame_decode() reads
+    // data[1]=gi. Without GI the output is one byte short and incompatible with
+    // Linux ax25.ko and every compliant AX.25 v2.2 station.
+    buf[pos++] = XID_GID_PARAMS;
+    // end modified part
 
     // GL is 2 bytes big-endian per ISO 8885 §4.4.1
     // Reserve two bytes for GL and back-fill both after writing all parameters
@@ -545,9 +557,17 @@ bool mod128, bool full_duplex) {
 //          1 if buf or params is NULL, or len < 3
 //          2 if FI byte is not XID_FI_GFI (not a parameter-negotiation frame)
 uint8_t ax25_decode_xid(const uint8_t *buf, uint16_t len, ax25_negotiated_params_t *params) {
-    // minimum 3 bytes required for FI + 2-byte GL per ISO 8885 §4.4.1
-    if (!buf || !params || len < 3u)
+    // start modified part
+    // minimum 4 bytes required: FI(1) + GI(1) + GL_hi(1) + GL_lo(1)
+    // per ISO 8885 §4.4.1 / AX.25 v2.2 §4.3.3.7
+    // Previous check was < 3u which skipped the GI byte, causing GL to be
+    // read from buf[1..2] instead of the correct buf[2..3].  When a
+    // Linux-produced XID arrived with GI=0x80 at buf[1], the parser computed
+    // gl = 0x8000 | buf[2], far exceeding the buffer length, clamped
+    // group_end to len, and discarded every parameter silently.
+    if (!buf || !params || len < 4u)
         return 1;
+    // end modified part
 
     // Check FI (Format Identifier): must be 0x82 for parameter negotiation
     if (buf[0] != XID_FI_GFI)
@@ -566,16 +586,18 @@ uint8_t ax25_decode_xid(const uint8_t *buf, uint16_t len, ax25_negotiated_params
     params->retries = 10u;
     params->response_delay_timer = 3000u;  // Linux AX25_DEF_T2 = 3000 ms
 
-    // GL is a 2-byte big-endian field at buf[1..2] per ISO 8885 §4.4.1,
-    // consistent with ax25_encode_xid() which writes both bytes.
-    // The prior single-byte read always got the GL high byte (=0), making
-    // group_end=2 and leaving the PI/PL/PV parse loop permanently unreachable:
-    // every call to ax25_decode_xid() returned with only default values applied.
-    uint16_t gl = (uint16_t) (((uint16_t) buf[1] << 8) | (uint16_t) buf[2]);
-    uint16_t group_end = (uint16_t) (3u + gl);
+    // start modified part
+    // buf[1] = GI (Group Identifier = 0x80); skip it, do not validate strictly
+    // so that future group identifiers are tolerated (unknown GI -> no params).
+    // GL is a 2-byte big-endian field at buf[2..3] per ISO 8885 §4.4.1.
+    // Previously read from buf[1..2] which consumed the GI byte as GL_hi
+    // (= 0x80 = 128), making every valid XID produce a wildly wrong group_end.
+    uint16_t gl = (uint16_t) (((uint16_t) buf[2] << 8) | (uint16_t) buf[3]);
+    uint16_t group_end = (uint16_t) (4u + gl);
     if (group_end > len)
         group_end = len;
-    uint16_t pos = 3u;
+    uint16_t pos = 4u;
+    // end modified part
 
     // Iterate over PI/PL/PV triplets
     while (pos + 2u <= group_end) {
